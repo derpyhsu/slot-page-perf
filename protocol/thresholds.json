@@ -8,7 +8,7 @@
   "panelSpikeSeconds": 2,
   "hitchMs": 50,
   "buttons": {
-    "menu": ["功能列表", "選單", "选单", "菜單", "菜单", "menu", "more", "更多", "設定", "设置", "setting"],
+    "menu": ["功能列表", "選單", "选单", "菜單", "菜单", "menu", "more", "更多", "設定", "设置", "setting", "controlbtn"],
     "history": ["下注紀錄", "下注记录", "遊戲紀錄", "游戏记录", "歷史", "历史", "紀錄", "记录", "history", "record"],
     "rules": ["遊戲規則", "游戏规则", "規則", "规则", "說明", "说明", "help", "paytable", "rule", "info"],
     "turbo": ["加速", "快速", "極速", "极速", "turbo", "speed", "quick", "fast"],
