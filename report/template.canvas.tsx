@@ -43,6 +43,7 @@ type Evidence = {
   summary?: { smooth?: string; memory?: string };
   issues?: Issue[];
   todo?: TodoRow[];
+  entry?: { result?: "direct" | "pressed" | "stuck"; steps?: Array<{ kind: string; text?: string; afterMs?: number }> };
   missing?: string[];
   cocosAdvice?: {
     status: string;
@@ -89,6 +90,25 @@ function CocosFacts({ ev }: { ev: Evidence }) {
         </Text>
       )}
       {advice.status === "ok" && !advice.items.length && <Text size="small" tone="secondary">組成和引擎設定都在門檻內。</Text>}
+    </Stack>
+  );
+}
+
+function EntryLine({ ev }: { ev: Evidence }) {
+  const entry = ev.entry;
+  if (!entry?.result) return null;
+  const steps = (entry.steps ?? []).map((s) => s.text || s.kind).join(" → ");
+  const text = {
+    direct: "載入完直接能轉",
+    pressed: `按了 ${(entry.steps ?? []).length} 次才能轉（${steps}）`,
+    stuck: `卡住，沒進到能轉的畫面${steps ? `（按過 ${steps}）` : ""}`,
+  }[entry.result];
+  return (
+    <Stack gap={4}>
+      <Text weight="semibold">進遊戲</Text>
+      <Text size="small" tone="secondary">
+        {text}
+      </Text>
     </Stack>
   );
 }
@@ -507,6 +527,7 @@ export default function SlotPerfReport() {
       <Stack gap={16}>
         <H2>目前狀況</H2>
         <CurrentState ev={ev} />
+        <EntryLine ev={ev} />
         <CocosFacts ev={ev} />
       </Stack>
 

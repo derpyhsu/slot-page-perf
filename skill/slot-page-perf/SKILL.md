@@ -18,9 +18,9 @@ Measure one slot URL and write evidence. Do not modify the game.
 
 Use the `chrome-devtools` MCP. Pass the full source of [probe/install.js](../../probe/install.js) as the navigation `initScript` before the game URL loads. If that MCP is not connected, stop and point at the README. Do not inject the probe after the game is already playable.
 
-`window.__slotPerf.summary()` is the only measurement source. `window.__slotPerf.mark(name)` opens a stage. `window.__slotPerf.buttons(words)` lists active Cocos buttons with their text and page coordinates.
+`window.__slotPerf.summary()` is the only measurement source. `window.__slotPerf.mark(name)` opens a stage. `window.__slotPerf.buttons(words)` lists clickable Cocos nodes with their text and page coordinates.
 
-Some games stop on a start screen when loading finishes. Poll `buttons()` during loading. If a start button appears before the spin button, follow 開始畫面 in [protocol/scenarios.md](../../protocol/scenarios.md): wait until loading has settled, `mark("splash")`, then `mark("enter")` and click it.
+Do not assume how a game gets from loading to the first spin. Some go straight in. Others stop on a start screen, a tap-anywhere screen, or one or more notices, with the button anywhere. Run the 進遊戲 loop in [protocol/scenarios.md](../../protocol/scenarios.md) with `window.__slotPerf.entry(thresholds.entry)` once a second until `spinReady`. If nothing safe can be pressed, stop and report a screenshot instead of guessing.
 
 After `mark("idle")`, check `channels.frameLoop` and `channels.engineCpu` before going further. They must show `tick` or `mainLoop` and true. If they show `raf`, CPU is unavailable for the run.
 

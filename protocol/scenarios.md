@@ -5,7 +5,7 @@
 ## 階段
 
 1. `boot`：網址開始到第一個 WebGL 幀。探針自動切。
-2. `loading`：第一個幀到 agent 呼叫 `mark("game-ready")`。旋轉鈕可按時才打這個 mark。引擎主迴圈掛上之前，主執行緒時間只靠 long task。中間如果停在開始畫面，照下面「開始畫面」切成 `splash` 和 `enter`。
+2. `loading`：第一個幀到 agent 呼叫 `mark("game-ready")`。旋轉鈕可按時才打這個 mark。引擎主迴圈掛上之前，主執行緒時間只靠 long task。中間要按開始或關公告時，照下面「進遊戲」切成 `splash` 和 `enter`。
 3. `idle`：`mark("idle")` 後等待 `idleSeconds`。這是後面所有差值的基準。
 4. 功能列表只負責打開，不單獨成結論。
 5. `history-before`：打開下注紀錄。先記 `panelSpikeSeconds` 的尖峰，再記 `panelSteadySeconds` 的穩態，然後關閉。
@@ -19,27 +19,47 @@ Feature 或大獎只在該轉的 mark 上記 `tags`。不另外加轉，不買 F
 
 4 倍 CPU 慢速不在這一次裡。要測時另開一輪，只量待機與少數幾轉。
 
-## 開始畫面
+## 進遊戲
 
-有些遊戲載入滿了會停在一張主視覺，要先按「開始」才進遊戲。不按的話會一直停在這裡，等不到旋轉鈕。
+每款遊戲從載入到能轉的路都不一樣，不能假設有開始鈕，也不能假設它在哪裡。可能是：
 
-載入期間每秒呼叫一次 `__slotPerf.buttons()`，直到看到旋轉鈕或開始鈕，最多等 `loadingMaxSeconds`：
+- 載入完直接進遊戲，沒有任何畫面要按。
+- 一張主視覺加一顆開始鈕，位置每款不同。
+- 開始鈕不是 `cc.Button`，而是掛了 touch 事件的節點，或是蓋在畫布上的 HTML 按鈕。
+- 畫面寫「點擊任意處開始」，沒有按鈕。
+- 開始之後還有一兩層公告、玩法說明、「知道了」。
 
-1. 先看有沒有旋轉鈕。有就是沒有開始畫面，照常 `mark("game-ready")`。
-2. 有開始鈕（字或節點名對得上下表的「開始」；開始字是圖片時，節點名常是 `btn_start`、`enter` 這類）、`interactable` 是 true，而且 `quietMs` 超過 `loadingQuietMs`，才算載入滿了。進度條還在跑、貼圖還在上傳時不按。
-3. 載入滿的當下 `mark("splash")`。截圖確認畫面上真的是開始鈕。
-4. 按之前 `mark("enter")`，用 pointer 事件點開始鈕。座標用 `buttons()` 回的 `point`；它是 null 或跟截圖對不上時，才用截圖上的位置。
-5. 旋轉鈕可按時 `mark("game-ready")`。
+所以這一段是一個迴圈，不是固定步驟。字表全在 `thresholds.json` 的 `entry`。
 
-`splash` 是等使用者按的時間，長短由 agent 決定，不評分。`enter` 是按下去到可以轉，跟 `loading` 一樣算載入。開始畫面上如果有「不再顯示」之類的勾選，不要勾。
+每秒呼叫一次 `__slotPerf.entry(entry)`，最多 `entry.maxSeconds` 秒、最多按 `entry.maxSteps` 次：
+
+1. `spinReady` 是 true：已經在遊戲裡，`mark("game-ready")`，結束迴圈。
+2. 還沒載入滿：`quietMs` 小於 `entry.quietMs`，或候選清單跟上一秒不同，就繼續等。候選要連續 `entry.stablePolls` 次一樣才算穩。進度條還在跑時不按。
+3. 載入滿了但不能轉，就先截圖，看畫面上要按什麼。第一次走到這裡時 `mark("splash")`。
+4. 依這個順序選一個來按，只選一個：
+   1. `start` 裡 `interactable` 的。
+   2. `dismiss` 裡的，用於公告和說明。
+   3. `dom` 裡的，用於 HTML 按鈕。
+   4. `tapAnywhere` 有字時，點畫布正中央。
+   5. 都沒有，就看截圖：畫面上有明顯的開始或確認鈕，就點它的位置；看不出來就停下來，回報截圖，不要亂點。
+5. 按之前 `mark("enter")`，用 pointer 事件點 `point`。`point` 是 null 或跟截圖對不上時，用截圖上的位置。按完回到第 1 步。
+
+不要按 `avoidWords` 對得上的東西，像購買、加注、自動、不再顯示、返回大廳。`entry()` 已經把它們濾掉，但用截圖選位置時也要照這個規則。
+
+每按一次就在 `evidence.entry.steps` 記一筆 `{ kind, text, afterMs }`。`kind` 是 `button`、`touch`、`dom`、`tap-anywhere` 或 `screenshot`，`afterMs` 是從開網址算起的毫秒。`evidence.entry.result` 寫下面其中一個：
+
+- `direct`：沒按就能轉。
+- `pressed`：按了之後能轉。
+- `stuck`：到上限還不能轉。這時停止量測，回報截圖和 `texts`。
+
+`splash` 是等人按的時間，由 agent 決定長短，不評分。`enter` 是按下去到下一個畫面，跟 `loading` 一樣算載入。有好幾層就會有好幾段 `splash` 和 `enter`，報告會合在一起畫。
 
 ## 按鈕別名
 
-先用 `__slotPerf.buttons(["字1", "字2"])` 讀引擎節點名與 Label 字串。沒有引擎文字時才用截圖座標。點擊後確認面板出現才計時。
+進遊戲用的字表在 `thresholds.json` 的 `entry`。其他按鈕先用 `__slotPerf.buttons(["字1", "字2"])` 讀引擎節點名與 Label 字串。沒有引擎文字時才用截圖座標。點擊後確認面板出現才計時。
 
 | 目標 | 可接受的字 |
 | --- | --- |
-| 開始 | 開始、开始、進入遊戲、进入游戏、點擊開始、点击开始、Start、Play、Tap to start、Continue |
 | 功能列表 | 功能列表、選單、menu、Menu |
 | 下注紀錄 | 下注紀錄、遊戲紀錄、歷史、Bet History、History |
 | 遊戲規則 | 遊戲規則、規則、說明、Help、Paytable、Game Rules |

@@ -713,22 +713,111 @@
     }
   }
 
-  function buttonList(words) {
-    var match = words && words.length ? words.map(function (w) { return String(w).toLowerCase(); }) : null;
+  function lower(words) {
+    return (words || []).map(function (w) { return String(w).toLowerCase(); });
+  }
+
+  function hits(hay, words) {
+    return words.some(function (w) { return hay.indexOf(w) >= 0; });
+  }
+
+  var TOUCH_EVENTS = ["touchend", "touchstart", "mouseup", "mousedown", "touch-end", "touch-start", "mouse-up", "mouse-down"];
+
+  function listensToTouch(node) {
+    if (node._touchListener) return true;
+    if (typeof node.hasEventListener !== "function") return false;
+    try {
+      return TOUCH_EVENTS.some(function (e) { return node.hasEventListener(e); });
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Clickable Cocos nodes: cc.Button, or any node with a touch or mouse listener.
+  function clickables(limit) {
     var list = [];
+    var root = window.cc && window.cc.director.getScene();
     walkScene(function (node) {
-      if (list.length >= 30 || node.activeInHierarchy === false) return;
+      if (list.length >= limit || node.activeInHierarchy === false || node === root) return;
       var comps = node._components || node.components || [];
+      var btn = null;
       for (var i = 0; i < comps.length; i += 1) {
-        if (className(comps[i]) !== "cc.Button" || comps[i].enabled === false) continue;
-        var text = nodeText(node);
-        var hay = (node.name + " " + text).toLowerCase();
-        if (match && !match.some(function (w) { return hay.indexOf(w) >= 0; })) return;
-        list.push({ name: node.name, text: text, interactable: comps[i].interactable !== false, point: screenPoint(node) });
-        return;
+        if (className(comps[i]) === "cc.Button" && comps[i].enabled !== false) { btn = comps[i]; break; }
       }
+      if (!btn && !listensToTouch(node)) return;
+      list.push({ kind: btn ? "button" : "touch", name: node.name || "", text: nodeText(node), interactable: btn ? btn.interactable !== false : true, node: node });
     });
     return list;
+  }
+
+  function buttonList(words) {
+    var match = lower(words);
+    return clickables(200)
+      .filter(function (b) { return !match.length || hits((b.name + " " + b.text).toLowerCase(), match); })
+      .slice(0, 30)
+      .map(function (b) { return { kind: b.kind, name: b.name, text: b.text, interactable: b.interactable, point: screenPoint(b.node) }; });
+  }
+
+  function domCandidates(words) {
+    var out = [];
+    if (!words.length || !document.querySelectorAll) return out;
+    var els = document.querySelectorAll("button, a, [role=button], [onclick], div, span");
+    for (var i = 0; i < els.length && out.length < 10; i += 1) {
+      var el = els[i];
+      var text = (el.innerText || el.textContent || "").trim();
+      if (!text || text.length > 16 || !hits(text.toLowerCase(), words)) continue;
+      var r = el.getBoundingClientRect();
+      if (!r.width || !r.height || getComputedStyle(el).visibility === "hidden") continue;
+      out.push({ kind: "dom", name: el.tagName.toLowerCase(), text: text, interactable: !el.disabled, point: { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } });
+    }
+    return out;
+  }
+
+  function activeTexts(limit) {
+    var out = [];
+    walkScene(function (node) {
+      if (out.length >= limit || node.activeInHierarchy === false) return;
+      var comps = node._components || node.components || [];
+      for (var i = 0; i < comps.length; i += 1) {
+        var s = comps[i] && comps[i].string;
+        if (typeof s === "string" && s.trim()) out.push(s.trim().slice(0, 30));
+      }
+    });
+    return out;
+  }
+
+  // What stands between loading and the first spin. cfg is protocol/thresholds.json "entry".
+  function entryState(cfg) {
+    cfg = cfg || {};
+    var spinW = lower(cfg.spinWords);
+    var startW = lower(cfg.startWords);
+    var dismissW = lower(cfg.dismissWords);
+    var tapW = lower(cfg.tapAnywhereWords);
+    var avoidW = lower(cfg.avoidWords);
+    var hasScene = !!(window.cc && cc.director && cc.director.getScene && cc.director.getScene());
+    var all = hasScene ? clickables(300) : [];
+    var pick = function (words) {
+      return all
+        .filter(function (b) {
+          var hay = (b.name + " " + b.text).toLowerCase();
+          return hits(hay, words) && !hits(hay, avoidW);
+        })
+        .slice(0, 8)
+        .map(function (b) { return { kind: b.kind, name: b.name, text: b.text, interactable: b.interactable, point: screenPoint(b.node) }; });
+    };
+    var texts = hasScene ? activeTexts(60) : [];
+    var spin = pick(spinW);
+    return {
+      quietMs: Math.round(performance.now() - (state.lastTexUploadAt || state.t0)),
+      scene: hasScene,
+      spinReady: spin.some(function (b) { return b.interactable; }),
+      spin: spin,
+      start: pick(startW),
+      dismiss: pick(dismissW),
+      dom: domCandidates(startW.concat(dismissW).filter(function (w) { return !hits(w, avoidW); })),
+      tapAnywhere: texts.filter(function (t) { return hits(t.toLowerCase(), tapW); }).slice(0, 3),
+      texts: texts.slice(0, 20)
+    };
   }
 
   function device() {
@@ -774,13 +863,16 @@
       info.t = rel(performance.now());
       return info;
     },
-    // Active cc.Button nodes, optionally only those whose name or text contains one of words.
+    // Clickable Cocos nodes, optionally only those whose name or text contains one of words.
     // quietMs is how long since the last texture upload, a sign that loading has settled.
     buttons: function (words) {
       return {
         quietMs: Math.round(performance.now() - (state.lastTexUploadAt || state.t0)),
         buttons: buttonList(words)
       };
+    },
+    entry: function (cfg) {
+      return entryState(cfg);
     },
     summary: function () {
       var open = state.stage ? finishStage(state.stage) : null;

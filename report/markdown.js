@@ -59,6 +59,11 @@ const est = score.memory.estimateMb;
 const growth = score.memory.items.find((i) => i.id === "growth");
 lines.push(`- **記憶體**：${est ? `推估最高 ${Math.round(est.total)} MB，預算 ${score.memory.budgetMb} MB（JS ${Math.round(est.heap)}、貼圖 ${Math.round(est.texture)}、畫面 ${Math.round(est.framebuffer)}）。` : "這次沒量到。"}${growth && growth.value != null ? `每轉多留 ${growth.value} MB。` : ""}`);
 
+const entry = ev.entry;
+if (entry && entry.result) {
+  const steps = (entry.steps || []).map((s) => s.text || s.kind).join(" → ");
+  lines.push(`- **進遊戲**：${{ direct: "載入完直接能轉", pressed: `按了 ${(entry.steps || []).length} 次才能轉（${steps}）`, stuck: `卡住，沒進到能轉的畫面${steps ? `（按過 ${steps}）` : ""}` }[entry.result]}`);
+}
 const advice = ev.cocosAdvice;
 if (advice) {
   const sc = advice.scene;

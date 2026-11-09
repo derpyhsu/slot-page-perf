@@ -43,6 +43,24 @@
       }
     },
     "missing": { "type": "array", "items": { "type": "string" } },
+    "entry": {
+      "type": "object",
+      "description": "How the run got from loading to the first spin. See 進遊戲 in protocol/scenarios.md.",
+      "properties": {
+        "result": { "enum": ["direct", "pressed", "stuck"] },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": { "enum": ["button", "touch", "dom", "tap-anywhere", "screenshot"] },
+              "text": { "type": "string" },
+              "afterMs": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
     "score": { "type": "object", "description": "Written by report/analyze.js." },
     "cocosAdvice": { "type": "object", "description": "Written by report/analyze.js." },
     "todo": { "type": "array", "description": "Written by report/analyze.js. issues plus cocosAdvice items, worst first." },
