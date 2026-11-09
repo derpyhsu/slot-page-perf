@@ -19,4 +19,4 @@ Before measuring, read `skill/slot-page-perf/SKILL.md`, then `protocol/scenarios
 
 ## Output
 
-Save `__slotPerf.auto.result()` as `runs/<utc>-<slug>/raw.json`, write the short `notes.json`, and run `node report/build.js runs/<utc>-<slug>` (add `--canvas <path>` in Cursor). It writes `evidence.json` per `probe/schema.json`, applies `protocol/rules.md` and `protocol/scoring.md`, and generates the report. Do not hand-write findings, scores, or the report.
+Save `__slotPerf.auto.result()` as `runs/<utc>-<slug>/raw.json`, write the short `notes.json`, and run `node report/build.js runs/<utc>-<slug>`. It writes `evidence.json` per `probe/schema.json`, applies `protocol/rules.md` and `protocol/scoring.md`, and generates `report.html`. That page is the report: stage zoom on the timeline, and the readings up top. `report.md` plus `timeline.svg` is only the GitHub copy. Do not hand-write findings, scores, or the report, and do not make a Cursor canvas.

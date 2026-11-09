@@ -16,7 +16,7 @@
       "stage": "spin-1",
       "level": "red",
       "area": "卡頓",
-      "next": "在旋轉當下錄 DevTools Performance，看這 210 ms 落在 GC、Spine 更新還是結果解析。"
+      "next": "在 spin 當下錄 DevTools Performance，看這 210 ms 落在 GC、Spine 更新還是結果解析。"
     },
     {
       "title": "推估 415 MB，超過 300 MB 預算；171 張貼圖全沒壓縮",
@@ -457,7 +457,7 @@
       "level": "red",
       "title": "每一轉有一幀停 0.2 秒",
       "area": "卡頓",
-      "fix": "在旋轉當下錄 DevTools Performance，看這 210 ms 落在 GC、Spine 更新還是結果解析。",
+      "fix": "在 spin 當下錄 DevTools Performance，看這 210 ms 落在 GC、Spine 更新還是結果解析。",
       "stage": "spin-1",
       "t": null
     },
@@ -533,7 +533,7 @@
     },
     {
       "group": "spin",
-      "label": "一般旋轉",
+      "label": "spin",
       "stages": 1,
       "fps": 58.4,
       "fpsLow": null,
@@ -542,7 +542,7 @@
     },
     {
       "group": "turbo",
-      "label": "加速旋轉",
+      "label": "加速 spin",
       "stages": 1,
       "fps": 58.9,
       "fpsLow": null,

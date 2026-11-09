@@ -81,8 +81,12 @@ function worstStall() {
 
 function cpuP95() {
   if (!(ev.channels && ev.channels.engineCpu)) return null;
-  const xs = gameStages.filter((s) => s.cpuMs && s.cpuFrames !== 0).map((s) => s.cpuMs.p95);
-  return xs.length ? Math.max(...xs) : null;
+  let best = null;
+  gameStages.forEach((s) => {
+    if (!s.cpuMs || s.cpuFrames === 0 || s.cpuMs.p95 == null) return;
+    if (!best || s.cpuMs.p95 > best.value) best = { value: s.cpuMs.p95, stage: s.name };
+  });
+  return best;
 }
 
 function heapPeak() {
@@ -149,7 +153,8 @@ function total(items, cap) {
 const S = cfg.smooth;
 const stable = stableShare();
 const stall = worstStall();
-const cpu = cpuP95();
+const cpuStat = cpuP95();
+const cpu = cpuStat && cpuStat.value;
 const smoothItems = [
   {
     id: "stable",
@@ -180,6 +185,7 @@ const smoothItems = [
     weight: S.cpu.weight,
     value: cpu == null ? null : round(cpu, 1),
     unit: "ms",
+    stage: cpuStat && cpuStat.stage,
     full: `${S.cpu.full} ms`,
     zero: `${S.cpu.zero} ms`,
     score: cpu == null ? null : cpu <= S.cpu.full ? 1 : curve(cpu, S.cpu.full, S.cpu.zero, { log: true }),
@@ -279,13 +285,13 @@ const STAGE_NAMES = {
   "idle-after-rules": "規則後待機",
   "history-after": "轉後下注紀錄",
   "idle-end": "最後待機",
-  spin: "一般旋轉",
-  turbo: "加速旋轉",
+  spin: "spin",
+  turbo: "加速 spin",
 };
 function stageName(name) {
   if (!name) return null;
-  if (/^spin-\d+$/.test(name)) return "一般旋轉";
-  if (/^turbo-\d+$/.test(name)) return "加速旋轉";
+  if (/^spin-\d+$/.test(name)) return "spin";
+  if (/^turbo-\d+$/.test(name)) return "加速 spin";
   return STAGE_NAMES[name.replace(/-spike$/, "")] || name;
 }
 
@@ -388,7 +394,7 @@ function findingRows() {
       level: ratio > 1 ? "red" : ratio > 0.7 ? "orange" : "yellow",
       title: `記憶體推估 ${Math.round(est.total)} MB，佔 ${cfg.memoryBudgetMb} MB 預算 ${Math.round(ratio * 100)}%`,
       area: "記憶體",
-      fix: `GPU ${Math.round(est.texture)} MB 是大頭${big ? `，最大的是 ${big}` : ""}；先做貼圖壓縮，用不到的圖集在切場景時釋放。`,
+      fix: `GPU ${Math.round(est.texture)} MB 是大頭${big ? `，最大的是 ${big}` : ""}。待機時這些貼圖就在卡上，不是切場景會放掉的。格式見下面的未壓縮那條。`,
       stage: null,
       t: null,
     });
@@ -461,16 +467,17 @@ function cocosAdvice() {
     const uncompressed = texSource.count - (texSource.compressed || 0);
     const share = texSource.count ? uncompressed / texSource.count : 0;
     if (texSource.mb > C.uncompressedMinMb && share > C.uncompressedShare) {
-      add("cocos-texture-uncompressed", "記憶體", `${texSource.count} 張貼圖裡 ${uncompressed} 張沒壓縮，約 ${Math.round(texSource.mb)} MB`, "在構建的貼圖壓縮設定裡給大圖集加 ASTC 與 ETC2，iOS 加 PVRTC 或 ASTC。通常能省四分之三。");
+      add("cocos-texture-uncompressed", "記憶體", `${texSource.count} 張貼圖裡 ${uncompressed} 張沒壓縮，約 ${Math.round(texSource.mb)} MB`, "Cocos 2.4 的 web-mobile 用 ETC1。裝置支援 ASTC 再用 ASTC。WebGL 1 沒有 ETC2／PVRTC 這個預設。");
     }
     if (texSource.count && texSource.npot / texSource.count > C.npotShare) {
-      add("cocos-texture-npot", "記憶體", `${texSource.npot} 張貼圖的邊長不是 2 的冪`, "圖集打包時勾選 POT，才能用 PVRTC 壓縮和 mipmap。");
+      add("cocos-texture-npot", "記憶體", `${texSource.npot} 張貼圖的邊長不是 2 的冪`, "ETC1 和 ASTC 不需要 POT。把圖墊成 POT 會更佔記憶體；只有 PVRTC 或 mipmap 才勾。");
     }
   }
 
   const noCache = max((s) => s.labels.noCache);
   if (noCache != null && noCache > C.labelNoCacheActive) {
-    add("cocos-label-no-cache", "draw call", `${noCache} 個 Label 沒開快取`, "常變的數字用 CHAR，固定文字用 BITMAP，才能和其他圖合批。");
+    const system = last.labels && last.labels.systemFont;
+    add("cocos-label-no-cache", "draw call", `${noCache} 個 Label 沒開快取${system ? `，其中 ${system} 個是系統字` : ""}`, "系統字不會跟圖集合批。固定文字改 BitmapFont，常變的數字用 CHAR。");
   }
   const masks = max((s) => s.masks.active);
   if (masks != null && masks > C.masksActive) {
@@ -486,13 +493,18 @@ function cocosAdvice() {
     add("cocos-nodes-many", "CPU", `場景有 ${nodes} 個節點${active != null ? `，${active} 個在顯示` : ""}`, "不在畫面的面板與特效改成用時再生，或放進物件池。");
   }
   if (settings.cleanupImageCache === false) {
-    add("cocos-image-cache-kept", "記憶體", "貼圖上傳後，原圖還留在 JS 記憶體", "把 cc.macro.CLEANUP_IMAGE_CACHE 設成 true。");
+    add(
+      "cocos-image-cache-kept",
+      "記憶體",
+      "貼圖上傳後，原圖還留在 JS 記憶體",
+      settings.dynamicAtlas ? "動態合圖是開的。CLEANUP_IMAGE_CACHE 設成 true 會讓合圖失效，兩件事不能同時開。" : "把 cc.macro.CLEANUP_IMAGE_CACHE 設成 true。"
+    );
   }
   if (settings.dynamicAtlas === false) {
     add("cocos-dynamic-atlas-off", "draw call", "動態合圖是關的", "小圖多的介面打開 cc.dynamicAtlasManager.enabled。");
   }
   if (settings.webglVersion === 1 && settings.webgl2Available) {
-    add("cocos-webgl1", "draw call", `用的是 WebGL 1${last.engine ? `（Cocos ${last.engine}）` : ""}，瀏覽器有 WebGL 2`, "升級引擎版本才能用 WebGL 2 與 instancing。短期內先降 draw call。");
+    add("cocos-webgl1", "draw call", `用的是 WebGL 1${last.engine ? `（Cocos ${last.engine}）` : ""}，瀏覽器有 WebGL 2`, "Cocos 2.4 只有 WebGL 1，沒有開關。WebGL 2 要換 3.x。這次先降 draw call。");
   }
   if (settings.frameRate != null && settings.frameRate < 60) {
     add("cocos-frame-rate", "穩定性", `幀率上限設成 ${settings.frameRate}`, "目標是穩定 60，確認 cc.game.frameRate 是 60。");

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Usage: node report/build.js runs/<run> [--raw <saved raw.json>] [--canvas <out.canvas.tsx>]
+// Usage: node report/build.js runs/<run> [--raw <saved raw.json>]
 // --raw copies a result saved elsewhere (the MCP's temp directory) into runs/<run>/raw.json first.
 // Reads runs/<run>/raw.json (auto.result() saved by evaluate_script filePath) and the optional
 // notes.json the agent writes (displayName, summary, issues, missing). Writes evidence.json,
-// findings, scores, report.md, and the canvas, then prints a short digest for the agent.
+// findings, scores, the interactive report.html (plus report.md and timeline.svg for GitHub), then prints a short digest for the agent.
 "use strict";
 
 const fs = require("fs");
@@ -14,11 +14,9 @@ const { findings } = require("./findings");
 const args = process.argv.slice(2);
 const runDir = args[0];
 if (!runDir) {
-  console.error("usage: node report/build.js <runDir> [--canvas <out.canvas.tsx>]");
+  console.error("usage: node report/build.js <runDir> [--raw <saved raw.json>]");
   process.exit(1);
 }
-const canvasAt = args.indexOf("--canvas");
-const canvasOut = canvasAt >= 0 ? args[canvasAt + 1] : null;
 const T = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "protocol", "thresholds.json"), "utf8"));
 
 function readJsonLoose(file) {
@@ -99,8 +97,7 @@ const node = process.execPath;
 const quiet = (script, extra) => execFileSync(node, [path.join(__dirname, script), evidencePath].concat(extra || []), { encoding: "utf8" }).trim();
 const scoreLine = quiet("analyze.js");
 quiet("markdown.js");
-if (canvasOut) quiet("canvas.js", [canvasOut]);
-
+quiet("html.js");
 // Digest: what the agent needs to write summary, issues and missing. Keep it short.
 const done = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
 const c = ev.conditions;

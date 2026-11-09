@@ -31,8 +31,8 @@ Use the `chrome-devtools` MCP. If it is not connected, stop and point at the REA
    - `needs: "error"` or `phase: "stuck"`: stop and report `note`.
    - After `phase: "idle"`, check that `channels.engineCpu` is true. If `frameLoop` is `raf`, CPU is unavailable for the run.
 7. When `phase` is `done`, `evaluate_script` `() => __slotPerf.auto.result()` with `filePath` = `runs/<utc>-<slug>/raw.json`. Do not return it inline.
-8. `node report/build.js runs/<utc>-<slug>`. It writes evidence, findings, scores and report.md, and prints a digest of about 20 lines.
-9. From the digest, write `runs/<utc>-<slug>/notes.json` (below), then run step 8 again with `--canvas <workspace>/canvases/<slug>.canvas.tsx` in Cursor.
+8. `node report/build.js runs/<utc>-<slug>`. It writes evidence, findings, scores and `report.html`, and prints a digest of about 20 lines.
+9. From the digest, write `runs/<utc>-<slug>/notes.json` (below), then run step 8 again. Open `report.html`. `report.md` and `timeline.svg` are the GitHub copy of the same run. Do not make a Cursor canvas.
 
 Take screenshots only when the driver asks or the user wants to see something. Each one costs far more than a status reply.
 

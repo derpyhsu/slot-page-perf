@@ -18,7 +18,7 @@
 
 ## fps-drop
 
-遊戲階段（待機、旋轉、加速、面板穩態），同類階段合在一起看。下面任一條成立就觸發，證據寫三個數字：
+遊戲階段（待機、spin、加速、面板穩態），同類階段合在一起看。下面任一條成立就觸發，證據寫三個數字：
 
 - 平均 FPS 低於 `fps.stageMin`
 - 掉幀比例 `dropShare` 高於 `fps.dropShareMax`。掉幀是「應該出現卻沒出現」的幀占比：應有幀率取螢幕更新率（該階段中位數幀長）和引擎幀率上限 `cc.game.getFrameRate()` 較低者。所以 64 Hz 螢幕配 60 上限的正常跳幀不算掉幀。
@@ -48,7 +48,7 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 只在完成至少 `warmupSpins` 之後、而且有第 `warmupSpins` 轉停穩與最後一轉停穩的 heap 地板時才判斷。
 
 - 增量大於 `leakMb`
-- 最後 `leakTailSpins` 轉的地板仍在上升
+- 最後 `leakTailSpins` 轉的地板仍在上升。地板是這段的局部低點；低點沒有再抬高，或只是跳上去之後鋸齒來回，都不算還在上升
 
 兩件都成立才標 `leak-suspected`。沒有第 5 轉與最後一轉的 heap snapshot 差值時，狀態寫「疑似」，不寫「已證實」。轉數不夠就寫 `not-enough-spins`，不要當成沒有洩漏。
 
@@ -69,14 +69,14 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 | `cocos-spine-realtime` | 畫面上的 realtime Spine 多於 `spineRealtimeActive` | CPU：每幀都在算骨骼 |
 | `cocos-spine-cache-warning` | 主控台有 Spine 快取模式不支援的呼叫（例如 `clearTrack`） | 動畫狀態會錯，也是無效呼叫 |
 | `cocos-texture-uncompressed` | 貼圖超過 `uncompressedMinMb`，而且未壓縮的比例超過 `uncompressedShare` | 記憶體 |
-| `cocos-texture-npot` | 邊長不是 2 的冪的比例超過 `npotShare` | 記憶體：不能用 PVRTC，也不能生 mipmap |
+| `cocos-texture-npot` | 邊長不是 2 的冪的比例超過 `npotShare` | 只有 PVRTC 和 mipmap 才需要 POT。ETC1、ASTC 不用，把圖墊成 POT 會更佔記憶體 |
 | `cocos-label-no-cache` | 畫面上 cacheMode 為 NONE 的 Label 多於 `labelNoCacheActive` | draw call 與 CPU：每個 Label 自己一張貼圖 |
 | `cocos-mask-many` | 畫面上的 Mask 多於 `masksActive` | draw call：每個 Mask 打斷合批 |
 | `cocos-particles-many` | 畫面上粒子上限加總超過 `particlesMax` | CPU 與填色 |
 | `cocos-nodes-many` | 場景節點多於 `nodesTotal` | CPU 與記憶體：隱藏的節點也還在 |
-| `cocos-image-cache-kept` | `CLEANUP_IMAGE_CACHE` 為 false | 記憶體：上傳後原圖還留在 JS 記憶體 |
+| `cocos-image-cache-kept` | `CLEANUP_IMAGE_CACHE` 為 false | 上傳後原圖還留在 JS。動態合圖開著時不能同時把 CLEANUP_IMAGE_CACHE 設成 true，合圖會失效 |
 | `cocos-dynamic-atlas-off` | 動態合圖關閉 | draw call |
-| `cocos-webgl1` | 瀏覽器有 WebGL 2，遊戲卻用 WebGL 1 | 少了 instancing 等能力 |
+| `cocos-webgl1` | 瀏覽器有 WebGL 2，遊戲卻用 WebGL 1 | Cocos 2.4 只有 WebGL 1，沒有開關。WebGL 2 要換 3.x |
 | `cocos-frame-rate` | `frameRate` 設成 60 以外 | 上限不是 60 |
 | `cocos-console-errors` | 主控台有引擎 error，或同一句 warning 超過 `consoleRepeat` 次 | 穩定性：資源或流程有錯 |
 

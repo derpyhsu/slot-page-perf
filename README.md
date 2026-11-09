@@ -31,18 +31,16 @@ MCP 沒連上時不要改用猜的數字。先把這個伺服器接上。
 
 Agent 會在開頁之前注入 `probe/install.js`。30 轉會花掉目前押注，開始前會先把押注顯示給你確認。
 
-結果寫在 `runs/<時間>-<遊戲>/evidence.json`。這個目錄不進 git。報告由腳本產生：
+結果寫在 `runs/<時間>-<遊戲>/`。這個目錄不進 git。報告由腳本產生：
 
 ```
-node report/analyze.js runs/<run>/evidence.json
-node report/markdown.js runs/<run>/evidence.json
-node report/canvas.js runs/<run>/evidence.json <工作區>/canvases/<遊戲>.canvas.tsx
+node report/build.js runs/<run>
 ```
 
-最後一行只給 Cursor 用。
+產出 `report.html`（階段可切換的時間軸）。`report.md` 和 `timeline.svg` 是給 GitHub 看的同一份。
 
 ## 邊界
 
 流程與門檻在 `protocol/`。問題必須對得上 `protocol/rules.md`。evidence 只留網址路徑，不留 query string，避免把 session 寫進檔案。
 
-`examples/life-of-pets.short.json` 是建立這套流程之前的短測，`examples/life-of-pets.md` 是它產生的報告。它沒有 loading、沒有兩個面板，也沒有整段旋轉，Cocos 數字是當時手動讀的。
+`examples/life-of-pets.short.json` 是建立這套流程之前的短測，`examples/life-of-pets.md` 是它產生的報告。它沒有 loading、沒有兩個面板，也沒有整段 spin，Cocos 數字是當時手動讀的。

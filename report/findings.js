@@ -112,7 +112,12 @@ function findings(ev, T) {
     const from = spins[T.warmupSpins - 1].heapEndMb;
     const to = spins[spins.length - 1].heapEndMb;
     const tail = spins.slice(-T.leakTailSpins).map((s) => s.heapEndMb).filter((v) => v != null);
-    const rising = tail.length >= 3 && tail[tail.length - 1] > tail[0] && Math.min(...tail.slice(Math.floor(tail.length / 2))) > Math.min(...tail.slice(0, Math.floor(tail.length / 2)));
+    // Floors are the local lows. A step that then sawtooths is not "still rising".
+    const floors = [];
+    for (let i = 1; i < tail.length - 1; i++) {
+      if (tail[i] <= tail[i - 1] && tail[i] <= tail[i + 1]) floors.push(tail[i]);
+    }
+    const rising = floors.length >= 2 ? floors[floors.length - 1] > floors[0] + 1 : tail.length >= 3 && tail[tail.length - 1] > tail[0] + 1;
     if (from != null && to != null && to - from > T.leakMb && rising) out.push({ id: "leak-suspected", status: "suspected", from, to, delta: round(to - from) });
   }
 

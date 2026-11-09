@@ -5,6 +5,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { metaLine, readoutMarkdown } = require("./readout");
 
 const evidencePath = process.argv[2];
 if (!evidencePath) {
@@ -20,24 +21,25 @@ if (!score) {
 }
 
 const dot = { green: "🟢", yellow: "🟡", orange: "🟠", red: "🔴" };
-const scoreDot = (s) => (s == null ? "⚪" : s >= 90 ? dot.green : s >= 70 ? dot.yellow : s >= 50 ? dot.orange : dot.red);
-const fmtScore = (p) => (p.score == null ? "未評分" : `${p.score}${p.provisional ? `（暫定，量到 ${p.coverage}%）` : ""}`);
 
 const lines = [];
-const c = ev.conditions || {};
 lines.push(`# ${ev.game.displayName || ev.game.title} 效能報告`);
 lines.push("");
-lines.push(`${c.viewport ? `${c.viewport.w}×${c.viewport.h}` : ""} · Cocos ${c.engine || "?"} · ${(c.capturedAt || "").slice(0, 10)} · 目標：穩定 60 FPS，低階裝置不爆記憶體`);
+lines.push(metaLine(ev));
 lines.push("");
-lines.push("| | 分數 | 一句話 |");
-lines.push("| --- | --- | --- |");
-lines.push(`| 順暢 | ${scoreDot(score.smooth.score)} ${fmtScore(score.smooth)} | ${(ev.summary && ev.summary.smooth) || ""} |`);
-lines.push(`| 記憶體 | ${scoreDot(score.memory.score)} ${fmtScore(score.memory)} | ${(ev.summary && ev.summary.memory) || ""} |`);
-lines.push("");
-const fatal = score.smooth.fatal.length + score.memory.fatal.length;
-lines.push(fatal ? `**致命漏洞 ${fatal} 個**` : "沒有找到致命漏洞。");
-lines.push("");
-lines.push("全程時間軸在 Cursor 畫布裡（`report/canvas.js`）。");
+lines.push(readoutMarkdown(ev));
+const svg = require("./timeline").timelineSvg(ev);
+if (svg) {
+  const base = path.basename(outPath, ".md");
+  const svgName = base === "report" ? "timeline.svg" : `${base}.timeline.svg`;
+  fs.writeFileSync(path.join(path.dirname(outPath), svgName), svg);
+  lines.push("");
+  lines.push("## 全程時間軸");
+  lines.push("");
+  lines.push(`![全程時間軸](${svgName})`);
+  lines.push("");
+  lines.push("上到下：階段、每 0.25 秒的 FPS（虛線是 60）、主執行緒忙碌比例、超過 50 ms 的卡頓（黑圈數字對應下面表格）、記憶體。");
+}
 
 const cell = (s) => String(s == null ? "" : s).replace(/\|/g, "\\|").replace(/\n/g, " ");
 const todo = ev.todo || [];
@@ -45,9 +47,9 @@ if (todo.length) {
   lines.push("");
   lines.push("## 要處理的地方");
   lines.push("");
-  lines.push("| # | | 問題 | 類別 | 怎麼改 |");
-  lines.push("| --- | --- | --- | --- | --- |");
-  todo.forEach((r) => lines.push(`| ${r.n} | ${dot[r.level] || dot.red} | ${cell(r.title)} | ${cell(r.area)} | ${cell(r.fix)} |`));
+  lines.push("| # | 問題 | 類別 | 怎麼改 |");
+  lines.push("| --- | --- | --- | --- |");
+  todo.forEach((r) => lines.push(`| ${dot[r.level] || dot.red} ${r.n} | ${cell(r.title)} | ${cell(r.area)} | ${cell(r.fix)} |`));
 }
 
 lines.push("");
