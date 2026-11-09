@@ -17,7 +17,7 @@ const thresholds = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "protoc
 const cfg = thresholds.scoring;
 const ev = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
 
-const NOT_GAME = new Set(["boot", "loading", "game-ready", "gap"]);
+const NOT_GAME = new Set(["boot", "loading", "splash", "enter", "game-ready", "gap"]);
 const stages = ev.stages || [];
 const gameStages = stages.filter((s) => !NOT_GAME.has(s.name) && s.frames > 0);
 const spinStages = stages.filter((s) => /^(spin|turbo)-\d+$/.test(s.name));
@@ -263,6 +263,8 @@ const COCOS_LEVEL = {
 const STAGE_NAMES = {
   boot: "開機",
   loading: "載入",
+  splash: "開始畫面",
+  enter: "進遊戲",
   idle: "待機",
   menu: "功能列表",
   "history-before": "下注紀錄",

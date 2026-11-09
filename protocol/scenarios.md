@@ -5,7 +5,7 @@
 ## 階段
 
 1. `boot`：網址開始到第一個 WebGL 幀。探針自動切。
-2. `loading`：第一個幀到 agent 呼叫 `mark("game-ready")`。旋轉鈕可按時才打這個 mark。引擎主迴圈掛上之前，主執行緒時間只靠 long task。
+2. `loading`：第一個幀到 agent 呼叫 `mark("game-ready")`。旋轉鈕可按時才打這個 mark。引擎主迴圈掛上之前，主執行緒時間只靠 long task。中間如果停在開始畫面，照下面「開始畫面」切成 `splash` 和 `enter`。
 3. `idle`：`mark("idle")` 後等待 `idleSeconds`。這是後面所有差值的基準。
 4. 功能列表只負責打開，不單獨成結論。
 5. `history-before`：打開下注紀錄。先記 `panelSpikeSeconds` 的尖峰，再記 `panelSteadySeconds` 的穩態，然後關閉。
@@ -19,12 +19,27 @@ Feature 或大獎只在該轉的 mark 上記 `tags`。不另外加轉，不買 F
 
 4 倍 CPU 慢速不在這一次裡。要測時另開一輪，只量待機與少數幾轉。
 
+## 開始畫面
+
+有些遊戲載入滿了會停在一張主視覺，要先按「開始」才進遊戲。不按的話會一直停在這裡，等不到旋轉鈕。
+
+載入期間每秒呼叫一次 `__slotPerf.buttons()`，直到看到旋轉鈕或開始鈕，最多等 `loadingMaxSeconds`：
+
+1. 先看有沒有旋轉鈕。有就是沒有開始畫面，照常 `mark("game-ready")`。
+2. 有開始鈕（字或節點名對得上下表的「開始」；開始字是圖片時，節點名常是 `btn_start`、`enter` 這類）、`interactable` 是 true，而且 `quietMs` 超過 `loadingQuietMs`，才算載入滿了。進度條還在跑、貼圖還在上傳時不按。
+3. 載入滿的當下 `mark("splash")`。截圖確認畫面上真的是開始鈕。
+4. 按之前 `mark("enter")`，用 pointer 事件點開始鈕。座標用 `buttons()` 回的 `point`；它是 null 或跟截圖對不上時，才用截圖上的位置。
+5. 旋轉鈕可按時 `mark("game-ready")`。
+
+`splash` 是等使用者按的時間，長短由 agent 決定，不評分。`enter` 是按下去到可以轉，跟 `loading` 一樣算載入。開始畫面上如果有「不再顯示」之類的勾選，不要勾。
+
 ## 按鈕別名
 
-先讀引擎節點名與 Label 字串。沒有引擎文字時才用截圖座標。點擊後確認面板出現才計時。
+先用 `__slotPerf.buttons(["字1", "字2"])` 讀引擎節點名與 Label 字串。沒有引擎文字時才用截圖座標。點擊後確認面板出現才計時。
 
 | 目標 | 可接受的字 |
 | --- | --- |
+| 開始 | 開始、开始、進入遊戲、进入游戏、點擊開始、点击开始、Start、Play、Tap to start、Continue |
 | 功能列表 | 功能列表、選單、menu、Menu |
 | 下注紀錄 | 下注紀錄、遊戲紀錄、歷史、Bet History、History |
 | 遊戲規則 | 遊戲規則、規則、說明、Help、Paytable、Game Rules |

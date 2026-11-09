@@ -108,6 +108,8 @@ type Level = "green" | "yellow" | "orange" | "red";
 const STAGE_NAMES: Record<string, string> = {
   boot: "開機",
   loading: "載入",
+  splash: "開始畫面",
+  enter: "進遊戲",
   idle: "待機",
   menu: "功能列表",
   "history-before-spike": "下注紀錄",

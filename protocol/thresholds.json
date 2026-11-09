@@ -7,6 +7,8 @@
   "panelSteadySeconds": 5,
   "panelSpikeSeconds": 2,
   "hitchMs": 50,
+  "loadingQuietMs": 1500,
+  "loadingMaxSeconds": 90,
   "frameBudgetMs": 16.7,
   "cpuHeavyP95Ms": 12,
   "gpuHeavyP95Ms": 12,

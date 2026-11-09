@@ -248,6 +248,7 @@
       var orig = proto[name];
       proto[name] = function () {
         state.texUploads += 1;
+        state.lastTexUploadAt = performance.now();
         try {
           var src = arguments[arguments.length - 1];
           if (src && src.byteLength) state.texBytes += src.byteLength;
@@ -661,6 +662,75 @@
     return out;
   }
 
+  function nodeText(node) {
+    var out = [];
+    var stack = [node];
+    while (stack.length && out.length < 4) {
+      var n = stack.pop();
+      if (n.activeInHierarchy === false) continue;
+      var comps = n._components || n.components || [];
+      for (var i = 0; i < comps.length; i += 1) {
+        var s = comps[i] && comps[i].string;
+        if (typeof s === "string" && s.trim()) out.push(s.trim().slice(0, 30));
+      }
+      var kids = n.children || n._children || [];
+      for (var k = 0; k < kids.length; k += 1) stack.push(kids[k]);
+    }
+    return out.join(" ");
+  }
+
+  // Center of a node in CSS pixels of the page, or null. Best effort; confirm with a screenshot.
+  function screenPoint(node) {
+    var cc = window.cc;
+    var canvas = document.querySelector("canvas");
+    if (!cc || !canvas) return null;
+    try {
+      var rect = canvas.getBoundingClientRect();
+      var p = null;
+      var ui = cc.UITransform && node.getComponent && node.getComponent(cc.UITransform);
+      if (ui && cc.Camera) {
+        var cams = cc.director.getScene().getComponentsInChildren(cc.Camera);
+        var cam = null;
+        for (var i = 0; i < cams.length; i += 1) {
+          if (cams[i].visibility == null || (cams[i].visibility & node.layer)) { cam = cams[i]; break; }
+        }
+        if (!cam) return null;
+        var box = ui.getBoundingBoxToWorld();
+        var out = new cc.Vec3();
+        cam.worldToScreen(out, new cc.Vec3(box.x + box.width / 2, box.y + box.height / 2, 0));
+        p = { x: out.x / canvas.width, y: 1 - out.y / canvas.height };
+      } else if (node.convertToWorldSpaceAR && cc.view) {
+        var w = node.convertToWorldSpaceAR(cc.v2(0, 0));
+        var vp = cc.view.getViewportRect();
+        var px = w.x * cc.view.getScaleX() + vp.x;
+        var py = w.y * cc.view.getScaleY() + vp.y;
+        p = { x: px / canvas.width, y: 1 - py / canvas.height };
+      }
+      if (!p || !isFinite(p.x) || !isFinite(p.y) || p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return null;
+      return { x: Math.round(rect.left + p.x * rect.width), y: Math.round(rect.top + p.y * rect.height) };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function buttonList(words) {
+    var match = words && words.length ? words.map(function (w) { return String(w).toLowerCase(); }) : null;
+    var list = [];
+    walkScene(function (node) {
+      if (list.length >= 30 || node.activeInHierarchy === false) return;
+      var comps = node._components || node.components || [];
+      for (var i = 0; i < comps.length; i += 1) {
+        if (className(comps[i]) !== "cc.Button" || comps[i].enabled === false) continue;
+        var text = nodeText(node);
+        var hay = (node.name + " " + text).toLowerCase();
+        if (match && !match.some(function (w) { return hay.indexOf(w) >= 0; })) return;
+        list.push({ name: node.name, text: text, interactable: comps[i].interactable !== false, point: screenPoint(node) });
+        return;
+      }
+    });
+    return list;
+  }
+
   function device() {
     var gpu = null;
     var webgl = null;
@@ -703,6 +773,14 @@
       info.at = label || (state.stage && state.stage.name) || null;
       info.t = rel(performance.now());
       return info;
+    },
+    // Active cc.Button nodes, optionally only those whose name or text contains one of words.
+    // quietMs is how long since the last texture upload, a sign that loading has settled.
+    buttons: function (words) {
+      return {
+        quietMs: Math.round(performance.now() - (state.lastTexUploadAt || state.t0)),
+        buttons: buttonList(words)
+      };
     },
     summary: function () {
       var open = state.stage ? finishStage(state.stage) : null;
