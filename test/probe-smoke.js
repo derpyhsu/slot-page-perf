@@ -123,7 +123,7 @@ const idle = s.stages.find((x) => x.name === "idle");
 assert.strictEqual(s.channels.frameLoop, "tick");
 assert.strictEqual(s.channels.engineCpu, true);
 assert.strictEqual(idle.cpuMs.p95, 3, "per-frame CPU from director.tick");
-assert.ok(idle.fpsLow > 0 && idle.badShare === 0, "1% low and bad-frame share per stage");
+assert.ok(idle.fpsLow > 0 && idle.badShare === 0 && idle.dropShare === 0, "1% low, bad-frame and dropped-frame share per stage");
 assert.strictEqual(idle.gpuMemMb.peak, 5, "stage GPU memory peak");
 assert.strictEqual(s.memory.gpu.peakMb, 5);
 assert.strictEqual(snap.spine.realtime, 1);

@@ -23,11 +23,15 @@ function groups(stages) {
   stages.forEach((s) => {
     if (!s.frames || s.name === "gap") return;
     const g = s.name.endsWith("-spike") ? s.name : groupOf(s.name);
-    const row = out.get(g) || { group: g, stages: 0, frames: 0, ms: 0, bad: 0, lows: [], cpuP95: [], draws: 0, gpuPeak: null, heapEnd: null, hitches: [] };
+    const row = out.get(g) || { group: g, stages: 0, frames: 0, ms: 0, bad: 0, drop: 0, dropFrames: 0, lows: [], cpuP95: [], draws: 0, gpuPeak: null, heapEnd: null, hitches: [] };
     row.stages += 1;
     row.frames += s.frames;
     if (s.fps) row.ms += (s.frames * 1000) / s.fps;
     if (s.badShare != null) row.bad += s.badShare * s.frames;
+    if (s.dropShare != null) {
+      row.drop += s.dropShare * s.frames;
+      row.dropFrames += s.frames;
+    }
     if (s.fpsLow != null) row.lows.push(s.fpsLow);
     if (s.cpuMs && s.cpuFrames) row.cpuP95.push(s.cpuMs.p95);
     if (s.draws) row.draws += s.draws.avg * s.frames;
@@ -46,6 +50,7 @@ function groups(stages) {
       // Across many spins, the 1% low is the 10th percentile of per-spin 1% lows.
       fpsLow: lows.length ? lows[Math.floor((lows.length - 1) * (lows.length > 5 ? 0.1 : 0))] : null,
       badShare: r.frames ? round(r.bad / r.frames, 3) : null,
+      dropShare: r.dropFrames ? round(r.drop / r.dropFrames, 3) : null,
       cpuP95: r.cpuP95.length ? round(Math.max(...r.cpuP95)) : null,
       draws: r.frames ? round(r.draws / r.frames) : null,
       gpuPeakMb: r.gpuPeak,
@@ -80,8 +85,9 @@ function findings(ev, T) {
     const why = [];
     if (x.fps != null && x.fps < F.stageMin) why.push("fps");
     if (x.fpsLow != null && x.fpsLow < F.lowMin) why.push("fpsLow");
+    if (x.dropShare != null && x.dropShare > F.dropShareMax) why.push("dropShare");
     if (x.badShare != null && x.badShare > F.badShareMax) why.push("badShare");
-    if (why.length) out.push({ id: "fps-drop", stage: x.group, fps: x.fps, fpsLow: x.fpsLow, badShare: x.badShare, why, softwareGpu: soft || undefined });
+    if (why.length) out.push({ id: "fps-drop", stage: x.group, fps: x.fps, fpsLow: x.fpsLow, dropShare: x.dropShare, badShare: x.badShare, why, softwareGpu: soft || undefined });
   });
 
   if (engineCpu) {

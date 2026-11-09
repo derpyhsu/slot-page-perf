@@ -15,7 +15,7 @@
     "close": ["關閉", "关闭", "返回", "close", "btn_back", "btnback", "exit", "btn_x", "btnx", "cancel"],
     "bet": ["押注", "下注", "投注", "總押", "总押", "bet", "stake"]
   },
-  "settle": { "minMs": 1500, "stablePolls": 3, "pollMs": 250, "nudgeAfterMs": 30000, "maxMs": 120000 },
+  "settle": { "minMs": 1500, "stablePolls": 3, "pollMs": 250, "nudgeAfterMs": 30000, "maxMs": 120000, "stillMs": 15000, "hardMaxMs": 600000 },
   "entry": {
     "maxSeconds": 90,
     "maxSteps": 5,
@@ -33,7 +33,7 @@
   "gpuLightP95Ms": 8,
   "textureWarnMb": 150,
   "gpuMemoryWarnMb": 200,
-  "fps": { "stageMin": 55, "lowMin": 40, "badShareMax": 0.02 },
+  "fps": { "stageMin": 55, "dropShareMax": 0.03, "badShareMax": 0.01, "lowMin": 25 },
   "leakMb": 15,
   "leakTailSpins": 10,
   "timeline": {

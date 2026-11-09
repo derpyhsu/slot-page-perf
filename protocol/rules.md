@@ -21,8 +21,9 @@
 遊戲階段（待機、旋轉、加速、面板穩態），同類階段合在一起看。下面任一條成立就觸發，證據寫三個數字：
 
 - 平均 FPS 低於 `fps.stageMin`
-- 1% low 低於 `fps.lowMin`。1% low 是最慢那 1% 幀的 FPS。
-- 超過 33 ms 的幀佔比高於 `fps.badShareMax`
+- 掉幀比例 `dropShare` 高於 `fps.dropShareMax`。掉幀是「應該出現卻沒出現」的幀占比：應有幀率取螢幕更新率（該階段中位數幀長）和引擎幀率上限 `cc.game.getFrameRate()` 較低者。所以 64 Hz 螢幕配 60 上限的正常跳幀不算掉幀。
+- 超過 33 ms 的幀佔比 `badShare` 高於 `fps.badShareMax`
+- 1% low 低於 `fps.lowMin`。1% low 是最慢那 1% 幀的 FPS；幀長只會落在螢幕更新的整數倍，所以它常在 60 和 30 之間跳，只當輔助。
 
 `conditions.gpu` 是軟體繪製（SwiftShader、Microsoft Basic Render Driver、llvmpipe）時照樣觸發，但證據註明這是這台電腦的軟體繪製，不代表手機 GPU。
 

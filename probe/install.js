@@ -544,6 +544,23 @@
     return { avg: round(sum / arr.length), p50: pct(sorted, 0.5), p95: pct(sorted, 0.95), p99: pct(sorted, 0.99), max: round(sorted[sorted.length - 1]) };
   }
 
+  function frameCap() {
+    var g = window.cc && window.cc.game;
+    if (!g) return 60;
+    try {
+      return (typeof g.getFrameRate === "function" && g.getFrameRate()) || g.frameRate || (g.config && g.config.frameRate) || 60;
+    } catch (e) {
+      return 60;
+    }
+  }
+
+  function dropShare(dts, fps) {
+    if (dts.length < 20 || !fps) return null;
+    var med = pct(dts.slice().sort(function (a, b) { return a - b; }), 0.5);
+    var expected = Math.min(1000 / med, frameCap());
+    return Math.max(0, Math.round(1000 * (1 - fps / expected)) / 1000);
+  }
+
   function finishStage(s) {
     var wall = (s.t1 || performance.now()) - s.t0;
     var cpuPct = s.cpuDt > 0 ? round(100 * s.sumCpu / s.cpuDt) : null;
@@ -557,6 +574,9 @@
       // 1% low: the FPS of the slowest 1% of frames. badShare: share of frames over BAD_FRAME_MS.
       fpsLow: s.dts.length >= 20 ? round(1000 / pct(s.dts.slice().sort(function (a, b) { return a - b; }), 0.99)) : null,
       badShare: s.frames ? Math.round((1000 * s.bad) / s.frames) / 1000 : null,
+      // dropShare: expected frames that never showed. Expected is the slower of the display
+      // refresh (median frame) and the engine's frame cap, so a 60 cap on a 64 Hz screen is not a drop.
+      dropShare: dropShare(s.dts, s.sumDt > 0 ? 1000 / (s.sumDt / s.frames) : 0),
       frameMs: stat(s.dts),
       gpuMemMb: { start: round(s.gpuStart / 1048576), end: round((s.gpuEnd == null ? gpuTotal() : s.gpuEnd) / 1048576), peak: round(s.gpuPeak / 1048576) },
       cpuMs: stat(s.cpus),
@@ -822,6 +842,13 @@
         p = { x: out.x / canvas.width, y: 1 - out.y / canvas.height };
       } else if (node.convertToWorldSpaceAR && cc.view) {
         var w = node.convertToWorldSpaceAR(cc.v2(0, 0));
+        // The canvas can be wider than the game. Menus parked just outside the design area are
+        // active but cannot be hit, so treat them as off screen.
+        if (cc.view.getVisibleSize && cc.view.getVisibleOrigin) {
+          var vs = cc.view.getVisibleSize();
+          var vo = cc.view.getVisibleOrigin();
+          if (w.x < vo.x || w.x > vo.x + vs.width || w.y < vo.y || w.y > vo.y + vs.height) return null;
+        }
         var vp = cc.view.getViewportRect();
         var px = w.x * cc.view.getScaleX() + vp.x;
         var py = w.y * cc.view.getScaleY() + vp.y;

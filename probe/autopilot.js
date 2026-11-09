@@ -43,15 +43,28 @@
     return b.kind + ":" + b.name + ":" + b.text;
   }
 
+  // One input family per press. Some games listen to both pointer and mouse events, and a toggle
+  // such as a menu then opens and closes in the same press.
   function click(x, y) {
     var target = document.elementFromPoint(x, y) || (window.cc && cc.game && cc.game.canvas) || document.querySelector("canvas");
     if (!target) return false;
-    var o = { bubbles: true, cancelable: true, clientX: x, clientY: y, screenX: x, screenY: y, button: 0, pointerId: 1, pointerType: "mouse", isPrimary: true };
-    target.dispatchEvent(new PointerEvent("pointerdown", Object.assign({ buttons: 1 }, o)));
+    var o = { bubbles: true, cancelable: true, clientX: x, clientY: y, screenX: x, screenY: y, button: 0 };
+    if (target.tagName !== "CANVAS") {
+      var po = Object.assign({ pointerId: 1, pointerType: "mouse", isPrimary: true }, o);
+      target.dispatchEvent(new PointerEvent("pointerdown", Object.assign({ buttons: 1 }, po)));
+      target.dispatchEvent(new PointerEvent("pointerup", Object.assign({ buttons: 0 }, po)));
+      target.dispatchEvent(new MouseEvent("click", o));
+      return true;
+    }
+    var caps = (window.cc && cc.sys && cc.sys.capabilities) || {};
+    if (caps.touches && !caps.mouse && typeof Touch === "function") {
+      var t = new Touch({ identifier: 1, target: target, clientX: x, clientY: y, pageX: x, pageY: y, screenX: x, screenY: y });
+      target.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [t], targetTouches: [t], changedTouches: [t] }));
+      target.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], targetTouches: [], changedTouches: [t] }));
+      return true;
+    }
     target.dispatchEvent(new MouseEvent("mousedown", Object.assign({ buttons: 1 }, o)));
-    target.dispatchEvent(new PointerEvent("pointerup", Object.assign({ buttons: 0 }, o)));
     target.dispatchEvent(new MouseEvent("mouseup", Object.assign({ buttons: 0 }, o)));
-    if (target.tagName !== "CANVAS") target.dispatchEvent(new MouseEvent("click", o));
     return true;
   }
   function press(b) {
@@ -83,7 +96,7 @@
   function spinButton() {
     var e = P.entry(CFG.entry);
     var ready = e.spin.filter(function (b) { return b.interactable && b.point; });
-    return { ready: ready[0] || null, any: e.spin[0] || null };
+    return { ready: ready[0] || null, any: e.spin[0] || null, texts: (e.texts || []).join("|") };
   }
 
   async function entryLoop() {
@@ -156,11 +169,13 @@
   }
 
   // Scene size plus DOM size, so panels drawn as HTML overlays or iframes also count.
+  // onScreen counts pressable buttons inside the game area, which catches menus that slide in.
   function footprint() {
-    return { nodes: P.live(true).activeNodes, dom: document.getElementsByTagName("*").length };
+    var onScreen = P.buttons().buttons.filter(function (b) { return b.point; }).length;
+    return { nodes: P.live(true).activeNodes, dom: document.getElementsByTagName("*").length, onScreen: onScreen };
   }
   function differs(a, b) {
-    return Math.abs(a.nodes - b.nodes) > Math.max(5, b.nodes * 0.03) || Math.abs(a.dom - b.dom) > 3;
+    return Math.abs(a.nodes - b.nodes) > Math.max(5, b.nodes * 0.03) || Math.abs(a.dom - b.dom) > 3 || a.onScreen !== b.onScreen;
   }
   async function waitChange(before, ms) {
     var end = now() + ms;
@@ -214,9 +229,31 @@
     P.mark(stage + "-spike");
     press(target);
     var changed = await waitChange(nodes, 3000);
+    // Buttons folded inside a closed menu still report active. Open the menu and try again.
+    if (changed == null && !openedMenu) {
+      var menu2 = find(B.menu, { interactable: true })[0];
+      if (menu2) {
+        P.mark("menu");
+        var fm = footprint();
+        press(menu2);
+        await waitChange(fm, 2000);
+        await sleep(600);
+        openedMenu = menu2;
+        var again = find([target.name], { interactable: true })[0] || find(B[kind], { interactable: true })[0];
+        if (again) {
+          target = again;
+          before = new Set(P.buttons().buttons.map(key));
+          nodes = footprint();
+          P.mark(stage + "-spike");
+          press(target);
+          changed = await waitChange(nodes, 3000);
+        }
+      }
+    }
     if (changed == null) {
       st.coverage[stage] = "pressed " + (target.text || target.name) + " but nothing opened";
       P.mark("gap");
+      if (openedMenu) await closeOpened(new Set(), openedMenu, null);
       return false;
     }
     await sleep((CFG.panelSpikeSeconds || 2) * 1000);
@@ -295,10 +332,16 @@
     var sawBusy = false;
     var stable = 0;
     var nudged = false;
+    var lastTexts = "";
+    var lastChange = now();
     while (true) {
       await sleep(S.pollMs || 250);
       var el = now() - t0;
       var sb = spinButton();
+      if (sb.texts !== lastTexts) {
+        lastTexts = sb.texts;
+        lastChange = now();
+      }
       var draws = P.live().draws;
       if (!sb.ready) sawBusy = true;
       var drawsBack = st.idleDraws == null || draws == null || Math.abs(draws - st.idleDraws) <= Math.max(3, st.idleDraws * 0.15);
@@ -308,7 +351,9 @@
         nudged = true;
         await nudge();
       }
-      if (el > (S.maxMs || 120000)) {
+      // Free games keep changing the screen; only ask once it has been still for a while.
+      var still = now() - lastChange > (S.stillMs || 15000);
+      if (el > (S.maxMs || 120000) && (still || el > (S.hardMaxMs || 600000))) {
         var rr = await ask("screen", name + " did not settle");
         if (rr && rr.click) click(rr.click.x, rr.click.y);
         break;

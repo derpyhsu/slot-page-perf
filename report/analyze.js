@@ -302,11 +302,15 @@ function fpsTable() {
     .filter((g) => ORDER.includes(g.group) && g.frames >= 30)
     .sort((a, b) => ORDER.indexOf(a.group) - ORDER.indexOf(b.group))
     .map((g) => {
-      const fails = (g.fps != null && g.fps < F.stageMin) || (g.fpsLow != null && g.fpsLow < F.lowMin) || (g.badShare != null && g.badShare > F.badShareMax);
-      const bad = (g.fps != null && g.fps < 45) || (g.fpsLow != null && g.fpsLow < 30);
+      const fails =
+        (g.fps != null && g.fps < F.stageMin) ||
+        (g.dropShare != null && g.dropShare > F.dropShareMax) ||
+        (g.badShare != null && g.badShare > F.badShareMax) ||
+        (g.fpsLow != null && g.fpsLow < F.lowMin);
+      const bad = (g.fps != null && g.fps < 45) || (g.dropShare != null && g.dropShare > 0.1);
       const loading = g.group === "loading" || g.group === "enter";
-      const level = bad && !loading ? "red" : fails ? (loading ? "yellow" : "orange") : g.badShare > 0.005 ? "yellow" : "green";
-      return { group: g.group, label: stageName(g.group), stages: g.stages, fps: g.fps, fpsLow: g.fpsLow, badShare: g.badShare, level };
+      const level = bad && !loading ? "red" : fails ? (loading ? "yellow" : "orange") : g.dropShare > F.dropShareMax / 2 ? "yellow" : "green";
+      return { group: g.group, label: stageName(g.group), stages: g.stages, fps: g.fps, fpsLow: g.fpsLow, dropShare: g.dropShare, badShare: g.badShare, gpuPeakMb: g.gpuPeakMb, level };
     });
 }
 
@@ -395,7 +399,7 @@ function cocosAdvice() {
   if (settings.webglVersion === 1 && settings.webgl2Available) {
     add("cocos-webgl1", "draw call", `用的是 WebGL 1${last.engine ? `（Cocos ${last.engine}）` : ""}，瀏覽器有 WebGL 2`, "升級引擎版本才能用 WebGL 2 與 instancing。短期內先降 draw call。");
   }
-  if (settings.frameRate != null && settings.frameRate !== 60) {
+  if (settings.frameRate != null && settings.frameRate < 60) {
     add("cocos-frame-rate", "穩定性", `幀率上限設成 ${settings.frameRate}`, "目標是穩定 60，確認 cc.game.frameRate 是 60。");
   }
   const errors = consoleGroups.filter((g) => g.level === "error" || (g.count > C.consoleRepeat && !cacheWarn.includes(g)));

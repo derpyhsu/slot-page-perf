@@ -65,9 +65,12 @@ if (fps.length) {
   lines.push("");
   lines.push(`各階段 FPS${soft ? "（這台電腦是軟體繪製，數字代表這台電腦，不代表手機 GPU）" : ""}：`);
   lines.push("");
-  lines.push("| | 階段 | 平均 | 1% low | 超過 33 ms 的幀 |");
-  lines.push("| --- | --- | --- | --- | --- |");
-  fps.forEach((r) => lines.push(`| ${dot[r.level]} | ${r.label}${r.stages > 1 ? `（${r.stages} 段）` : ""} | ${r.fps ?? "—"} | ${r.fpsLow ?? "—"} | ${r.badShare == null ? "—" : `${Math.round(r.badShare * 1000) / 10}%`} |`));
+  const pc = (v) => (v == null ? "—" : `${Math.round(v * 1000) / 10}%`);
+  lines.push("| | 階段 | 平均 FPS | 掉幀 | 超過 33 ms | 1% low | GPU 記憶體峰值 |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+  fps.forEach((r) => lines.push(`| ${dot[r.level]} | ${r.label}${r.stages > 1 ? `（${r.stages} 段）` : ""} | ${r.fps ?? "—"} | ${pc(r.dropShare)} | ${pc(r.badShare)} | ${r.fpsLow ?? "—"} | ${r.gpuPeakMb == null ? "—" : `${Math.round(r.gpuPeakMb)} MB`} |`));
+  lines.push("");
+  lines.push("掉幀：應該出現卻沒出現的幀（以螢幕更新率和遊戲幀率上限較低者為準）。");
   lines.push("");
 }
 const entry = ev.entry;

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Usage: node report/build.js runs/<run> [--canvas <out.canvas.tsx>]
+// Usage: node report/build.js runs/<run> [--raw <saved raw.json>] [--canvas <out.canvas.tsx>]
+// --raw copies a result saved elsewhere (the MCP's temp directory) into runs/<run>/raw.json first.
 // Reads runs/<run>/raw.json (auto.result() saved by evaluate_script filePath) and the optional
 // notes.json the agent writes (displayName, summary, issues, missing). Writes evidence.json,
 // findings, scores, report.md, and the canvas, then prints a short digest for the agent.
@@ -40,7 +41,10 @@ function scrub(obj) {
   return JSON.parse(text);
 }
 
+fs.mkdirSync(runDir, { recursive: true });
+const rawAt = args.indexOf("--raw");
 const rawPath = path.join(runDir, "raw.json");
+if (rawAt >= 0) fs.copyFileSync(args[rawAt + 1], rawPath);
 const raw = scrub(readJsonLoose(rawPath));
 const notesPath = path.join(runDir, "notes.json");
 const notes = fs.existsSync(notesPath) ? JSON.parse(fs.readFileSync(notesPath, "utf8")) : {};
@@ -101,12 +105,13 @@ lines.push(`${ev.game.title} · Cocos ${c.engine || "?"} · ${c.canvas ? `${c.ca
 lines.push(`frameLoop ${ch.frameLoop} engineCpu ${ch.engineCpu} gpuTimer ${ch.gpuTimer} gpuMemory ${ch.gpuMemory}`);
 if (ev.entry) lines.push(`entry ${ev.entry.result}${(ev.entry.steps || []).length ? ": " + ev.entry.steps.map((x) => `${x.kind} ${x.text}`).join(" > ") : ""}`);
 lines.push(`coverage ${Object.entries(coverage).map(([k, v]) => `${k}=${v}`).join("; ")}`);
-lines.push("group | n | fps | 1%low | bad% | cpu95 | draws | gpuMB | heapMB | worst");
+lines.push("group | n | fps | drop% | bad% | 1%low | cpu95 | draws | gpuMB | heapMB | worst");
+const pc = (v) => (v == null ? "-" : Math.round(v * 1000) / 10);
 result.groups
   .filter((g) => g.group !== "boot")
   .forEach((g) => {
     const w = g.worstHitch;
-    lines.push(`${g.group} | ${g.stages} | ${g.fps ?? "-"} | ${g.fpsLow ?? "-"} | ${g.badShare == null ? "-" : Math.round(g.badShare * 1000) / 10} | ${g.cpuP95 ?? "-"} | ${g.draws ?? "-"} | ${g.gpuPeakMb ?? "-"} | ${g.heapEndMb ?? "-"} | ${w ? `${Math.round(w.dt)}ms ${w.stage}@${w.t}` : "-"}`);
+    lines.push(`${g.group} | ${g.stages} | ${g.fps ?? "-"} | ${pc(g.dropShare)} | ${pc(g.badShare)} | ${g.fpsLow ?? "-"} | ${g.cpuP95 ?? "-"} | ${g.draws ?? "-"} | ${g.gpuPeakMb ?? "-"} | ${g.heapEndMb ?? "-"} | ${w ? `${Math.round(w.dt)}ms ${w.stage}@${w.t}` : "-"}`);
   });
 const counts = {};
 ev.findings.forEach((f) => {

@@ -43,7 +43,7 @@ type Evidence = {
   summary?: { smooth?: string; memory?: string };
   issues?: Issue[];
   todo?: TodoRow[];
-  fps?: Array<{ group: string; label: string; stages: number; fps: number | null; fpsLow: number | null; badShare: number | null; level: string }>;
+  fps?: Array<{ group: string; label: string; stages: number; fps: number | null; fpsLow: number | null; dropShare?: number | null; badShare: number | null; gpuPeakMb?: number | null; level: string }>;
   entry?: { result?: "direct" | "pressed" | "stuck"; steps?: Array<{ kind: string; text?: string; afterMs?: number }> };
   missing?: string[];
   cocosAdvice?: {
@@ -103,16 +103,21 @@ function FpsTable({ ev }: { ev: Evidence }) {
     <Stack gap={6}>
       <Text weight="semibold">各階段 FPS</Text>
       <Table
-        headers={["", "階段", "平均", "1% low", "超過 33 ms 的幀"]}
-        columnAlign={["left", "left", "right", "right", "right"]}
+        headers={["", "階段", "平均 FPS", "掉幀", "超過 33 ms", "1% low", "GPU 記憶體峰值"]}
+        columnAlign={["left", "left", "right", "right", "right", "right", "right"]}
         rows={rows.map((r) => [
           <Dot key="d" level={asLevel(r.level)} />,
           `${r.label}${r.stages > 1 ? `（${r.stages} 段）` : ""}`,
           r.fps == null ? "—" : String(r.fps),
+          pct(r.dropShare),
+          pct(r.badShare),
           r.fpsLow == null ? "—" : String(r.fpsLow),
-          r.badShare == null ? "—" : `${Math.round(r.badShare * 1000) / 10}%`,
+          r.gpuPeakMb == null ? "—" : `${Math.round(r.gpuPeakMb)} MB`,
         ])}
       />
+      <Text size="small" tone="tertiary">
+        掉幀：應該出現卻沒出現的幀（以螢幕更新率和遊戲幀率上限較低者為準）。
+      </Text>
       {soft && (
         <Text size="small" tone="tertiary">
           這台電腦是軟體繪製，數字代表這台電腦，不代表手機 GPU。
@@ -183,6 +188,10 @@ function scoreLevel(score: number | null): Level {
 
 function stallLevel(ms: number): Level {
   return ms <= 50 ? "green" : ms <= 100 ? "yellow" : ms <= 200 ? "orange" : "red";
+}
+
+function pct(v: number | null | undefined): string {
+  return v == null ? "—" : `${Math.round(v * 1000) / 10}%`;
 }
 
 function asLevel(v: string | undefined): Level {
