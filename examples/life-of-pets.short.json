@@ -3,12 +3,101 @@
   "example": true,
   "game": {
     "title": "SlotLifeOfPets",
+    "displayName": "寵物當家",
     "urlPath": "/game/slot/SlotLifeOfPets/"
+  },
+  "summary": {
+    "smooth": "這台桌機大致 60 FPS，但每一轉會頓一下。",
+    "memory": "貼圖 270 MB 全沒壓縮，低階手機很可能撐不住。"
+  },
+  "issues": [
+    {
+      "title": "每一轉有一幀停 0.2 秒",
+      "stage": "spin-1",
+      "level": "red",
+      "next": "在旋轉當下錄 DevTools Performance，看這 210 ms 落在 GC、Spine 更新還是結果解析。"
+    },
+    {
+      "title": "記憶體推估超過 300 MB 預算",
+      "stage": "idle",
+      "level": "red",
+      "next": "先把大圖集改壓縮格式。270 MB 的 RGBA8888 換成 ASTC 4x4 約剩 70 MB。"
+    }
+  ],
+  "missing": [
+    "載入",
+    "下注紀錄與遊戲規則",
+    "50 轉與洩漏判斷",
+    "Label 與粒子（當時沒有讀）"
+  ],
+  "cocos": {
+    "snapshots": [
+      {
+        "status": "ok",
+        "at": "idle",
+        "engine": "2.0.9",
+        "nodes": {
+          "total": 1556,
+          "active": 507,
+          "maxDepth": null
+        },
+        "spine": {
+          "total": 355,
+          "active": 161,
+          "realtime": 59,
+          "sharedCache": 102,
+          "privateCache": null,
+          "batched": null,
+          "activeRealtimeBones": null
+        },
+        "labels": {
+          "total": null,
+          "active": null,
+          "noCache": null
+        },
+        "masks": {
+          "total": null,
+          "active": 3
+        },
+        "particles": {
+          "total": null,
+          "active": null,
+          "maxParticles": null
+        },
+        "settings": {
+          "frameRate": null,
+          "cleanupImageCache": null,
+          "dynamicAtlas": null,
+          "webglVersion": 1,
+          "webgl2Available": true
+        },
+        "console": [
+          {
+            "level": "warn",
+            "text": "Spine: clearTrack is not supported in cache mode",
+            "count": 102
+          },
+          {
+            "level": "error",
+            "text": "Cocos Error 1208: db://assets/scenes/scene_start.fire",
+            "count": 2
+          }
+        ],
+        "note": "當時手動讀的。253 個 Spine 是 realtime，其中有幾個在畫沒有分開記；161 個在畫、102 個是 shared cache，所以在畫的 realtime 至少 59 個。"
+      }
+    ]
   },
   "conditions": {
     "capturedAt": "2026-11-09T06:00:00.000Z",
-    "viewport": { "w": 1280, "h": 720, "dpr": 1 },
-    "canvas": { "w": 1280, "h": 720 },
+    "viewport": {
+      "w": 1280,
+      "h": 720,
+      "dpr": 1
+    },
+    "canvas": {
+      "w": 1280,
+      "h": 720
+    },
     "gpu": "ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Ti (0x00001C82) Direct3D11 vs_5_0 ps_5_0, D3D11)",
     "webgl": "WebGL 1.0",
     "engine": "2.0.9",
@@ -20,6 +109,7 @@
   },
   "channels": {
     "frameLoop": "mainLoop",
+    "engineCpu": true,
     "gpuTimer": true,
     "jsHeap": true,
     "textureResidency": "ok",
@@ -32,11 +122,26 @@
       "wallMs": 6000,
       "frames": 367,
       "fps": 61.2,
-      "cpuMs": { "avg": 2.11, "p50": 2, "p95": 2.8, "max": 3.4 },
-      "gpuMs": { "avg": 4.15, "p50": 3.7, "p95": 6.85, "max": 7.77 },
+      "cpuMs": {
+        "avg": 2.11,
+        "p50": 2,
+        "p95": 2.8,
+        "max": 3.4
+      },
+      "gpuMs": {
+        "avg": 4.15,
+        "p50": 3.7,
+        "p95": 6.85,
+        "max": 7.77
+      },
       "cpuPct": 12.9,
       "gpuPct": 24.9,
-      "draws": { "avg": 51.9, "p50": 55, "p95": 55, "max": 55 },
+      "draws": {
+        "avg": 51.9,
+        "p50": 55,
+        "p95": 55,
+        "max": 55
+      },
       "hitches": [],
       "heapStartMb": 90.7,
       "heapEndMb": 90.7,
@@ -47,12 +152,36 @@
       "wallMs": 4500,
       "frames": 268,
       "fps": 58.4,
-      "cpuMs": { "avg": 4.18, "p50": 3.6, "p95": 5.4, "max": 210.4 },
-      "gpuMs": { "avg": 3.75, "p50": 3.25, "p95": 7.01, "max": 7.38 },
+      "cpuMs": {
+        "avg": 4.18,
+        "p50": 3.6,
+        "p95": 5.4,
+        "max": 210.4
+      },
+      "gpuMs": {
+        "avg": 3.75,
+        "p50": 3.25,
+        "p95": 7.01,
+        "max": 7.38
+      },
       "cpuPct": 24.4,
       "gpuPct": 22.5,
-      "draws": { "avg": 71, "p50": 70, "p95": 82, "max": 82 },
-      "hitches": [{ "dt": 210.8, "cpu": 210.4, "gpu": 7.38, "draws": 82, "inFlight": null, "urls": [] }],
+      "draws": {
+        "avg": 71,
+        "p50": 70,
+        "p95": 82,
+        "max": 82
+      },
+      "hitches": [
+        {
+          "dt": 210.8,
+          "cpu": 210.4,
+          "gpu": 7.38,
+          "draws": 82,
+          "inFlight": null,
+          "urls": []
+        }
+      ],
       "heapStartMb": 114,
       "heapEndMb": 134,
       "texUploadMb": 0
@@ -62,20 +191,56 @@
       "wallMs": 3500,
       "frames": 207,
       "fps": 58.9,
-      "cpuMs": { "avg": 2.72, "p50": 1.8, "p95": 2.5, "max": 114.4 },
-      "gpuMs": { "avg": 4.58, "p50": 4.11, "p95": 7.36, "max": 8.37 },
+      "cpuMs": {
+        "avg": 2.72,
+        "p50": 1.8,
+        "p95": 2.5,
+        "max": 114.4
+      },
+      "gpuMs": {
+        "avg": 4.58,
+        "p50": 4.11,
+        "p95": 7.36,
+        "max": 8.37
+      },
       "cpuPct": 16,
       "gpuPct": 27.4,
-      "draws": { "avg": 71.6, "p50": 71, "p95": 93, "max": 93 },
-      "hitches": [{ "dt": 115, "cpu": 114.4, "gpu": 8.37, "draws": 93, "inFlight": null, "urls": [] }],
+      "draws": {
+        "avg": 71.6,
+        "p50": 71,
+        "p95": 93,
+        "max": 93
+      },
+      "hitches": [
+        {
+          "dt": 115,
+          "cpu": 114.4,
+          "gpu": 8.37,
+          "draws": 93,
+          "inFlight": null,
+          "urls": []
+        }
+      ],
       "heapStartMb": 134,
       "heapEndMb": 134,
       "texUploadMb": 0
     }
   ],
   "spins": [
-    { "name": "spin-1", "fps": 58.4, "cpuP95": 5.4, "gpuP95": 7.01, "hitchMax": 210.8 },
-    { "name": "turbo-1", "fps": 58.9, "cpuP95": 2.5, "gpuP95": 7.36, "hitchMax": 115 }
+    {
+      "name": "spin-1",
+      "fps": 58.4,
+      "cpuP95": 5.4,
+      "gpuP95": 7.01,
+      "hitchMax": 210.8
+    },
+    {
+      "name": "turbo-1",
+      "fps": 58.9,
+      "cpuP95": 2.5,
+      "gpuP95": 7.36,
+      "hitchMax": 115
+    }
   ],
   "memory": {
     "heapMb": 134,
@@ -86,13 +251,26 @@
       "count": 171,
       "mb": 270.2,
       "npot": 162,
-      "formats": { "RGBA8888": 171 },
+      "formats": {
+        "RGBA8888": 171
+      },
       "largest": [
-        { "w": 2048, "h": 2048, "mb": 16 },
-        { "w": 1734, "h": 1956, "mb": 12.94 }
+        {
+          "w": 2048,
+          "h": 2048,
+          "mb": 16
+        },
+        {
+          "w": 1734,
+          "h": 1956,
+          "mb": 12.94
+        }
       ]
     },
-    "leak": { "status": "not-enough-spins", "deltaMb": null }
+    "leak": {
+      "status": "not-enough-spins",
+      "deltaMb": null
+    }
   },
   "findings": [
     {
@@ -117,5 +295,150 @@
       "沒有打開下注紀錄與遊戲規則。",
       "轉數不足，不能判斷洩漏。"
     ]
+  },
+  "score": {
+    "version": 1,
+    "smooth": {
+      "score": 68,
+      "coverage": 100,
+      "provisional": false,
+      "items": [
+        {
+          "id": "stable",
+          "label": "穩定 60",
+          "weight": 40,
+          "value": 96.4,
+          "unit": "%",
+          "approx": true,
+          "full": "99%",
+          "zero": "90%",
+          "score": 71
+        },
+        {
+          "id": "stall",
+          "label": "卡頓",
+          "weight": 30,
+          "value": 211,
+          "unit": "ms",
+          "stage": "spin-1",
+          "t": null,
+          "full": "50 ms",
+          "zero": "1000 ms",
+          "score": 52
+        },
+        {
+          "id": "cpu",
+          "label": "CPU 餘裕",
+          "weight": 30,
+          "value": 5.4,
+          "unit": "ms",
+          "full": "4 ms",
+          "zero": "16.7 ms",
+          "score": 79
+        }
+      ],
+      "fatal": []
+    },
+    "memory": {
+      "score": 23,
+      "coverage": 70,
+      "provisional": true,
+      "items": [
+        {
+          "id": "budget",
+          "label": "預算",
+          "weight": 50,
+          "value": 138,
+          "unit": "%",
+          "full": "50%",
+          "zero": "100%",
+          "score": 0
+        },
+        {
+          "id": "growth",
+          "label": "增長",
+          "weight": 30,
+          "value": null,
+          "unit": "MB/轉",
+          "full": "0.05 MB/轉",
+          "zero": "0.5 MB/轉",
+          "score": null
+        },
+        {
+          "id": "bigTextures",
+          "label": "大貼圖",
+          "weight": 20,
+          "value": 1,
+          "unit": "張",
+          "full": "0 張",
+          "zero": "5 張",
+          "score": 80
+        }
+      ],
+      "fatal": [
+        {
+          "id": "over-budget",
+          "value": 415
+        }
+      ],
+      "budgetMb": 300,
+      "estimateMb": {
+        "heap": 134,
+        "texture": 270.2,
+        "framebuffer": 10.5,
+        "total": 414.7
+      }
+    }
+  },
+  "cocosAdvice": {
+    "status": "ok",
+    "items": [
+      {
+        "id": "cocos-spine-realtime",
+        "area": "CPU",
+        "title": "畫面上有 59 個即時運算的 Spine（共 161 個在畫）",
+        "fix": "不需要即時混合的動畫改成 SHARED_CACHE，看不到的骨架關掉 active，同圖集的開 enableBatch。"
+      },
+      {
+        "id": "cocos-spine-cache-warning",
+        "area": "穩定性",
+        "title": "快取模式的 Spine 被呼叫了不支援的方法 102 次",
+        "fix": "快取模式不支援 clearTrack 這類呼叫。改用 setAnimation 覆蓋，或這幾個骨架改回 REALTIME。"
+      },
+      {
+        "id": "cocos-texture-uncompressed",
+        "area": "記憶體",
+        "title": "171 張貼圖裡 171 張沒壓縮，約 270 MB",
+        "fix": "在構建的貼圖壓縮設定裡給大圖集加 ASTC 與 ETC2，iOS 加 PVRTC 或 ASTC。通常能省四分之三。"
+      },
+      {
+        "id": "cocos-texture-npot",
+        "area": "記憶體",
+        "title": "162 張貼圖的邊長不是 2 的冪",
+        "fix": "圖集打包時勾選 POT，才能用 PVRTC 壓縮和 mipmap。"
+      },
+      {
+        "id": "cocos-webgl1",
+        "area": "draw call",
+        "title": "用的是 WebGL 1（Cocos 2.0.9），瀏覽器有 WebGL 2",
+        "fix": "升級引擎版本才能用 WebGL 2 與 instancing。短期內先降 draw call。"
+      },
+      {
+        "id": "cocos-console-errors",
+        "area": "穩定性",
+        "title": "主控台有 1 種引擎錯誤或重複警告",
+        "fix": "Cocos Error 1208: db://assets/scenes/scene_start.fire（2 次）"
+      }
+    ],
+    "scene": {
+      "nodes": 1556,
+      "activeNodes": 507,
+      "spine": 355,
+      "spineActive": 161,
+      "spineRealtime": 59,
+      "labels": null,
+      "masks": 3,
+      "particles": null
+    }
   }
 }

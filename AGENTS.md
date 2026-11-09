@@ -18,4 +18,4 @@ Before measuring, read `skill/slot-page-perf/SKILL.md`, then `protocol/scenarios
 
 ## Output
 
-Write `runs/<utc>-<slug>/evidence.json` using `probe/schema.json`. Fill `report/template.md` from that file. In Cursor, also copy `report/template.canvas.tsx` into the workspace `canvases/` directory and replace its `EVIDENCE` object.
+Write `runs/<utc>-<slug>/evidence.json` using `probe/schema.json`. Then run `node report/analyze.js`, `node report/markdown.js`, and in Cursor `node report/canvas.js` on that file. Scores follow `protocol/scoring.md`. Do not hand-write the report.

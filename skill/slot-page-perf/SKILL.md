@@ -20,6 +20,8 @@ Use the `chrome-devtools` MCP. Pass the full source of [probe/install.js](../../
 
 `window.__slotPerf.summary()` is the only measurement source. `window.__slotPerf.mark(name)` opens a stage.
 
+After `mark("idle")`, check `channels.frameLoop` and `channels.engineCpu` before going further. They must show `tick` or `mainLoop` and true. If they show `raf`, CPU is unavailable for the run.
+
 ## Buttons
 
 Read engine node names and label strings when `cc` exists. Otherwise use a screenshot and click canvas coordinates. Pointer events only. Never call an internal spin handler.
@@ -30,18 +32,35 @@ Confirm the history or rules panel is actually visible before timing it. If a co
 
 Read the current bet from the screen. Ask the user to confirm it. Do not start the 50 spins, and do not change the bet, until they confirm.
 
+## Cocos snapshots
+
+Call `window.__slotPerf.cocos(label)` at the points in [protocol/scenarios.md](../../protocol/scenarios.md) and append each result to `evidence.cocos.snapshots`. It walks the live scene, so do not call it every frame.
+
 ## Evidence
 
-Write `runs/<utc>-<slug>/evidence.json`.
+Write `runs/<utc>-<slug>/evidence.json` from the final `summary()`, including `timeline`.
 
 - `urlPath` is the path only. Drop the query string.
 - Build `spins` from the spin and turbo stages.
 - Apply [protocol/rules.md](../../protocol/rules.md) yourself. The probe does not decide findings.
 - A finding needs `id`, `stage`, and the numbers that fired the rule.
 - `coverage` lists what did not run, including too few spins.
+- `game.displayName` is the Chinese title on screen.
+
+Then add the three fields the reader sees first. Keep them short.
+
+- `summary.smooth` and `summary.memory`: one sentence each, under 20 characters. Say what is good and what is bad. No severity words.
+- `issues`: at most 5. Each has `title` (what the player meets, with one number), `stage` or `t`, `level` (`red`, `orange`, `yellow`, `green`), and `next` (one sentence on what to look at or change). Do not write 嚴重, 明顯, or 要注意. The color carries that.
+- `missing`: what was not measured, in plain words.
 
 ## Report
 
-Fill [report/template.md](../../report/template.md) from the evidence file. Write the report in Traditional Chinese.
+```
+node report/analyze.js runs/<run>/evidence.json
+node report/markdown.js runs/<run>/evidence.json
+node report/canvas.js runs/<run>/evidence.json <workspace>/canvases/<slug>.canvas.tsx
+```
 
-In Cursor, copy [report/template.canvas.tsx](../../report/template.canvas.tsx) into the workspace `canvases/` directory, replace the `EVIDENCE` constant with this run, and set `example` to false. Omit any chart whose stage is absent.
+`analyze.js` writes the two scores from [protocol/scoring.md](../../protocol/scoring.md) and the Cocos advice from the Cocos rules. Do not compute scores by hand, and do not edit the generated report to add raw numbers. If something important is missing from the report, put it in `issues` or fix the generator.
+
+The canvas step is for Cursor. Other agents stop after the markdown.
