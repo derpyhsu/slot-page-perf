@@ -57,8 +57,19 @@ const cpu = score.smooth.items.find((i) => i.id === "cpu");
 lines.push(`- **CPU**：${cpu && cpu.value != null ? `最忙的階段，95% 的幀在 ${cpu.value} ms 內跑完，一幀預算 16.7 ms。` : "這次沒量到每幀 CPU。卡頓仍來自瀏覽器的長任務紀錄。"}`);
 const est = score.memory.estimateMb;
 const growth = score.memory.items.find((i) => i.id === "growth");
-lines.push(`- **記憶體**：${est ? `推估最高 ${Math.round(est.total)} MB，預算 ${score.memory.budgetMb} MB（JS ${Math.round(est.heap)}、貼圖 ${Math.round(est.texture)}、畫面 ${Math.round(est.framebuffer)}）。` : "這次沒量到。"}${growth && growth.value != null ? `每轉多留 ${growth.value} MB。` : ""}`);
+lines.push(`- **記憶體**：${est ? `推估最高 ${Math.round(est.total)} MB，預算 ${score.memory.budgetMb} MB（JS ${Math.round(est.heap)}、${est.gpuSource === "gpu" ? "GPU" : "貼圖"} ${Math.round(est.texture)}、畫面 ${Math.round(est.framebuffer)}）。` : "這次沒量到。"}${growth && growth.value != null ? `每轉多留 ${growth.value} MB。` : ""}`);
 
+const fps = ev.fps || [];
+if (fps.length) {
+  const soft = /swiftshader|basic render driver|llvmpipe|softpipe|warp/i.test((ev.conditions && ev.conditions.gpu) || "");
+  lines.push("");
+  lines.push(`各階段 FPS${soft ? "（這台電腦是軟體繪製，數字代表這台電腦，不代表手機 GPU）" : ""}：`);
+  lines.push("");
+  lines.push("| | 階段 | 平均 | 1% low | 超過 33 ms 的幀 |");
+  lines.push("| --- | --- | --- | --- | --- |");
+  fps.forEach((r) => lines.push(`| ${dot[r.level]} | ${r.label}${r.stages > 1 ? `（${r.stages} 段）` : ""} | ${r.fps ?? "—"} | ${r.fpsLow ?? "—"} | ${r.badShare == null ? "—" : `${Math.round(r.badShare * 1000) / 10}%`} |`));
+  lines.push("");
+}
 const entry = ev.entry;
 if (entry && entry.result) {
   const steps = (entry.steps || []).map((s) => s.text || s.kind).join(" → ");

@@ -28,7 +28,7 @@ type StageRow = {
   heapEndMb?: number | null;
 };
 type ScoreItem = { id: string; label: string; weight: number; value: number | null; unit: string; full: string; zero: string; score: number | null; approx?: boolean };
-type ScorePart = { score: number | null; coverage: number; provisional: boolean; items: ScoreItem[]; fatal: Array<{ id: string; stage?: string; value?: number }>; budgetMb?: number; estimateMb?: { heap: number; texture: number; framebuffer: number; total: number } | null };
+type ScorePart = { score: number | null; coverage: number; provisional: boolean; items: ScoreItem[]; fatal: Array<{ id: string; stage?: string; value?: number }>; budgetMb?: number; estimateMb?: { heap: number; texture: number; framebuffer: number; total: number; gpuSource?: string } | null };
 type Issue = { title: string; stage?: string; t?: number | null; next: string; level?: string; area?: string; rule?: string };
 type TodoRow = { n: number; level: string; title: string; area: string; fix: string; stage: string | null; t: number | null; rule?: string };
 type Evidence = {
@@ -43,6 +43,7 @@ type Evidence = {
   summary?: { smooth?: string; memory?: string };
   issues?: Issue[];
   todo?: TodoRow[];
+  fps?: Array<{ group: string; label: string; stages: number; fps: number | null; fpsLow: number | null; badShare: number | null; level: string }>;
   entry?: { result?: "direct" | "pressed" | "stuck"; steps?: Array<{ kind: string; text?: string; afterMs?: number }> };
   missing?: string[];
   cocosAdvice?: {
@@ -90,6 +91,33 @@ function CocosFacts({ ev }: { ev: Evidence }) {
         </Text>
       )}
       {advice.status === "ok" && !advice.items.length && <Text size="small" tone="secondary">組成和引擎設定都在門檻內。</Text>}
+    </Stack>
+  );
+}
+
+function FpsTable({ ev }: { ev: Evidence }) {
+  const rows = ev.fps ?? [];
+  if (!rows.length) return null;
+  const soft = /swiftshader|basic render driver|llvmpipe|softpipe|warp/i.test(ev.conditions.gpu ?? "");
+  return (
+    <Stack gap={6}>
+      <Text weight="semibold">各階段 FPS</Text>
+      <Table
+        headers={["", "階段", "平均", "1% low", "超過 33 ms 的幀"]}
+        columnAlign={["left", "left", "right", "right", "right"]}
+        rows={rows.map((r) => [
+          <Dot key="d" level={asLevel(r.level)} />,
+          `${r.label}${r.stages > 1 ? `（${r.stages} 段）` : ""}`,
+          r.fps == null ? "—" : String(r.fps),
+          r.fpsLow == null ? "—" : String(r.fpsLow),
+          r.badShare == null ? "—" : `${Math.round(r.badShare * 1000) / 10}%`,
+        ])}
+      />
+      {soft && (
+        <Text size="small" tone="tertiary">
+          這台電腦是軟體繪製，數字代表這台電腦，不代表手機 GPU。
+        </Text>
+      )}
     </Stack>
   );
 }
@@ -435,7 +463,7 @@ function CurrentState({ ev }: { ev: Evidence }) {
           <>
             {bar([[est.heap, theme.category.blue], [est.texture, theme.category.purple], [est.framebuffer, theme.stroke.primary]], budget)}
             <Text size="small" tone="secondary">
-              推估最高 {Math.round(est.total)} MB，預算 {budget} MB。JS {Math.round(est.heap)}、貼圖 {Math.round(est.texture)}、畫面 {Math.round(est.framebuffer)}。
+              推估最高 {Math.round(est.total)} MB，預算 {budget} MB。JS {Math.round(est.heap)}、{est.gpuSource === "gpu" ? "GPU" : "貼圖"} {Math.round(est.texture)}、畫面 {Math.round(est.framebuffer)}。
               {growth?.value != null ? ` 每轉多留 ${growth.value} MB。` : ""}
             </Text>
           </>
@@ -526,6 +554,7 @@ export default function SlotPerfReport() {
 
       <Stack gap={16}>
         <H2>目前狀況</H2>
+        <FpsTable ev={ev} />
         <CurrentState ev={ev} />
         <EntryLine ev={ev} />
         <CocosFacts ev={ev} />

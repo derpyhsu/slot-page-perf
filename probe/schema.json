@@ -63,6 +63,7 @@
     },
     "score": { "type": "object", "description": "Written by report/analyze.js." },
     "cocosAdvice": { "type": "object", "description": "Written by report/analyze.js." },
+    "fps": { "type": "array", "description": "Written by report/analyze.js. One row per stage group: fps, fpsLow (1% low), badShare, level." },
     "todo": { "type": "array", "description": "Written by report/analyze.js. issues plus cocosAdvice items, worst first." },
     "conditions": { "type": "object" },
     "channels": { "type": "object" },

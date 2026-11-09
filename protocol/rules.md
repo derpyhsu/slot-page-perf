@@ -2,6 +2,8 @@
 
 數字門檻全部讀 `protocol/thresholds.json`。一條 finding 必須引用規則 id、階段名，以及 evidence 裡的數字。規則沒有觸發就不要寫進 `findings`。
 
+這些規則由 `report/findings.js` 判斷，`report/build.js` 會呼叫它。不要手寫 findings；規則要改就改這份文件和那支程式。
+
 ## hitch
 
 階段裡有幀的 `dt` 大於 `hitchMs`。
@@ -13,6 +15,20 @@
 `cpu` 是 `null` 表示那一幀沒有引擎計時，不是 0 毫秒。這時若同一段有時間相近的 long task，寫成同一次 `hitch-main-thread`；沒有就寫 `hitch-other`，證據註明 CPU 未讀到。
 
 `channels.engineCpu` 為 false 時，所有 CPU 平均、p95、CPU% 都是 `unavailable`，`cpu-heavy` 不觸發。
+
+## fps-drop
+
+遊戲階段（待機、旋轉、加速、面板穩態），同類階段合在一起看。下面任一條成立就觸發，證據寫三個數字：
+
+- 平均 FPS 低於 `fps.stageMin`
+- 1% low 低於 `fps.lowMin`。1% low 是最慢那 1% 幀的 FPS。
+- 超過 33 ms 的幀佔比高於 `fps.badShareMax`
+
+`conditions.gpu` 是軟體繪製（SwiftShader、Microsoft Basic Render Driver、llvmpipe）時照樣觸發，但證據註明這是這台電腦的軟體繪製，不代表手機 GPU。
+
+## gpu-memory-heavy
+
+`memory.gpu.peakMb` 高於 `gpuMemoryWarnMb`。這是頁面向 WebGL 要的貼圖、緩衝和 renderbuffer 還活著的總量，不含預設畫面緩衝。`memory.gpu.status` 不是 `ok` 時不觸發。
 
 ## cpu-heavy
 
@@ -45,7 +61,7 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 
 ## Cocos 規則
 
-讀 `evidence.cocos.snapshots`。同一個數字取所有快照的最大值，主控台取最後一次（它是累計的）。門檻在 `thresholds.json` 的 `cocos`。這些規則由 `report/analyze.js` 判斷，報告列在「Cocos 可以改的地方」。
+讀 `evidence.cocos.snapshots`。同一個數字取所有快照的最大值，主控台取最後一次（它是累計的）。門檻在 `thresholds.json` 的 `cocos`。這些規則由 `report/analyze.js` 判斷，和其他問題一起列在報告的「要處理的地方」。
 
 | id | 條件 | 影響 |
 | --- | --- | --- |

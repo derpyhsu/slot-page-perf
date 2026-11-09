@@ -10,60 +10,50 @@ Measure one slot URL and write evidence. Do not modify the game.
 ## Read first
 
 - [protocol/scenarios.md](../../protocol/scenarios.md)
-- [protocol/rules.md](../../protocol/rules.md)
 - [protocol/thresholds.json](../../protocol/thresholds.json)
-- [probe/schema.json](../../probe/schema.json)
 
-## Browser
+[protocol/rules.md](../../protocol/rules.md) and [protocol/scoring.md](../../protocol/scoring.md) are applied by the scripts. Read them only to explain a result.
 
-Use the `chrome-devtools` MCP. Pass the full source of [probe/install.js](../../probe/install.js) as the navigation `initScript` before the game URL loads. If that MCP is not connected, stop and point at the README. Do not inject the probe after the game is already playable.
+## Run it with the autopilot
 
-`window.__slotPerf.summary()` is the only measurement source. `window.__slotPerf.mark(name)` opens a stage. `window.__slotPerf.buttons(words)` lists clickable Cocos nodes with their text and page coordinates.
+The page drives itself. The agent starts it, answers when it asks, and saves the result to a file. Raw numbers never pass through the conversation. This keeps a full run to roughly a dozen tool calls.
 
-Do not assume how a game gets from loading to the first spin. Some go straight in. Others stop on a start screen, a tap-anywhere screen, or one or more notices, with the button anywhere. Run the 進遊戲 loop in [protocol/scenarios.md](../../protocol/scenarios.md) with `window.__slotPerf.entry(thresholds.entry)` once a second until `spinReady`. If nothing safe can be pressed, stop and report a screenshot instead of guessing.
+Use the `chrome-devtools` MCP. If it is not connected, stop and point at the README.
 
-After `mark("idle")`, check `channels.frameLoop` and `channels.engineCpu` before going further. They must show `tick` or `mainLoop` and true. If they show `raf`, CPU is unavailable for the run.
+1. `node probe/build.js`. It writes `probe/dist/stash.js` and prints the one-line loader.
+2. `navigate_page` to the game's origin, for example `http://host/`. Any page there works, even a 404.
+3. `evaluate_script` with `sourcePath` = absolute path of `probe/dist/stash.js`. It saves the probe in that origin's sessionStorage.
+4. `navigate_page` to the game URL with `initScript` = the loader. Then `evaluate_script` `() => typeof __slotPerf`. If it is not `"object"`, the game moved to another origin: navigate again with `initScript` = the contents of `probe/dist/bundle.js`.
+5. `evaluate_script` `() => __slotPerf.auto.start()`.
+6. Loop on `evaluate_script` `async () => __slotPerf.auto.wait(100000)`. It returns a short status as soon as the driver needs you, finishes, or 100 seconds pass:
+   - `needs: "bet"`: show the user `bet` (and a screenshot if `bet` is empty or unclear). Do not spin, and do not change the bet, until they confirm. Then `__slotPerf.auto.go()`.
+   - `needs: "screen"`: take a screenshot, decide what to press using the 進遊戲 rules in scenarios.md, then `__slotPerf.auto.click(x, y, "label")`. If nothing is safe to press, stop and show the user the screenshot.
+   - `needs: "error"` or `phase: "stuck"`: stop and report `note`.
+   - After `phase: "idle"`, check that `channels.engineCpu` is true. If `frameLoop` is `raf`, CPU is unavailable for the run.
+7. When `phase` is `done`, `evaluate_script` `() => __slotPerf.auto.result()` with `filePath` = `runs/<utc>-<slug>/raw.json`. Do not return it inline.
+8. `node report/build.js runs/<utc>-<slug>`. It writes evidence, findings, scores and report.md, and prints a digest of about 20 lines.
+9. From the digest, write `runs/<utc>-<slug>/notes.json` (below), then run step 8 again with `--canvas <workspace>/canvases/<slug>.canvas.tsx` in Cursor.
 
-## Buttons
+Take screenshots only when the driver asks or the user wants to see something. Each one costs far more than a status reply.
 
-Read engine node names and label strings when `cc` exists. Otherwise use a screenshot and click canvas coordinates. Pointer events only. Never call an internal spin handler.
+## notes.json
 
-Confirm the history or rules panel is actually visible before timing it. If a control is missing, record the aliases you tried in `coverage` and leave that stage out.
+The only thing the agent writes. Keep it short.
 
-## Bet
-
-Read the current bet from the screen. Ask the user to confirm it. Do not start the 50 spins, and do not change the bet, until they confirm.
-
-## Cocos snapshots
-
-Call `window.__slotPerf.cocos(label)` at the points in [protocol/scenarios.md](../../protocol/scenarios.md) and append each result to `evidence.cocos.snapshots`. It walks the live scene, so do not call it every frame.
-
-## Evidence
-
-Write `runs/<utc>-<slug>/evidence.json` from the final `summary()`, including `timeline`.
-
-- `urlPath` is the path only. Drop the query string.
-- Build `spins` from the spin and turbo stages.
-- Apply [protocol/rules.md](../../protocol/rules.md) yourself. The probe does not decide findings.
-- A finding needs `id`, `stage`, and the numbers that fired the rule.
-- `coverage` lists what did not run, including too few spins.
-- `game.displayName` is the Chinese title on screen.
-
-Then add the three fields the reader sees first. Keep them short.
-
+- `displayName`: the Chinese title on screen.
 - `summary.smooth` and `summary.memory`: one sentence each, under 20 characters. Say what is good and what is bad. No severity words.
-- `issues`: at most 5. Each has `title` (what the player meets, with one number), `stage` or `t`, `level` (`red`, `orange`, `yellow`, `green`), and `next` (one sentence on what to look at or change). Optional `area` is the table's 類別 (`CPU`, `記憶體`, `draw call`, `穩定性`, `卡頓`); it defaults to the stage name. Do not write 嚴重, 明顯, or 要注意. The color carries that.
-- Do not restate a Cocos rule that `analyze.js` already reports. If you have a more specific version of one, set `rule` to its id and your row replaces the generic one.
+- `issues`: at most 5. Each has `title` (what the player meets, with one number), `stage` or `t`, `level` (`red`, `orange`, `yellow`, `green`), and `next` (one sentence on what to look at or change). Optional `area` is the table's 類別 (`CPU`, `記憶體`, `draw call`, `穩定性`, `卡頓`, `FPS`); it defaults to the stage name. Do not write 嚴重, 明顯, or 要注意. The color carries that.
+- Do not restate a Cocos rule the digest's `todo` already lists. If you have a more specific version of one, set `rule` to its id and your row replaces the generic one.
 - `missing`: what was not measured, in plain words.
 
-## Report
+Do not hand-write findings, scores, or the report. If something important is missing, put it in `issues` or fix the generator.
 
-```
-node report/analyze.js runs/<run>/evidence.json
-node report/markdown.js runs/<run>/evidence.json
-node report/canvas.js runs/<run>/evidence.json <workspace>/canvases/<slug>.canvas.tsx
-```
+## Rules that still apply
 
-`analyze.js` writes the two scores from [protocol/scoring.md](../../protocol/scoring.md), the Cocos advice from the Cocos rules, and `todo`, which merges `issues` with the Cocos advice into the one 要處理的地方 table, worst color first. Do not compute scores by hand, and do not edit the generated report to add raw numbers. If something important is missing from the report, put it in `issues` or fix the generator.
+- Pointer events only. The autopilot dispatches them on the canvas at the node's position. Never call an internal spin handler.
+- Never write the URL query string or a session token anywhere. `report/build.js` scrubs URLs, but do not rely on it.
+- If `conditions.gpu` is a software renderer, the FPS numbers describe this computer, not a phone GPU. The report says so.
 
-The canvas step is for Cursor. Other agents stop after the markdown.
+## Without the autopilot
+
+When a game defeats the autopilot, drive it by hand with the same probe: `__slotPerf.mark(name)` opens a stage, `__slotPerf.entry(thresholds.entry)` and `__slotPerf.buttons(words)` find what to press, `__slotPerf.cocos(label)` takes a scene snapshot, and `__slotPerf.summary()` returns everything. Follow scenarios.md step by step, then save `{ summary, cocos: { snapshots }, entry, coverage }` as `raw.json` and continue from step 8.

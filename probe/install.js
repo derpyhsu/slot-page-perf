@@ -14,6 +14,7 @@
     marks: [],
     heapSeries: [],
     textureSeries: [],
+    gpuSeries: [],
     t0: performance.now(),
     stage: null,
     stages: [],
@@ -121,7 +122,10 @@
       draws: [],
       hitches: [],
       heapStart: heapMb(),
-      texStart: state.texBytes
+      texStart: state.texBytes,
+      gpuStart: gpuTotal(),
+      gpuPeak: gpuTotal(),
+      bad: 0
     };
   }
 
@@ -131,6 +135,7 @@
     s.t1 = performance.now();
     s.heapEnd = heapMb();
     s.texEnd = state.texBytes;
+    s.gpuEnd = gpuTotal();
     state.stages.push(s);
     state.stage = null;
   }
@@ -151,12 +156,14 @@
       openStage("loading");
     }
     var now = performance.now();
+    state.lastDraws = draws;
     bucketFrame(now, dt, cpu, draws);
     var s = state.stage;
     if (!s) return;
     s.frames += 1;
     s.sumDt += dt;
     s.sumDraws += draws;
+    if (dt > BAD_FRAME_MS) s.bad += 1;
     pushCapped(s.dts, dt);
     if (cpu != null) {
       s.sumCpu += cpu;
@@ -232,9 +239,117 @@
     try { ext.endQueryEXT(ext.TIME_ELAPSED_EXT); } catch (e) {}
   }
 
+  // Live GPU memory from WebGL allocation calls: textures, buffers and renderbuffers that are
+  // still alive. The default framebuffer is not included. Drivers pad and keep mips, so this is an
+  // estimate of what the page asked for, not what the GPU reports.
+  var gpuSizes = new WeakMap();
+  var gpuMem = state.gpuMem = { tex: 0, buf: 0, rb: 0, peak: 0 };
+  function gpuTotal() {
+    return gpuMem.tex + gpuMem.buf + gpuMem.rb;
+  }
+  function gpuSet(obj, kind, key, bytes) {
+    if (!obj || !(bytes >= 0)) return;
+    var e = gpuSizes.get(obj);
+    if (!e) {
+      e = { kind: kind, bytes: 0, parts: {} };
+      gpuSizes.set(obj, e);
+    }
+    var delta = bytes - (e.parts[key] || 0);
+    e.parts[key] = bytes;
+    e.bytes += delta;
+    gpuMem[kind] += delta;
+    var total = gpuTotal();
+    if (total > gpuMem.peak) gpuMem.peak = total;
+    if (state.stage && total > (state.stage.gpuPeak || 0)) state.stage.gpuPeak = total;
+  }
+  function gpuFree(obj) {
+    var e = obj && gpuSizes.get(obj);
+    if (!e) return;
+    gpuMem[e.kind] -= e.bytes;
+    gpuSizes.delete(obj);
+  }
+  function gpuBind(gl) {
+    return gl.__spBind || (gl.__spBind = { unit: 0, tex: {}, buf: {}, rb: null });
+  }
+  var CUBE_FACE0 = 0x8515;
+  function texSlot(gl, target) {
+    var face = target >= CUBE_FACE0 && target <= CUBE_FACE0 + 5 ? target - CUBE_FACE0 : -1;
+    var bindTarget = face >= 0 ? 0x8513 : target;
+    var b = gpuBind(gl);
+    return { tex: b.tex[b.unit + ":" + bindTarget], face: face < 0 ? 0 : face };
+  }
+  function texelBytes(format, type) {
+    if (type === 0x8033 || type === 0x8034 || type === 0x8363) return 2;
+    var per = type === 0x1406 ? 4 : type === 0x140b || type === 0x8d61 || type === 0x1403 ? 2 : 1;
+    var ch = format === 0x1909 || format === 0x1906 || format === 0x1903 ? 1 : format === 0x190a || format === 0x8227 ? 2 : 4;
+    return ch * per;
+  }
+  function sourceSize(src) {
+    if (!src) return null;
+    var w = src.videoWidth || src.naturalWidth || src.displayWidth || src.width;
+    var h = src.videoHeight || src.naturalHeight || src.displayHeight || src.height;
+    return w && h ? [w, h] : null;
+  }
+
+  function hookGpuMemory(proto) {
+    var wrap = function (name, fn) {
+      if (typeof proto[name] !== "function") return;
+      var orig = proto[name];
+      proto[name] = function () {
+        try { fn.apply(this, arguments); } catch (e) {}
+        return orig.apply(this, arguments);
+      };
+    };
+    wrap("activeTexture", function (unit) { gpuBind(this).unit = unit; });
+    wrap("bindTexture", function (target, tex) { var b = gpuBind(this); b.tex[b.unit + ":" + target] = tex; });
+    wrap("texImage2D", function (target, level, internalformat) {
+      var slot = texSlot(this, target);
+      var bytes;
+      if (arguments.length >= 8) bytes = arguments[3] * arguments[4] * texelBytes(arguments[6], arguments[7]);
+      else {
+        var size = sourceSize(arguments[5]);
+        bytes = size ? size[0] * size[1] * texelBytes(arguments[3], arguments[4]) : null;
+      }
+      if (bytes != null) gpuSet(slot.tex, "tex", slot.face + ":" + level, bytes);
+    });
+    wrap("compressedTexImage2D", function (target, level) {
+      var slot = texSlot(this, target);
+      var data = arguments[6];
+      var bytes = data && data.byteLength != null ? data.byteLength : typeof arguments[6] === "number" ? arguments[6] : null;
+      if (bytes != null) gpuSet(slot.tex, "tex", slot.face + ":" + level, bytes);
+    });
+    wrap("texStorage2D", function (target, levels, internalformat, w, h) {
+      var slot = texSlot(this, target);
+      var bytes = 0;
+      for (var i = 0; i < levels; i += 1) bytes += Math.max(1, w >> i) * Math.max(1, h >> i) * 4;
+      gpuSet(slot.tex, "tex", "storage", bytes * (target === 0x8513 ? 6 : 1));
+    });
+    wrap("generateMipmap", function (target) {
+      var slot = texSlot(this, target);
+      var e = slot.tex && gpuSizes.get(slot.tex);
+      if (e && e.parts["0:0"]) gpuSet(slot.tex, "tex", "mips", Math.round(e.parts["0:0"] / 3));
+    });
+    wrap("deleteTexture", function (tex) { gpuFree(tex); });
+    wrap("bindBuffer", function (target, buf) { gpuBind(this).buf[target] = buf; });
+    wrap("bufferData", function (target, data) {
+      var bytes = typeof data === "number" ? data : data && data.byteLength;
+      if (bytes != null) gpuSet(gpuBind(this).buf[target], "buf", "0", bytes);
+    });
+    wrap("deleteBuffer", function (buf) { gpuFree(buf); });
+    wrap("bindRenderbuffer", function (target, rb) { gpuBind(this).rb = rb; });
+    wrap("renderbufferStorage", function (target, format, w, h) { gpuSet(gpuBind(this).rb, "rb", "0", w * h * 4); });
+    wrap("renderbufferStorageMultisample", function (target, samples, format, w, h) { gpuSet(gpuBind(this).rb, "rb", "0", w * h * 4 * Math.max(1, samples)); });
+    wrap("deleteRenderbuffer", function (rb) { gpuFree(rb); });
+  }
+
+  function gpuMb() {
+    return round(gpuTotal() / 1048576);
+  }
+
   function hookGL(proto) {
     if (!proto || proto.__slotPerf) return;
     proto.__slotPerf = true;
+    hookGpuMemory(proto);
     ["drawArrays", "drawElements", "drawArraysInstanced", "drawElementsInstanced", "drawArraysInstancedANGLE", "drawElementsInstancedANGLE"].forEach(function (name) {
       if (typeof proto[name] !== "function") return;
       var orig = proto[name];
@@ -413,6 +528,7 @@
   setInterval(function () {
     var mb = heapMb();
     if (mb != null && state.heapSeries.length < SERIES_CAP) state.heapSeries.push([rel(performance.now()), mb]);
+    if (state.gl && state.gpuSeries.length < SERIES_CAP) state.gpuSeries.push([rel(performance.now()), gpuMb(), round(gpuMem.tex / 1048576)]);
   }, HEAP_SAMPLE_MS);
 
   setInterval(function () {
@@ -425,7 +541,7 @@
     var sorted = arr.slice().sort(function (a, b) { return a - b; });
     var sum = 0;
     for (var i = 0; i < arr.length; i += 1) sum += arr[i];
-    return { avg: round(sum / arr.length), p50: pct(sorted, 0.5), p95: pct(sorted, 0.95), max: round(sorted[sorted.length - 1]) };
+    return { avg: round(sum / arr.length), p50: pct(sorted, 0.5), p95: pct(sorted, 0.95), p99: pct(sorted, 0.99), max: round(sorted[sorted.length - 1]) };
   }
 
   function finishStage(s) {
@@ -438,6 +554,11 @@
       wallMs: round(wall),
       frames: s.frames,
       fps: s.sumDt > 0 ? round(1000 / (s.sumDt / s.frames)) : null,
+      // 1% low: the FPS of the slowest 1% of frames. badShare: share of frames over BAD_FRAME_MS.
+      fpsLow: s.dts.length >= 20 ? round(1000 / pct(s.dts.slice().sort(function (a, b) { return a - b; }), 0.99)) : null,
+      badShare: s.frames ? Math.round((1000 * s.bad) / s.frames) / 1000 : null,
+      frameMs: stat(s.dts),
+      gpuMemMb: { start: round(s.gpuStart / 1048576), end: round((s.gpuEnd == null ? gpuTotal() : s.gpuEnd) / 1048576), peak: round(s.gpuPeak / 1048576) },
       cpuMs: stat(s.cpus),
       cpuFrames: s.cpus.length,
       gpuMs: s.gpuN ? stat(s.gpus) : null,
@@ -874,6 +995,26 @@
     entry: function (cfg) {
       return entryState(cfg);
     },
+    // Cheap reading for drivers: last second of frames, current draws, optional active node count.
+    live: function (withNodes) {
+      var now = performance.now() - state.t0;
+      var rows = state.buckets.slice(-6).concat(state.bucket ? [state.bucket] : []).filter(function (b) { return b[0] >= now - 1000 - BUCKET_MS; });
+      var frames = rows.reduce(function (a, b) { return a + b[1]; }, 0);
+      var span = rows.length ? Math.max(BUCKET_MS, now - rows[0][0]) : 0;
+      var out = {
+        stage: state.stage && state.stage.name,
+        fps: span ? round((1000 * frames) / span) : null,
+        draws: state.lastDraws == null ? null : state.lastDraws,
+        gpuMb: gpuMb(),
+        heapMb: heapMb()
+      };
+      if (withNodes) {
+        var n = 0;
+        walkScene(function (node) { if (node.activeInHierarchy !== false) n += 1; });
+        out.activeNodes = n;
+      }
+      return out;
+    },
     summary: function () {
       var open = state.stage ? finishStage(state.stage) : null;
       return {
@@ -885,6 +1026,7 @@
           gpuTimer: !!state.gpuExt,
           jsHeap: !!performance.memory,
           textureResidency: textureInfo().status,
+          gpuMemory: !!state.gl,
           sceneName: state.sceneLog.length > 0
         },
         sceneLog: state.sceneLog,
@@ -898,10 +1040,13 @@
           longTaskFields: ["startMs", "durationMs", "inFlight"],
           marks: state.marks,
           heap: state.heapSeries,
-          textures: state.textureSeries
+          textures: state.textureSeries,
+          gpu: state.gpuSeries,
+          gpuFields: ["t", "totalMb", "textureMb"]
         },
         memory: {
           heapMb: heapMb(),
+          gpu: { status: state.gl ? "ok" : "unavailable", mb: gpuMb(), peakMb: round(gpuMem.peak / 1048576), textureMb: round(gpuMem.tex / 1048576), bufferMb: round(gpuMem.buf / 1048576), renderbufferMb: round(gpuMem.rb / 1048576), note: "Live WebGL allocations the page asked for. Excludes the default framebuffer and driver padding." },
           texUploadMb: round(state.texBytes / 1048576),
           texUploads: state.texUploads,
           textures: textureInfo()

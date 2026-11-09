@@ -2,11 +2,12 @@
 
 This repo anchors performance of an HTML5 slot from the page. The game source is not required. A run is one game URL.
 
-Before measuring, read `skill/slot-page-perf/SKILL.md`, then `protocol/scenarios.md`, `protocol/rules.md`, and `protocol/thresholds.json`.
+Before measuring, read `skill/slot-page-perf/SKILL.md`, then `protocol/scenarios.md` and `protocol/thresholds.json`.
 
 ## Boundaries
 
-- Install `probe/install.js` before navigation so loading is recorded.
+- Install the probe before navigation so loading is recorded. `node probe/build.js` bundles it; the skill shows how to load it without pasting it.
+- Spend as few tokens as possible. Let `__slotPerf.auto` drive the page, poll its short status, and save results with `evaluate_script` `filePath`. Do not pull raw summaries or screenshots into the conversation unless needed.
 - Prefer the Chrome DevTools MCP server named `chrome-devtools`.
 - Drive the canvas with pointer events. Do not call game-internal spin handlers.
 - Do not change the bet. Before 50 spins, show the current bet and wait for confirmation.
@@ -18,4 +19,4 @@ Before measuring, read `skill/slot-page-perf/SKILL.md`, then `protocol/scenarios
 
 ## Output
 
-Write `runs/<utc>-<slug>/evidence.json` using `probe/schema.json`. Then run `node report/analyze.js`, `node report/markdown.js`, and in Cursor `node report/canvas.js` on that file. Scores follow `protocol/scoring.md`. Do not hand-write the report.
+Save `__slotPerf.auto.result()` as `runs/<utc>-<slug>/raw.json`, write the short `notes.json`, and run `node report/build.js runs/<utc>-<slug>` (add `--canvas <path>` in Cursor). It writes `evidence.json` per `probe/schema.json`, applies `protocol/rules.md` and `protocol/scoring.md`, and generates the report. Do not hand-write findings, scores, or the report.

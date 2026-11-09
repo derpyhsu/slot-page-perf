@@ -98,7 +98,14 @@ function heapPeak() {
   return peak || null;
 }
 
+// GPU side of the estimate. Live WebGL allocations when the probe saw them, else Cocos textures.
+function gpuSource() {
+  const gpu = ev.memory && ev.memory.gpu;
+  return gpu && gpu.status === "ok" && gpu.peakMb > 0 ? "gpu" : "textures";
+}
+
 function texturePeak() {
+  if (gpuSource() === "gpu") return ev.memory.gpu.peakMb;
   const tex = ev.memory && ev.memory.textures;
   let peak = tex && tex.status === "ok" ? tex.mb : null;
   ((ev.timeline && ev.timeline.textures) || []).forEach((p) => {
@@ -237,7 +244,7 @@ ev.score = {
     items: memoryItems,
     fatal: memoryFatal,
     budgetMb: cfg.memoryBudgetMb,
-    estimateMb: estimate == null ? null : { heap: round(heap), texture: round(texture), framebuffer: round(fb), total: round(estimate) },
+    estimateMb: estimate == null ? null : { heap: round(heap), texture: round(texture), framebuffer: round(fb), total: round(estimate), gpuSource: gpuSource() },
   }),
 };
 smoothItems.concat(memoryItems).forEach((i) => {
@@ -271,6 +278,9 @@ const STAGE_NAMES = {
   rules: "遊戲規則",
   "idle-after-rules": "規則後待機",
   "history-after": "轉後下注紀錄",
+  "idle-end": "最後待機",
+  spin: "一般旋轉",
+  turbo: "加速旋轉",
 };
 function stageName(name) {
   if (!name) return null;
@@ -281,6 +291,24 @@ function stageName(name) {
 
 ev.cocosAdvice = cocosAdvice();
 ev.todo = todo();
+ev.fps = fpsTable();
+
+// One row per stage group for the FPS table, in the order the run visits them.
+function fpsTable() {
+  const { groups } = require("./findings");
+  const ORDER = ["loading", "enter", "idle", "menu", "history-before", "rules", "idle-after-rules", "spin", "turbo", "history-after", "idle-end"];
+  const F = thresholds.fps || {};
+  return groups(stages)
+    .filter((g) => ORDER.includes(g.group) && g.frames >= 30)
+    .sort((a, b) => ORDER.indexOf(a.group) - ORDER.indexOf(b.group))
+    .map((g) => {
+      const fails = (g.fps != null && g.fps < F.stageMin) || (g.fpsLow != null && g.fpsLow < F.lowMin) || (g.badShare != null && g.badShare > F.badShareMax);
+      const bad = (g.fps != null && g.fps < 45) || (g.fpsLow != null && g.fpsLow < 30);
+      const loading = g.group === "loading" || g.group === "enter";
+      const level = bad && !loading ? "red" : fails ? (loading ? "yellow" : "orange") : g.badShare > 0.005 ? "yellow" : "green";
+      return { group: g.group, label: stageName(g.group), stages: g.stages, fps: g.fps, fpsLow: g.fpsLow, badShare: g.badShare, level };
+    });
+}
 
 // One list for the report: the agent's issues plus Cocos advice, worst first.
 // An issue whose `rule` names a Cocos rule replaces that rule's generic row.

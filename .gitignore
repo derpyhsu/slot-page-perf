@@ -1,4 +1,5 @@
 runs/
+probe/dist/
 *.heapsnapshot
 node_modules/
 .DS_Store

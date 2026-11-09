@@ -389,7 +389,8 @@
         "heap": 134,
         "texture": 270.2,
         "framebuffer": 10.5,
-        "total": 414.7
+        "total": 414.7,
+        "gpuSource": "textures"
       }
     }
   },
@@ -518,6 +519,35 @@
       "stage": null,
       "t": null,
       "rule": "cocos-console-errors"
+    }
+  ],
+  "fps": [
+    {
+      "group": "idle",
+      "label": "待機",
+      "stages": 1,
+      "fps": 61.2,
+      "fpsLow": null,
+      "badShare": 0,
+      "level": "green"
+    },
+    {
+      "group": "spin",
+      "label": "一般旋轉",
+      "stages": 1,
+      "fps": 58.4,
+      "fpsLow": null,
+      "badShare": 0,
+      "level": "green"
+    },
+    {
+      "group": "turbo",
+      "label": "加速旋轉",
+      "stages": 1,
+      "fps": 58.9,
+      "fpsLow": null,
+      "badShare": 0,
+      "level": "green"
     }
   ]
 }
