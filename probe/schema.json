@@ -12,9 +12,37 @@
       "additionalProperties": false,
       "properties": {
         "title": { "type": "string" },
+        "displayName": { "type": "string" },
         "urlPath": { "type": "string", "description": "Path only. Never include the query string." }
       }
     },
+    "timeline": { "type": "object", "description": "Time series from summary().timeline. Bucket and long task field names are listed inside." },
+    "cocos": {
+      "type": "object",
+      "properties": { "snapshots": { "type": "array", "description": "Results of __slotPerf.cocos() in stage order." } }
+    },
+    "summary": {
+      "type": "object",
+      "properties": { "smooth": { "type": "string" }, "memory": { "type": "string" } }
+    },
+    "issues": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["title", "next"],
+        "properties": {
+          "title": { "type": "string" },
+          "stage": { "type": "string" },
+          "t": { "type": ["number", "null"] },
+          "level": { "enum": ["red", "orange", "yellow", "green"] },
+          "next": { "type": "string" }
+        }
+      }
+    },
+    "missing": { "type": "array", "items": { "type": "string" } },
+    "score": { "type": "object", "description": "Written by report/analyze.js." },
+    "cocosAdvice": { "type": "object", "description": "Written by report/analyze.js." },
     "conditions": { "type": "object" },
     "channels": { "type": "object" },
     "sceneLog": { "type": "array" },
