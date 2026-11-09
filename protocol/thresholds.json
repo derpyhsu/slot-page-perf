@@ -13,5 +13,35 @@
   "gpuLightP95Ms": 8,
   "textureWarnMb": 150,
   "leakMb": 15,
-  "leakTailSpins": 10
+  "leakTailSpins": 10,
+  "timeline": {
+    "bucketMs": 250,
+    "heapSampleMs": 1000,
+    "textureSampleMs": 5000
+  },
+  "cocos": {
+    "spineRealtimeActive": 20,
+    "labelNoCacheActive": 30,
+    "masksActive": 4,
+    "particlesMax": 1000,
+    "nodesTotal": 3000,
+    "uncompressedShare": 0.5,
+    "uncompressedMinMb": 64,
+    "npotShare": 0.5,
+    "consoleRepeat": 10
+  },
+  "scoring": {
+    "memoryBudgetMb": 300,
+    "smooth": {
+      "stable": { "weight": 40, "full": 0.99, "zero": 0.9, "badFrameMs": 33 },
+      "stall": { "weight": 30, "full": 50, "zero": 1000 },
+      "cpu": { "weight": 30, "full": 4, "zero": 16.7 }
+    },
+    "memory": {
+      "budget": { "weight": 50, "full": 0.5, "zero": 1 },
+      "growth": { "weight": 30, "full": 0.05, "zero": 0.5 },
+      "bigTextures": { "weight": 20, "full": 0, "zero": 5, "mb": 16 }
+    },
+    "fatal": { "stallMs": 1000, "minFps": 30, "cap": 49 }
+  }
 }

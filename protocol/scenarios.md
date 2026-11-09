@@ -35,4 +35,19 @@ Feature 或大獎只在該轉的 mark 上記 `tags`。不另外加轉，不買 F
 
 ## 停穩
 
-同時成立才算這一轉結束：至少過了 500 ms，而且停止鈕已關掉或 draw call 回到這一轉開始前的待機附近。下一次點擊要等這個條件。
+同時成立才算這一轉結束：至少過了 500 ms，而且停止鈕已關掉或 draw call 回到這一轉開始前的待機附近。下一次點擊要等這個條件。沒有停止鈕時，可以讀轉輪節點的狀態回到待機。
+
+停穩當下就 `mark("gap")`，把等待和讀 summary 的時間切出去。`gap` 不寫進 `spins`，也不進報告。不然一轉的紀錄會含幾十秒的等待，平均值會被待機稀釋。
+
+## Cocos 快照
+
+`window.__slotPerf.cocos(label)` 會走一次目前的場景，讀節點、Spine、Label、Mask、粒子、貼圖格式、引擎設定和主控台警告。它不在每一幀跑，只在這幾個時間點各呼叫一次，結果依序放進 `evidence.cocos.snapshots`：
+
+1. 待機量完
+2. 遊戲規則穩態
+3. 50 轉後的下注紀錄穩態
+4. 關掉面板後的最後待機
+
+## 量測前的檢查
+
+`mark("idle")` 後幾秒讀一次 summary。`channels.engineCpu` 要是 true，`frameLoop` 要是 `tick`（Creator 3.x）或 `mainLoop`（Creator 2.x）。如果是 `raf`，代表探針沒掛上引擎迴圈，CPU 全部是未讀到。在 `coverage` 寫明，不要把 0 當成很輕。

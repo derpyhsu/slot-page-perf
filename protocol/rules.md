@@ -7,8 +7,12 @@
 階段裡有幀的 `dt` 大於 `hitchMs`。
 
 - `inFlight` 大於 0：`hitch-network`。證據是該幀的 `dt`、`cpu`，以及不含 query 的路徑。
-- `inFlight` 為 0，而且 `cpu` 達到該幀 `dt` 的八成以上：`hitch-main-thread`。
+- `inFlight` 為 0，而且 `cpu` 達到該幀 `dt` 的八成以上：`hitch-main-thread`。`source` 是 `longtask` 的項目也算，它的時間本來就是主執行緒。
 - 其餘：`hitch-other`。GPU 時間有讀到就一併寫上。
+
+`cpu` 是 `null` 表示那一幀沒有引擎計時，不是 0 毫秒。這時若同一段有時間相近的 long task，寫成同一次 `hitch-main-thread`；沒有就寫 `hitch-other`，證據註明 CPU 未讀到。
+
+`channels.engineCpu` 為 false 時，所有 CPU 平均、p95、CPU% 都是 `unavailable`，`cpu-heavy` 不觸發。
 
 ## cpu-heavy
 
@@ -38,6 +42,28 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 ## panel-left-open
 
 `idle-after-rules` 的 draw call 平均比 `idle` 高過三成，或 heap 地板比打開面板前高過 `leakMb`。
+
+## Cocos 規則
+
+讀 `evidence.cocos.snapshots`。同一個數字取所有快照的最大值，主控台取最後一次（它是累計的）。門檻在 `thresholds.json` 的 `cocos`。這些規則由 `report/analyze.js` 判斷，報告列在「Cocos 可以改的地方」。
+
+| id | 條件 | 影響 |
+| --- | --- | --- |
+| `cocos-spine-realtime` | 畫面上的 realtime Spine 多於 `spineRealtimeActive` | CPU：每幀都在算骨骼 |
+| `cocos-spine-cache-warning` | 主控台有 Spine 快取模式不支援的呼叫（例如 `clearTrack`） | 動畫狀態會錯，也是無效呼叫 |
+| `cocos-texture-uncompressed` | 貼圖超過 `uncompressedMinMb`，而且未壓縮的比例超過 `uncompressedShare` | 記憶體 |
+| `cocos-texture-npot` | 邊長不是 2 的冪的比例超過 `npotShare` | 記憶體：不能用 PVRTC，也不能生 mipmap |
+| `cocos-label-no-cache` | 畫面上 cacheMode 為 NONE 的 Label 多於 `labelNoCacheActive` | draw call 與 CPU：每個 Label 自己一張貼圖 |
+| `cocos-mask-many` | 畫面上的 Mask 多於 `masksActive` | draw call：每個 Mask 打斷合批 |
+| `cocos-particles-many` | 畫面上粒子上限加總超過 `particlesMax` | CPU 與填色 |
+| `cocos-nodes-many` | 場景節點多於 `nodesTotal` | CPU 與記憶體：隱藏的節點也還在 |
+| `cocos-image-cache-kept` | `CLEANUP_IMAGE_CACHE` 為 false | 記憶體：上傳後原圖還留在 JS 記憶體 |
+| `cocos-dynamic-atlas-off` | 動態合圖關閉 | draw call |
+| `cocos-webgl1` | 瀏覽器有 WebGL 2，遊戲卻用 WebGL 1 | 少了 instancing 等能力 |
+| `cocos-frame-rate` | `frameRate` 設成 60 以外 | 上限不是 60 |
+| `cocos-console-errors` | 主控台有引擎 error，或同一句 warning 超過 `consoleRepeat` 次 | 穩定性：資源或流程有錯 |
+
+讀不到的欄位是 `null`，該規則不觸發。
 
 ## loading-stall
 
