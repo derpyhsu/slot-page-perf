@@ -87,10 +87,19 @@
     return new Promise(function (resolve) { st.resume = resolve; });
   }
 
+  // Earlier words in the list are stronger, so "help" beats an extra-bet "info" tooltip.
   function find(words, opts) {
     var list = P.buttons(words).buttons;
     if (opts && opts.interactable) list = list.filter(function (b) { return b.interactable && b.point; });
-    return list;
+    var w = lower(words);
+    var rank = function (b) {
+      var hay = (b.name + " " + b.text).toLowerCase();
+      for (var i = 0; i < w.length; i += 1) if (hay.indexOf(w[i]) >= 0) return i;
+      return w.length;
+    };
+    return list.map(function (b, i) { return { b: b, r: rank(b), i: i }; })
+      .sort(function (a, c) { return a.r - c.r || a.i - c.i; })
+      .map(function (x) { return x.b; });
   }
 
   function spinButton() {

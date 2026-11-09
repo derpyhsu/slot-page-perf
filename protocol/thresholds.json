@@ -8,11 +8,11 @@
   "panelSpikeSeconds": 2,
   "hitchMs": 50,
   "buttons": {
-    "menu": ["功能列表", "選單", "选单", "菜單", "菜单", "menu", "more", "更多"],
+    "menu": ["功能列表", "選單", "选单", "菜單", "菜单", "menu", "more", "更多", "設定", "设置", "setting"],
     "history": ["下注紀錄", "下注记录", "遊戲紀錄", "游戏记录", "歷史", "历史", "紀錄", "记录", "history", "record"],
     "rules": ["遊戲規則", "游戏规则", "規則", "规则", "說明", "说明", "help", "paytable", "rule", "info"],
     "turbo": ["加速", "快速", "極速", "极速", "turbo", "speed", "quick", "fast"],
-    "close": ["關閉", "关闭", "返回", "close", "btn_back", "btnback", "exit", "btn_x", "btnx", "cancel"],
+    "close": ["關閉", "关闭", "返回", "close", "btn_back", "btnback", "exit", "btn_x", "btnx", "cancel", "quit"],
     "bet": ["押注", "下注", "投注", "總押", "总押", "bet", "stake"]
   },
   "settle": { "minMs": 1500, "stablePolls": 3, "pollMs": 250, "nudgeAfterMs": 30000, "maxMs": 120000, "stillMs": 15000, "hardMaxMs": 600000 },
