@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "example": true,
+  "game": {
+    "title": "SlotLifeOfPets",
+    "urlPath": "/game/slot/SlotLifeOfPets/"
+  },
+  "conditions": {
+    "capturedAt": "2026-11-09T06:00:00.000Z",
+    "viewport": { "w": 1280, "h": 720, "dpr": 1 },
+    "canvas": { "w": 1280, "h": 720 },
+    "gpu": "ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Ti (0x00001C82) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "webgl": "WebGL 1.0",
+    "engine": "2.0.9",
+    "webdriver": true,
+    "hidden": false,
+    "visibility": "visible",
+    "title": "Rich88",
+    "urlPath": "/game/slot/SlotLifeOfPets/"
+  },
+  "channels": {
+    "frameLoop": "mainLoop",
+    "gpuTimer": true,
+    "jsHeap": true,
+    "textureResidency": "ok",
+    "sceneName": false
+  },
+  "sceneLog": [],
+  "stages": [
+    {
+      "name": "idle",
+      "wallMs": 6000,
+      "frames": 367,
+      "fps": 61.2,
+      "cpuMs": { "avg": 2.11, "p50": 2, "p95": 2.8, "max": 3.4 },
+      "gpuMs": { "avg": 4.15, "p50": 3.7, "p95": 6.85, "max": 7.77 },
+      "cpuPct": 12.9,
+      "gpuPct": 24.9,
+      "draws": { "avg": 51.9, "p50": 55, "p95": 55, "max": 55 },
+      "hitches": [],
+      "heapStartMb": 90.7,
+      "heapEndMb": 90.7,
+      "texUploadMb": 0
+    },
+    {
+      "name": "spin-1",
+      "wallMs": 4500,
+      "frames": 268,
+      "fps": 58.4,
+      "cpuMs": { "avg": 4.18, "p50": 3.6, "p95": 5.4, "max": 210.4 },
+      "gpuMs": { "avg": 3.75, "p50": 3.25, "p95": 7.01, "max": 7.38 },
+      "cpuPct": 24.4,
+      "gpuPct": 22.5,
+      "draws": { "avg": 71, "p50": 70, "p95": 82, "max": 82 },
+      "hitches": [{ "dt": 210.8, "cpu": 210.4, "gpu": 7.38, "draws": 82, "inFlight": null, "urls": [] }],
+      "heapStartMb": 114,
+      "heapEndMb": 134,
+      "texUploadMb": 0
+    },
+    {
+      "name": "turbo-1",
+      "wallMs": 3500,
+      "frames": 207,
+      "fps": 58.9,
+      "cpuMs": { "avg": 2.72, "p50": 1.8, "p95": 2.5, "max": 114.4 },
+      "gpuMs": { "avg": 4.58, "p50": 4.11, "p95": 7.36, "max": 8.37 },
+      "cpuPct": 16,
+      "gpuPct": 27.4,
+      "draws": { "avg": 71.6, "p50": 71, "p95": 93, "max": 93 },
+      "hitches": [{ "dt": 115, "cpu": 114.4, "gpu": 8.37, "draws": 93, "inFlight": null, "urls": [] }],
+      "heapStartMb": 134,
+      "heapEndMb": 134,
+      "texUploadMb": 0
+    }
+  ],
+  "spins": [
+    { "name": "spin-1", "fps": 58.4, "cpuP95": 5.4, "gpuP95": 7.01, "hitchMax": 210.8 },
+    { "name": "turbo-1", "fps": 58.9, "cpuP95": 2.5, "gpuP95": 7.36, "hitchMax": 115 }
+  ],
+  "memory": {
+    "heapMb": 134,
+    "texUploadMb": 274.2,
+    "texUploads": 342,
+    "textures": {
+      "status": "ok",
+      "count": 171,
+      "mb": 270.2,
+      "npot": 162,
+      "formats": { "RGBA8888": 171 },
+      "largest": [
+        { "w": 2048, "h": 2048, "mb": 16 },
+        { "w": 1734, "h": 1956, "mb": 12.94 }
+      ]
+    },
+    "leak": { "status": "not-enough-spins", "deltaMb": null }
+  },
+  "findings": [
+    {
+      "id": "texture-heavy",
+      "stage": "idle",
+      "detail": "171 張 RGBA8888，駐留 270.2 MB，162 張不是 2 的冪次。"
+    },
+    {
+      "id": "hitch-other",
+      "stage": "spin-1",
+      "detail": "210.8 ms 的一幀，CPU 210.4 ms，GPU 7.38 ms。當時還沒有 inFlight 紀錄，不能分成等伺服器或主執行緒。"
+    }
+  ],
+  "coverage": {
+    "spins": 2,
+    "loading": false,
+    "history": 0,
+    "rules": false,
+    "notes": [
+      "這是建立這套流程之前的短測，不是一次完整定錨。",
+      "探針是遊戲進入後才掛上的，所以沒有 boot 與 loading。",
+      "沒有打開下注紀錄與遊戲規則。",
+      "轉數不足，不能判斷洩漏。"
+    ]
+  }
+}

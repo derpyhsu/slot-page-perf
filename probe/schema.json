@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "slot-page-perf/evidence-1",
+  "type": "object",
+  "required": ["schemaVersion", "conditions", "channels", "stages", "spins", "memory", "findings", "coverage"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "example": { "type": "boolean" },
+    "game": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "urlPath": { "type": "string", "description": "Path only. Never include the query string." }
+      }
+    },
+    "conditions": { "type": "object" },
+    "channels": { "type": "object" },
+    "sceneLog": { "type": "array" },
+    "stages": { "type": "array" },
+    "spins": { "type": "array" },
+    "memory": { "type": "object" },
+    "findings": { "type": "array" },
+    "coverage": { "type": "object" }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "maxSpins": 50,
+  "normalSpins": 40,
+  "turboSpins": 10,
+  "warmupSpins": 5,
+  "idleSeconds": 8,
+  "panelSteadySeconds": 5,
+  "panelSpikeSeconds": 2,
+  "hitchMs": 50,
+  "frameBudgetMs": 16.7,
+  "cpuHeavyP95Ms": 12,
+  "gpuHeavyP95Ms": 12,
+  "gpuLightP95Ms": 8,
+  "textureWarnMb": 150,
+  "leakMb": 15,
+  "leakTailSpins": 10
+}

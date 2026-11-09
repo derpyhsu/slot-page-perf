@@ -1,0 +1,6 @@
+# Merge this into ~/.codex/config.toml or the project Codex config.
+# Chrome DevTools MCP is the preferred browser for a slot-page-perf run.
+
+[mcp_servers.chrome-devtools]
+command = "npx"
+args = ["-y", "chrome-devtools-mcp@latest"]
