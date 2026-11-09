@@ -290,6 +290,7 @@ function stageName(name) {
 }
 
 ev.cocosAdvice = cocosAdvice();
+ev.findingRows = findingRows();
 ev.todo = todo();
 ev.fps = fpsTable();
 
@@ -314,14 +315,108 @@ function fpsTable() {
     });
 }
 
-// One list for the report: the agent's issues plus Cocos advice, worst first.
-// An issue whose `rule` names a Cocos rule replaces that rule's generic row.
+// Rows written from findings, so the table does not depend on the agent writing issues.
+// rule ids: stall-<group>, fps-<group>, memory-budget, leak-suspected, panel-<stage>, panel-left-open.
+function findingRows() {
+  const { groups } = require("./findings");
+  const found = ev.findings || [];
+  const tex = ev.memory && ev.memory.textures && ev.memory.textures.status === "ok" ? ev.memory.textures : null;
+  const gs = groups(stages);
+  const grp = (n) => gs.find((x) => x.group === n);
+  const sec = (ms) => (ms >= 1000 ? `${round(ms / 1000, 1)} 秒` : `${Math.round(ms)} ms`);
+  const rows = [];
+  const snaps = (ev.cocos && ev.cocos.snapshots) || [];
+  const cap = ((snaps[snaps.length - 1] || {}).settings || {}).frameRate;
+
+  const hitches = found.filter((f) => /^hitch-/.test(f.id) && f.value >= thresholds.hitchMs);
+  const byGroup = new Map();
+  hitches.forEach((h) => {
+    const g = /^(spin|turbo)-\d+$/.test(h.stage) ? h.stage.replace(/-\d+$/, "") : h.stage.replace(/-spike$/, "");
+    byGroup.set(g, (byGroup.get(g) || []).concat(h));
+  });
+  byGroup.forEach((hs, g) => {
+    const worst = hs.reduce((a, b) => (b.value > a.value ? b : a));
+    const net = hs.filter((h) => h.id === "hitch-network").length;
+    const loading = g === "loading" || g === "enter";
+    const name = stageName(g);
+    const title = loading
+      ? `${name}時頓了 ${hs.length} 次，最長 ${sec(worst.value)}`
+      : hs.length > 1 ? `${name}時畫面停了 ${hs.length} 次，最長 ${sec(worst.value)}` : `${name}時畫面停 ${sec(worst.value)}`;
+    const level = loading ? (worst.value >= 500 ? "orange" : "yellow") : worst.value >= 250 ? "red" : worst.value >= 100 ? "orange" : "yellow";
+    const fix = loading
+      ? net >= hs.length / 2
+        ? "停頓時還有資源在下載；把大檔移到前段預載，下載完的初始化拆成幾幀做。"
+        : "主執行緒一次做太多；把初始化拆成幾幀做，不要一次建完。"
+      : "在這一刻錄一次 DevTools Performance，看這段時間在做什麼；常見是一次建好整頁節點或同步上傳貼圖。";
+    rows.push({ rule: `stall-${g}`, level, title, area: "卡頓", fix, stage: worst.stage, t: worst.t });
+  });
+
+  // Low FPS that just follows a frame cap under 60 is the cocos-frame-rate row. Stages with the
+  // same symptom share one row so the table stays short.
+  const F = thresholds.fps;
+  const drops = found.filter((f) => f.id === "fps-drop" && !(cap && cap < 60 && f.fps != null && Math.abs(f.fps - cap) < 2));
+  const kinds = { low: [], drop: [], bad: [] };
+  drops.forEach((f) => {
+    if (f.fps != null && f.fps < F.stageMin) kinds.low.push(f);
+    else if (f.dropShare != null && f.dropShare > F.dropShareMax) kinds.drop.push(f);
+    else kinds.bad.push(f);
+  });
+  const names = (xs) => xs.map((f) => stageName(f.stage)).join("、");
+  const worstOf = (xs, k, dir) => xs.reduce((a, b) => ((dir < 0 ? b[k] < a[k] : b[k] > a[k]) ? b : a));
+  const fpsHint = (f) => {
+    const g = grp(f.stage);
+    return g && g.cpuP95 != null && g.cpuP95 > 12 ? `${stageName(f.stage)}每幀 CPU 到 ${g.cpuP95} ms，先看腳本和動畫。` : `${stageName(f.stage)}每幀畫 ${g ? Math.round(g.draws) : "?"} 次，先減少 draw call 和疊圖。`;
+  };
+  if (kinds.low.length) {
+    const w = worstOf(kinds.low, "fps", -1);
+    rows.push({ rule: "fps-low", level: w.fps < 45 ? "red" : "orange", title: `${names(kinds.low)}平均只有 ${w.fps} FPS`, area: "FPS", fix: fpsHint(w), stage: w.stage, t: null });
+  }
+  if (kinds.drop.length) {
+    const w = worstOf(kinds.drop, "dropShare", 1);
+    rows.push({ rule: "fps-drop", level: w.dropShare > 0.1 ? "red" : "orange", title: `${names(kinds.drop)}掉了 ${round(w.dropShare * 100, 1)}% 的幀`, area: "FPS", fix: fpsHint(w), stage: w.stage, t: null });
+  }
+  if (kinds.bad.length) {
+    const w = worstOf(kinds.bad, "badShare", 1);
+    rows.push({ rule: "fps-bad", level: "orange", title: `${names(kinds.bad)}有 ${round((w.badShare || 0) * 100, 1)}% 的幀超過 33 ms`, area: "FPS", fix: fpsHint(w), stage: w.stage, t: null });
+  }
+
+  if (ratio != null && ratio > 0.5) {
+    const est = ev.score.memory.estimateMb;
+    const big = [...new Set((tex && tex.largest ? tex.largest : []).map((x) => `${x.w}×${x.h}`))].slice(0, 2).join("、");
+    rows.push({
+      rule: "memory-budget",
+      level: ratio > 1 ? "red" : ratio > 0.7 ? "orange" : "yellow",
+      title: `記憶體推估 ${Math.round(est.total)} MB，佔 ${cfg.memoryBudgetMb} MB 預算 ${Math.round(ratio * 100)}%`,
+      area: "記憶體",
+      fix: `GPU ${Math.round(est.texture)} MB 是大頭${big ? `，最大的是 ${big}` : ""}；先做貼圖壓縮，用不到的圖集在切場景時釋放。`,
+      stage: null,
+      t: null,
+    });
+  }
+
+  const leak = found.find((f) => f.id === "leak-suspected");
+  if (leak) rows.push({ rule: "leak-suspected", level: "red", title: `轉了之後 JS 記憶體從 ${Math.round(leak.from)} 漲到 ${Math.round(leak.to)} MB`, area: "記憶體", fix: "轉前、轉後各拍一次 heap snapshot 比對，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。", stage: null, t: null });
+
+  const idle = grp("idle");
+  found.filter((f) => f.id === "panel-heavier").forEach((f) => {
+    const x = grp(f.stage);
+    if (!x || !idle || f.drawRatio == null || f.drawRatio <= 0.3) return;
+    rows.push({ rule: `panel-${f.stage}`, level: f.drawRatio >= 2 ? "orange" : "yellow", title: `${stageName(f.stage)}每一幀畫 ${Math.round(x.draws)} 次，是待機的 ${round(x.draws / idle.draws, 1)} 倍`, area: "draw call", fix: "這頁的圖合成圖集，被面板蓋住的層關掉。", stage: f.stage, t: null });
+  });
+  if (found.some((f) => f.id === "panel-left-open")) rows.push({ rule: "panel-left-open", level: "orange", title: "關掉面板後，畫面工作量沒回到待機", area: "draw call", fix: "關面板時把節點設成不啟用或銷毀，不要只是移出畫面。", stage: "idle-after-rules", t: null });
+
+  return rows;
+}
+
+// One list for the report: the agent's issues, finding rows, then Cocos advice, worst first.
+// An issue whose `rule` names a finding row or Cocos rule replaces that generic row.
 function todo() {
   const rank = { red: 0, orange: 1, yellow: 2, green: 3 };
   const issues = ev.issues || [];
   const covered = new Set(issues.map((i) => i.rule).filter(Boolean));
   const rows = issues
     .map((i) => ({ level: i.level || "red", title: i.title, area: i.area || stageName(i.stage) || "", fix: i.next, stage: i.stage || null, t: i.t == null ? null : i.t }))
+    .concat(ev.findingRows.filter((r) => !covered.has(r.rule)))
     .concat(ev.cocosAdvice.items.filter((c) => !covered.has(c.id)).map((c) => ({ level: c.level, title: c.title, area: c.area, fix: c.fix, stage: null, t: null, rule: c.id })));
   return rows.map((r, i) => Object.assign(r, { order: i })).sort((a, b) => rank[a.level] - rank[b.level] || a.order - b.order).map(({ order, ...r }, i) => Object.assign({ n: i + 1 }, r));
 }

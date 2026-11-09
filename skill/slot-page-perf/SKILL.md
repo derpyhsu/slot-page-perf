@@ -43,7 +43,8 @@ The only thing the agent writes. Keep it short.
 - `displayName`: the Chinese title on screen.
 - `summary.smooth` and `summary.memory`: one sentence each, under 20 characters. Say what is good and what is bad. No severity words.
 - `issues`: at most 5. Each has `title` (what the player meets, with one number), `stage` or `t`, `level` (`red`, `orange`, `yellow`, `green`), and `next` (one sentence on what to look at or change). Optional `area` is the table's 類別 (`CPU`, `記憶體`, `draw call`, `穩定性`, `卡頓`, `FPS`); it defaults to the stage name. Do not write 嚴重, 明顯, or 要注意. The color carries that.
-- Do not restate a Cocos rule the digest's `todo` already lists. If you have a more specific version of one, set `rule` to its id and your row replaces the generic one.
+- The generator already writes 要處理的地方 rows from findings (stalls, FPS, memory budget, leak, heavy panels) and Cocos rules. Their ids are in the digest's `todo` line. Do not restate them. If you know more than the generic row (for example what the stall coincides with), set `rule` to its id and your row replaces it.
+- `issues` can be empty. Use it for what only you saw: a screenshot, a popup, a stuck screen.
 - `missing`: what was not measured, in plain words.
 
 Do not hand-write findings, scores, or the report. If something important is missing, put it in `issues` or fix the generator.

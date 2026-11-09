@@ -48,6 +48,11 @@ if (rawAt >= 0) fs.copyFileSync(args[rawAt + 1], rawPath);
 const raw = scrub(readJsonLoose(rawPath));
 const notesPath = path.join(runDir, "notes.json");
 const notes = fs.existsSync(notesPath) ? JSON.parse(fs.readFileSync(notesPath, "utf8")) : {};
+const notesWarn = [];
+if (fs.existsSync(notesPath)) {
+  if (!notes.summary || typeof notes.summary !== "object" || !notes.summary.smooth || !notes.summary.memory) notesWarn.push("notes.summary must be { smooth, memory }, one sentence each");
+  if (!notes.displayName) notesWarn.push("notes.displayName is missing");
+}
 const s = raw.summary || raw;
 
 const stages = s.stages || [];
@@ -126,4 +131,6 @@ const m = ev.memory;
 lines.push(`memory heap ${m.heapMb ?? "-"}MB · gpu ${m.gpu ? `${m.gpu.peakMb}MB peak (tex ${m.gpu.textureMb} buf ${m.gpu.bufferMb} rb ${m.gpu.renderbufferMb})` : "-"} · cocos textures ${m.textures && m.textures.status === "ok" ? `${m.textures.mb}MB ${m.textures.count} (${m.textures.compressed || 0} compressed)` : "-"}`);
 lines.push(scoreLine);
 lines.push(`todo ${(done.todo || []).map((r) => `${r.level}:${r.rule || r.title.slice(0, 20)}`).join(", ") || "none"}`);
+if (!fs.existsSync(notesPath)) lines.push("notes.json missing: write it (see SKILL.md) and run again");
+notesWarn.forEach((w) => lines.push(`notes warning: ${w}`));
 console.log(lines.join("\n"));
