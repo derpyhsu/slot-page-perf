@@ -50,7 +50,8 @@ Write `runs/<utc>-<slug>/evidence.json` from the final `summary()`, including `t
 Then add the three fields the reader sees first. Keep them short.
 
 - `summary.smooth` and `summary.memory`: one sentence each, under 20 characters. Say what is good and what is bad. No severity words.
-- `issues`: at most 5. Each has `title` (what the player meets, with one number), `stage` or `t`, `level` (`red`, `orange`, `yellow`, `green`), and `next` (one sentence on what to look at or change). Do not write 嚴重, 明顯, or 要注意. The color carries that.
+- `issues`: at most 5. Each has `title` (what the player meets, with one number), `stage` or `t`, `level` (`red`, `orange`, `yellow`, `green`), and `next` (one sentence on what to look at or change). Optional `area` is the table's 類別 (`CPU`, `記憶體`, `draw call`, `穩定性`, `卡頓`); it defaults to the stage name. Do not write 嚴重, 明顯, or 要注意. The color carries that.
+- Do not restate a Cocos rule that `analyze.js` already reports. If you have a more specific version of one, set `rule` to its id and your row replaces the generic one.
 - `missing`: what was not measured, in plain words.
 
 ## Report
@@ -61,6 +62,6 @@ node report/markdown.js runs/<run>/evidence.json
 node report/canvas.js runs/<run>/evidence.json <workspace>/canvases/<slug>.canvas.tsx
 ```
 
-`analyze.js` writes the two scores from [protocol/scoring.md](../../protocol/scoring.md) and the Cocos advice from the Cocos rules. Do not compute scores by hand, and do not edit the generated report to add raw numbers. If something important is missing from the report, put it in `issues` or fix the generator.
+`analyze.js` writes the two scores from [protocol/scoring.md](../../protocol/scoring.md), the Cocos advice from the Cocos rules, and `todo`, which merges `issues` with the Cocos advice into the one 要處理的地方 table, worst color first. Do not compute scores by hand, and do not edit the generated report to add raw numbers. If something important is missing from the report, put it in `issues` or fix the generator.
 
 The canvas step is for Cursor. Other agents stop after the markdown.

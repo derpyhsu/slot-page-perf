@@ -13,32 +13,21 @@
 
 ## 要處理的地方
 
-1. 🔴 **每一轉有一幀停 0.2 秒**  
-   在旋轉當下錄 DevTools Performance，看這 210 ms 落在 GC、Spine 更新還是結果解析。
-2. 🔴 **記憶體推估超過 300 MB 預算**  
-   先把大圖集改壓縮格式。270 MB 的 RGBA8888 換成 ASTC 4x4 約剩 70 MB。
+| # | | 問題 | 類別 | 怎麼改 |
+| --- | --- | --- | --- | --- |
+| 1 | 🔴 | 每一轉有一幀停 0.2 秒 | 卡頓 | 在旋轉當下錄 DevTools Performance，看這 210 ms 落在 GC、Spine 更新還是結果解析。 |
+| 2 | 🔴 | 推估 415 MB，超過 300 MB 預算；171 張貼圖全沒壓縮 | 記憶體 | 構建的貼圖壓縮設定給大圖集加 ASTC 4x4 與 ETC2。270 MB 的 RGBA8888 約剩 70 MB。 |
+| 3 | 🟠 | 畫面上有 59 個即時運算的 Spine（共 161 個在畫） | CPU | 不需要即時混合的動畫改成 SHARED_CACHE，看不到的骨架關掉 active，同圖集的開 enableBatch。 |
+| 4 | 🟠 | 快取模式的 Spine 被呼叫了不支援的方法 102 次 | 穩定性 | 快取模式不支援 clearTrack 這類呼叫。改用 setAnimation 覆蓋，或這幾個骨架改回 REALTIME。 |
+| 5 | 🟡 | 162 張貼圖的邊長不是 2 的冪 | 記憶體 | 圖集打包時勾選 POT，才能用 PVRTC 壓縮和 mipmap。 |
+| 6 | 🟡 | 用的是 WebGL 1（Cocos 2.0.9），瀏覽器有 WebGL 2 | draw call | 升級引擎版本才能用 WebGL 2 與 instancing。短期內先降 draw call。 |
+| 7 | 🟡 | 主控台有 1 種引擎錯誤或重複警告 | 穩定性 | Cocos Error 1208: db://assets/scenes/scene_start.fire（2 次） |
 
 ## 目前狀況
 
 - **CPU**：最忙的階段，95% 的幀在 5.4 ms 內跑完，一幀預算 16.7 ms。
 - **記憶體**：推估最高 415 MB，預算 300 MB（JS 134、貼圖 270、畫面 11）。
-
-## Cocos 可以改的地方
-
-節點 1556 · 在畫的 Spine 161 · 其中即時運算 59 · Mask 3
-
-- `CPU` **畫面上有 59 個即時運算的 Spine（共 161 個在畫）**  
-  不需要即時混合的動畫改成 SHARED_CACHE，看不到的骨架關掉 active，同圖集的開 enableBatch。
-- `穩定性` **快取模式的 Spine 被呼叫了不支援的方法 102 次**  
-  快取模式不支援 clearTrack 這類呼叫。改用 setAnimation 覆蓋，或這幾個骨架改回 REALTIME。
-- `記憶體` **171 張貼圖裡 171 張沒壓縮，約 270 MB**  
-  在構建的貼圖壓縮設定裡給大圖集加 ASTC 與 ETC2，iOS 加 PVRTC 或 ASTC。通常能省四分之三。
-- `記憶體` **162 張貼圖的邊長不是 2 的冪**  
-  圖集打包時勾選 POT，才能用 PVRTC 壓縮和 mipmap。
-- `draw call` **用的是 WebGL 1（Cocos 2.0.9），瀏覽器有 WebGL 2**  
-  升級引擎版本才能用 WebGL 2 與 instancing。短期內先降 draw call。
-- `穩定性` **主控台有 1 種引擎錯誤或重複警告**  
-  Cocos Error 1208: db://assets/scenes/scene_start.fire（2 次）
+- **Cocos 場景**：節點 1556 · 在畫的 Spine 161 · 其中即時運算 59 · Mask 3
 
 <details><summary>分數怎麼算</summary>
 

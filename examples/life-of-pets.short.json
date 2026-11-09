@@ -15,13 +15,16 @@
       "title": "每一轉有一幀停 0.2 秒",
       "stage": "spin-1",
       "level": "red",
+      "area": "卡頓",
       "next": "在旋轉當下錄 DevTools Performance，看這 210 ms 落在 GC、Spine 更新還是結果解析。"
     },
     {
-      "title": "記憶體推估超過 300 MB 預算",
+      "title": "推估 415 MB，超過 300 MB 預算；171 張貼圖全沒壓縮",
       "stage": "idle",
       "level": "red",
-      "next": "先把大圖集改壓縮格式。270 MB 的 RGBA8888 換成 ASTC 4x4 約剩 70 MB。"
+      "area": "記憶體",
+      "rule": "cocos-texture-uncompressed",
+      "next": "構建的貼圖壓縮設定給大圖集加 ASTC 4x4 與 ETC2。270 MB 的 RGBA8888 約剩 70 MB。"
     }
   ],
   "missing": [
@@ -395,36 +398,42 @@
     "items": [
       {
         "id": "cocos-spine-realtime",
+        "level": "orange",
         "area": "CPU",
         "title": "畫面上有 59 個即時運算的 Spine（共 161 個在畫）",
         "fix": "不需要即時混合的動畫改成 SHARED_CACHE，看不到的骨架關掉 active，同圖集的開 enableBatch。"
       },
       {
         "id": "cocos-spine-cache-warning",
+        "level": "orange",
         "area": "穩定性",
         "title": "快取模式的 Spine 被呼叫了不支援的方法 102 次",
         "fix": "快取模式不支援 clearTrack 這類呼叫。改用 setAnimation 覆蓋，或這幾個骨架改回 REALTIME。"
       },
       {
         "id": "cocos-texture-uncompressed",
+        "level": "red",
         "area": "記憶體",
         "title": "171 張貼圖裡 171 張沒壓縮，約 270 MB",
         "fix": "在構建的貼圖壓縮設定裡給大圖集加 ASTC 與 ETC2，iOS 加 PVRTC 或 ASTC。通常能省四分之三。"
       },
       {
         "id": "cocos-texture-npot",
+        "level": "yellow",
         "area": "記憶體",
         "title": "162 張貼圖的邊長不是 2 的冪",
         "fix": "圖集打包時勾選 POT，才能用 PVRTC 壓縮和 mipmap。"
       },
       {
         "id": "cocos-webgl1",
+        "level": "yellow",
         "area": "draw call",
         "title": "用的是 WebGL 1（Cocos 2.0.9），瀏覽器有 WebGL 2",
         "fix": "升級引擎版本才能用 WebGL 2 與 instancing。短期內先降 draw call。"
       },
       {
         "id": "cocos-console-errors",
+        "level": "yellow",
         "area": "穩定性",
         "title": "主控台有 1 種引擎錯誤或重複警告",
         "fix": "Cocos Error 1208: db://assets/scenes/scene_start.fire（2 次）"
@@ -440,5 +449,75 @@
       "masks": 3,
       "particles": null
     }
-  }
+  },
+  "todo": [
+    {
+      "n": 1,
+      "level": "red",
+      "title": "每一轉有一幀停 0.2 秒",
+      "area": "卡頓",
+      "fix": "在旋轉當下錄 DevTools Performance，看這 210 ms 落在 GC、Spine 更新還是結果解析。",
+      "stage": "spin-1",
+      "t": null
+    },
+    {
+      "n": 2,
+      "level": "red",
+      "title": "推估 415 MB，超過 300 MB 預算；171 張貼圖全沒壓縮",
+      "area": "記憶體",
+      "fix": "構建的貼圖壓縮設定給大圖集加 ASTC 4x4 與 ETC2。270 MB 的 RGBA8888 約剩 70 MB。",
+      "stage": "idle",
+      "t": null
+    },
+    {
+      "n": 3,
+      "level": "orange",
+      "title": "畫面上有 59 個即時運算的 Spine（共 161 個在畫）",
+      "area": "CPU",
+      "fix": "不需要即時混合的動畫改成 SHARED_CACHE，看不到的骨架關掉 active，同圖集的開 enableBatch。",
+      "stage": null,
+      "t": null,
+      "rule": "cocos-spine-realtime"
+    },
+    {
+      "n": 4,
+      "level": "orange",
+      "title": "快取模式的 Spine 被呼叫了不支援的方法 102 次",
+      "area": "穩定性",
+      "fix": "快取模式不支援 clearTrack 這類呼叫。改用 setAnimation 覆蓋，或這幾個骨架改回 REALTIME。",
+      "stage": null,
+      "t": null,
+      "rule": "cocos-spine-cache-warning"
+    },
+    {
+      "n": 5,
+      "level": "yellow",
+      "title": "162 張貼圖的邊長不是 2 的冪",
+      "area": "記憶體",
+      "fix": "圖集打包時勾選 POT，才能用 PVRTC 壓縮和 mipmap。",
+      "stage": null,
+      "t": null,
+      "rule": "cocos-texture-npot"
+    },
+    {
+      "n": 6,
+      "level": "yellow",
+      "title": "用的是 WebGL 1（Cocos 2.0.9），瀏覽器有 WebGL 2",
+      "area": "draw call",
+      "fix": "升級引擎版本才能用 WebGL 2 與 instancing。短期內先降 draw call。",
+      "stage": null,
+      "t": null,
+      "rule": "cocos-webgl1"
+    },
+    {
+      "n": 7,
+      "level": "yellow",
+      "title": "主控台有 1 種引擎錯誤或重複警告",
+      "area": "穩定性",
+      "fix": "Cocos Error 1208: db://assets/scenes/scene_start.fire（2 次）",
+      "stage": null,
+      "t": null,
+      "rule": "cocos-console-errors"
+    }
+  ]
 }

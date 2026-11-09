@@ -39,14 +39,15 @@ lines.push(fatal ? `**致命漏洞 ${fatal} 個**` : "沒有找到致命漏洞�
 lines.push("");
 lines.push("全程時間軸在 Cursor 畫布裡（`report/canvas.js`）。");
 
-if ((ev.issues || []).length) {
+const cell = (s) => String(s == null ? "" : s).replace(/\|/g, "\\|").replace(/\n/g, " ");
+const todo = ev.todo || [];
+if (todo.length) {
   lines.push("");
   lines.push("## 要處理的地方");
   lines.push("");
-  ev.issues.forEach((iss, i) => {
-    lines.push(`${i + 1}. ${dot[iss.level] || dot.red} **${iss.title}**  `);
-    lines.push(`   ${iss.next}`);
-  });
+  lines.push("| # | | 問題 | 類別 | 怎麼改 |");
+  lines.push("| --- | --- | --- | --- | --- |");
+  todo.forEach((r) => lines.push(`| ${r.n} | ${dot[r.level] || dot.red} | ${cell(r.title)} | ${cell(r.area)} | ${cell(r.fix)} |`));
 }
 
 lines.push("");
@@ -60,21 +61,10 @@ lines.push(`- **記憶體**：${est ? `推估最高 ${Math.round(est.total)} MB�
 
 const advice = ev.cocosAdvice;
 if (advice) {
-  lines.push("");
-  lines.push("## Cocos 可以改的地方");
-  lines.push("");
   const sc = advice.scene;
-  if (sc) {
-    const facts = [["節點", sc.nodes], ["在畫的 Spine", sc.spineActive], ["其中即時運算", sc.spineRealtime], ["Label", sc.labels], ["Mask", sc.masks], ["粒子系統", sc.particles]].filter(([, v]) => v != null);
-    if (facts.length) lines.push(facts.map(([k, v]) => `${k} ${v}`).join(" · "), "");
-  }
-  advice.items.forEach((item) => {
-    lines.push(`- \`${item.area}\` **${item.title}**  `);
-    lines.push(`  ${item.fix}`);
-  });
-  if (advice.status === "textures-only") lines.push("", "這次只讀到貼圖，沒有走場景。用新版探針重跑，才看得到 Spine、Label、Mask 與引擎設定。");
-  if (advice.status === "unavailable") lines.push("這次沒有讀 Cocos 場景。");
-  if (advice.status === "ok" && !advice.items.length) lines.push("場景組成和引擎設定都在門檻內。");
+  const facts = sc ? [["節點", sc.nodes], ["在畫的 Spine", sc.spineActive], ["其中即時運算", sc.spineRealtime], ["Label", sc.labels], ["Mask", sc.masks], ["粒子系統", sc.particles]].filter(([, v]) => v != null) : [];
+  const note = { "textures-only": "這次只讀到貼圖，沒有走場景。", unavailable: "這次沒有讀場景。" }[advice.status];
+  lines.push(`- **Cocos 場景**：${facts.length ? facts.map(([k, v]) => `${k} ${v}`).join(" · ") : note || ""}${advice.status === "ok" && !advice.items.length ? "。組成和引擎設定都在門檻內。" : ""}`);
 }
 
 lines.push("");

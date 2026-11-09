@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Usage: node report/analyze.js runs/<run>/evidence.json
-// Writes evidence.score (protocol/scoring.md) and evidence.cocosAdvice (Cocos rules in protocol/rules.md).
+// Writes evidence.score (protocol/scoring.md), evidence.cocosAdvice (Cocos rules in protocol/rules.md),
+// and evidence.todo, the merged list the reports render as 要處理的地方.
 "use strict";
 
 const fs = require("fs");
@@ -8,7 +9,7 @@ const path = require("path");
 
 const evidencePath = process.argv[2];
 if (!evidencePath) {
-  console.error("usage: node report/score.js <evidence.json>");
+  console.error("usage: node report/analyze.js <evidence.json>");
   process.exit(1);
 }
 
@@ -243,7 +244,53 @@ smoothItems.concat(memoryItems).forEach((i) => {
   if (i.score != null) i.score = Math.round(i.score * 100);
 });
 
+const COCOS_LEVEL = {
+  "cocos-spine-realtime": "orange",
+  "cocos-spine-cache-warning": "orange",
+  "cocos-texture-uncompressed": memoryFatal.length ? "red" : "orange",
+  "cocos-texture-npot": "yellow",
+  "cocos-label-no-cache": "yellow",
+  "cocos-mask-many": "yellow",
+  "cocos-particles-many": "orange",
+  "cocos-nodes-many": "yellow",
+  "cocos-image-cache-kept": "orange",
+  "cocos-dynamic-atlas-off": "yellow",
+  "cocos-webgl1": "yellow",
+  "cocos-frame-rate": "red",
+  "cocos-console-errors": "yellow",
+};
+
+const STAGE_NAMES = {
+  boot: "開機",
+  loading: "載入",
+  idle: "待機",
+  menu: "功能列表",
+  "history-before": "下注紀錄",
+  rules: "遊戲規則",
+  "idle-after-rules": "規則後待機",
+  "history-after": "轉後下注紀錄",
+};
+function stageName(name) {
+  if (!name) return null;
+  if (/^spin-\d+$/.test(name)) return "一般旋轉";
+  if (/^turbo-\d+$/.test(name)) return "加速旋轉";
+  return STAGE_NAMES[name.replace(/-spike$/, "")] || name;
+}
+
 ev.cocosAdvice = cocosAdvice();
+ev.todo = todo();
+
+// One list for the report: the agent's issues plus Cocos advice, worst first.
+// An issue whose `rule` names a Cocos rule replaces that rule's generic row.
+function todo() {
+  const rank = { red: 0, orange: 1, yellow: 2, green: 3 };
+  const issues = ev.issues || [];
+  const covered = new Set(issues.map((i) => i.rule).filter(Boolean));
+  const rows = issues
+    .map((i) => ({ level: i.level || "red", title: i.title, area: i.area || stageName(i.stage) || "", fix: i.next, stage: i.stage || null, t: i.t == null ? null : i.t }))
+    .concat(ev.cocosAdvice.items.filter((c) => !covered.has(c.id)).map((c) => ({ level: c.level, title: c.title, area: c.area, fix: c.fix, stage: null, t: null, rule: c.id })));
+  return rows.map((r, i) => Object.assign(r, { order: i })).sort((a, b) => rank[a.level] - rank[b.level] || a.order - b.order).map(({ order, ...r }, i) => Object.assign({ n: i + 1 }, r));
+}
 
 function cocosAdvice() {
   const snaps = (ev.cocos && ev.cocos.snapshots) || [];
@@ -264,7 +311,7 @@ function cocosAdvice() {
   };
   const last = snaps[snaps.length - 1] || {};
   const settings = last.settings || {};
-  const add = (id, area, title, fix) => out.push({ id, area, title, fix });
+  const add = (id, area, title, fix) => out.push({ id, level: COCOS_LEVEL[id] || "yellow", area, title, fix });
 
   const realtime = max((s) => s.spine.realtime);
   const spineActive = max((s) => s.spine.active);
@@ -347,4 +394,4 @@ function cocosAdvice() {
 
 fs.writeFileSync(evidencePath, JSON.stringify(ev, null, 2) + "\n");
 const fmt = (p) => (p.score == null ? "未評分" : `${p.score}${p.provisional ? `（暫定，覆蓋 ${p.coverage}%）` : ""}`);
-console.log(`順暢 ${fmt(ev.score.smooth)}　記憶體 ${fmt(ev.score.memory)}　Cocos 建議 ${ev.cocosAdvice.items.length} 條`);
+console.log(`順暢 ${fmt(ev.score.smooth)}　記憶體 ${fmt(ev.score.memory)}　要處理 ${ev.todo.length} 條（Cocos ${ev.cocosAdvice.items.length}）`);

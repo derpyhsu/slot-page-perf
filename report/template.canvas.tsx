@@ -29,7 +29,8 @@ type StageRow = {
 };
 type ScoreItem = { id: string; label: string; weight: number; value: number | null; unit: string; full: string; zero: string; score: number | null; approx?: boolean };
 type ScorePart = { score: number | null; coverage: number; provisional: boolean; items: ScoreItem[]; fatal: Array<{ id: string; stage?: string; value?: number }>; budgetMb?: number; estimateMb?: { heap: number; texture: number; framebuffer: number; total: number } | null };
-type Issue = { title: string; stage?: string; t?: number | null; next: string; level?: string };
+type Issue = { title: string; stage?: string; t?: number | null; next: string; level?: string; area?: string; rule?: string };
+type TodoRow = { n: number; level: string; title: string; area: string; fix: string; stage: string | null; t: number | null; rule?: string };
 type Evidence = {
   example?: boolean;
   game: { title: string; displayName?: string; urlPath: string };
@@ -41,16 +42,16 @@ type Evidence = {
   score?: { smooth: ScorePart; memory: ScorePart };
   summary?: { smooth?: string; memory?: string };
   issues?: Issue[];
+  todo?: TodoRow[];
   missing?: string[];
   cocosAdvice?: {
     status: string;
-    items: Array<{ id: string; area: string; title: string; fix: string }>;
+    items: Array<{ id: string; level?: string; area: string; title: string; fix: string }>;
     scene: { nodes: number | null; activeNodes: number | null; spine: number | null; spineActive: number | null; spineRealtime: number | null; labels: number | null; masks: number | null; particles: number | null } | null;
   };
 };
 
-function CocosSection({ ev }: { ev: Evidence }) {
-  const theme = useHostTheme();
+function CocosFacts({ ev }: { ev: Evidence }) {
   const advice = ev.cocosAdvice;
   if (!advice) return null;
   const scene = advice.scene;
@@ -66,45 +67,39 @@ function CocosSection({ ev }: { ev: Evidence }) {
         ["粒子系統", scene.particles],
       ]
     : [];
+  const shown = facts.filter(([, v]) => v != null);
   return (
-    <Stack gap={12}>
-      <H2>Cocos 可以改的地方</H2>
-      {facts.some(([, v]) => v != null) && (
+    <Stack gap={8}>
+      <Text weight="semibold">Cocos 場景</Text>
+      {shown.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 18 }}>
-          {facts
-            .filter(([, v]) => v != null)
-            .map(([k, v]) => (
-              <Stack key={k} gap={0}>
-                <Text weight="semibold">{String(v)}</Text>
-                <Text size="small" tone="tertiary">
-                  {k}
-                </Text>
-              </Stack>
-            ))}
+          {shown.map(([k, v]) => (
+            <Stack key={k} gap={0}>
+              <Text weight="semibold">{String(v)}</Text>
+              <Text size="small" tone="tertiary">
+                {k}
+              </Text>
+            </Stack>
+          ))}
         </div>
       )}
-      {advice.items.map((item) => (
-        <Row key={item.id} gap={12} align="start">
-          <div style={{ minWidth: 64, padding: "1px 6px", border: `1px solid ${theme.stroke.secondary}`, borderRadius: 4, textAlign: "center" }}>
-            <Text size="small" tone="secondary" as="span">
-              {item.area}
-            </Text>
-          </div>
-          <Stack gap={2}>
-            <Text weight="semibold">{item.title}</Text>
-            <Text size="small" tone="secondary">
-              {item.fix}
-            </Text>
-          </Stack>
-        </Row>
-      ))}
       {advice.status !== "ok" && (
         <Text size="small" tone="tertiary">
-          {advice.status === "textures-only" ? "這次只讀到貼圖，沒有走場景。用新版探針重跑，才看得到 Spine、Label、Mask 與引擎設定。" : "這次沒有讀 Cocos 場景。"}
+          {advice.status === "textures-only" ? "這次只讀到貼圖，沒有走場景。" : "這次沒有讀場景。"}
         </Text>
       )}
-      {advice.status === "ok" && !advice.items.length && <Text size="small" tone="secondary">場景組成和引擎設定都在門檻內。</Text>}
+      {advice.status === "ok" && !advice.items.length && <Text size="small" tone="secondary">組成和引擎設定都在門檻內。</Text>}
     </Stack>
+  );
+}
+
+function TodoTable({ rows }: { rows: TodoRow[] }) {
+  return (
+    <Table
+      headers={["#", "", "問題", "類別", "怎麼改"]}
+      columnAlign={["right", "left", "left", "left", "left"]}
+      rows={rows.map((r) => [String(r.n), <Dot key="d" level={asLevel(r.level)} />, r.title, r.area, r.fix])}
+    />
   );
 }
 
@@ -255,11 +250,11 @@ function Timeline({ ev, range }: { ev: Evidence; range: [number, number] | null 
   const MY = (mb: number) => 196 - (mb / memMax) * 50;
   const line = (pts: Array<[number, number]>) => pts.map(([t, v], i) => `${i ? "L" : "M"}${X(t).toFixed(1)},${MY(v).toFixed(1)}`).join(" ");
 
-  const issueMarks = (ev.issues ?? [])
-    .map((iss, i) => {
-      const st = placed.find((s) => s.name === iss.stage);
-      const at = iss.t ?? (st ? (st.start + st.end) / 2 : undefined);
-      return at == null || at < from || at > to ? null : { n: i + 1, x: X(at) };
+  const issueMarks = (ev.todo ?? [])
+    .map((row) => {
+      const st = placed.find((s) => s.name === row.stage);
+      const at = row.t ?? (st ? (st.start + st.end) / 2 : undefined);
+      return at == null || at < from || at > to ? null : { n: row.n, x: X(at) };
     })
     .filter((m): m is { n: number; x: number } => m != null);
 
@@ -464,7 +459,7 @@ export default function SlotPerfReport() {
   const ev = EVIDENCE;
   const fine = !!ev.timeline && ev.timeline.buckets.length > 0;
   const fatal = [...(ev.score?.smooth.fatal ?? []), ...(ev.score?.memory.fatal ?? [])];
-  const issues = ev.issues ?? [];
+  const todo = ev.todo ?? [];
   const placed = placedStages(ev);
   const groups = stageGroups(ev);
   const [zoom, setZoom] = useState<number | null>(null);
@@ -500,31 +495,18 @@ export default function SlotPerfReport() {
         <Legend fine={fine} />
       </Stack>
 
-      {issues.length > 0 && (
+      {todo.length > 0 && (
         <Stack gap={12}>
           <H2>要處理的地方</H2>
-          {issues.map((iss, i) => (
-            <Row key={i} gap={12} align="start">
-              <Dot level={asLevel(iss.level)} />
-              <Stack gap={2}>
-                <Text weight="semibold">
-                  {i + 1}. {iss.title}
-                </Text>
-                <Text size="small" tone="secondary">
-                  {iss.next}
-                </Text>
-              </Stack>
-            </Row>
-          ))}
+          <TodoTable rows={todo} />
         </Stack>
       )}
 
-      <Stack gap={10}>
+      <Stack gap={16}>
         <H2>目前狀況</H2>
         <CurrentState ev={ev} />
+        <CocosFacts ev={ev} />
       </Stack>
-
-      <CocosSection ev={ev} />
 
       <Divider />
 

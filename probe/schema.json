@@ -36,6 +36,8 @@
           "stage": { "type": "string" },
           "t": { "type": ["number", "null"] },
           "level": { "enum": ["red", "orange", "yellow", "green"] },
+          "area": { "type": "string", "description": "CPU, 記憶體, draw call, 穩定性, or 卡頓. Defaults to the stage name." },
+          "rule": { "type": "string", "description": "A Cocos rule id from protocol/rules.md. Replaces that rule's generic row." },
           "next": { "type": "string" }
         }
       }
@@ -43,6 +45,7 @@
     "missing": { "type": "array", "items": { "type": "string" } },
     "score": { "type": "object", "description": "Written by report/analyze.js." },
     "cocosAdvice": { "type": "object", "description": "Written by report/analyze.js." },
+    "todo": { "type": "array", "description": "Written by report/analyze.js. issues plus cocosAdvice items, worst first." },
     "conditions": { "type": "object" },
     "channels": { "type": "object" },
     "sceneLog": { "type": "array" },
