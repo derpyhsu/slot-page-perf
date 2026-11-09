@@ -10,7 +10,7 @@ Before measuring, read `skill/slot-page-perf/SKILL.md`, then `protocol/scenarios
 - Spend as few tokens as possible. Let `__slotPerf.auto` drive the page, poll its short status, and save results with `evaluate_script` `filePath`. Do not pull raw summaries or screenshots into the conversation unless needed.
 - Prefer the Chrome DevTools MCP server named `chrome-devtools`.
 - Drive the canvas with pointer events. Do not call game-internal spin handlers.
-- Do not change the bet. Before 50 spins, show the current bet and wait for confirmation.
+- Do not change the bet. Before the spins, show the current bet and wait for confirmation.
 - History and rules opens are not spins. The spin cap is `maxSpins` in `protocol/thresholds.json`.
 - Never write URL query strings or session tokens into `runs/` or the report.
 - A finding must match a rule in `protocol/rules.md`. Missing probes stay `unavailable`.

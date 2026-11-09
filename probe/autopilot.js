@@ -202,20 +202,38 @@
   }
 
   // Open a panel, record spike then steady, close it. Returns false when the button is not found.
+  // Several nodes can match the menu words (a Feature list named MenuButton, the real ≡ menu).
+  // Try each, keep the one that shows the wanted button, close the others.
+  async function openMenuFor(kind) {
+    var B = CFG.buttons || {};
+    var menus = find(B.menu, { interactable: true });
+    if (st.menuKey) menus.sort(function (a, b) { return (key(b) === st.menuKey) - (key(a) === st.menuKey); });
+    for (var i = 0; i < menus.length && i < 3; i += 1) {
+      var before = new Set(P.buttons().buttons.map(key));
+      var f0 = footprint();
+      P.mark("menu");
+      press(menus[i]);
+      await waitChange(f0, 2000);
+      await sleep(600);
+      var t = find(B[kind], { interactable: true })[0];
+      if (t) {
+        st.menuKey = key(menus[i]);
+        return { menu: menus[i], target: t };
+      }
+      await closeOpened(before, menus[i], f0);
+    }
+    return null;
+  }
+
   async function panel(kind, stage, snapLabel) {
     var B = CFG.buttons || {};
     var openedMenu = null;
     var target = find(B[kind], { interactable: true })[0];
     if (!target) {
-      var menu = find(B.menu, { interactable: true })[0];
-      if (menu) {
-        var f0 = footprint();
-        P.mark("menu");
-        press(menu);
-        await waitChange(f0, 2000);
-        await sleep(600);
-        openedMenu = menu;
-        target = find(B[kind], { interactable: true })[0];
+      var om = await openMenuFor(kind);
+      if (om) {
+        openedMenu = om.menu;
+        target = om.target;
       }
     }
     if (!target) {
@@ -231,23 +249,15 @@
     var changed = await waitChange(nodes, 3000);
     // Buttons folded inside a closed menu still report active. Open the menu and try again.
     if (changed == null && !openedMenu) {
-      var menu2 = find(B.menu, { interactable: true })[0];
-      if (menu2) {
-        P.mark("menu");
-        var fm = footprint();
-        press(menu2);
-        await waitChange(fm, 2000);
-        await sleep(600);
-        openedMenu = menu2;
-        var again = find([target.name], { interactable: true })[0] || find(B[kind], { interactable: true })[0];
-        if (again) {
-          target = again;
-          before = new Set(P.buttons().buttons.map(key));
-          nodes = footprint();
-          P.mark(stage + "-spike");
-          press(target);
-          changed = await waitChange(nodes, 3000);
-        }
+      var om2 = await openMenuFor(kind);
+      if (om2) {
+        openedMenu = om2.menu;
+        target = om2.target;
+        before = new Set(P.buttons().buttons.map(key));
+        nodes = footprint();
+        P.mark(stage + "-spike");
+        press(target);
+        changed = await waitChange(nodes, 3000);
       }
     }
     if (changed == null) {
@@ -283,6 +293,10 @@
       await sleep(900);
       if (footBefore == null) return true;
       if (!differs(footprint(), footBefore)) return true;
+      // Closing can also fold the menu, so the page will not match the pre-open state. The close
+      // button going away is enough.
+      var k = key(pick);
+      if (pick.kind !== "dom" && !P.buttons(B.close).buttons.some(function (b) { return b.point && key(b) === k; })) return true;
     }
     return false;
   }
@@ -401,12 +415,12 @@
     P.mark("gap");
 
     st.phase = "confirm-bet";
-    st.plan = CFG.maxSpins || 50;
+    st.plan = CFG.maxSpins || 30;
     var go = await ask("bet", "show the bet to the user and call auto.go() after they confirm", { bet: betCandidates() });
-    if (go && go.spins != null) st.plan = Math.min(go.spins, CFG.maxSpins || 50);
+    if (go && go.spins != null) st.plan = Math.min(go.spins, CFG.maxSpins || 30);
 
     st.phase = "spins";
-    var normal = Math.min(st.plan, CFG.normalSpins || 40);
+    var normal = Math.min(st.plan, CFG.normalSpins || 24);
     for (var i = 1; i <= normal; i += 1) {
       if (!(await oneSpin("spin-" + i))) break;
     }
