@@ -181,7 +181,7 @@ const cpu = cpuStat && cpuStat.value;
 const smoothItems = [
   {
     id: "stable",
-    label: "穩定 60",
+    label: "幀穩定",
     weight: S.stable.weight,
     value: stable ? round(stable.share * 100, 1) : null,
     unit: "%",
@@ -221,7 +221,7 @@ const loadStall = worstStall(loadStages);
 const loadingItems = [
   {
     id: "stable",
-    label: "畫面穩定",
+    label: "幀穩定",
     weight: L.stable.weight,
     value: loadStable ? round(loadStable.share * 100, 1) : null,
     unit: "%",
@@ -600,4 +600,4 @@ function cocosAdvice() {
 
 fs.writeFileSync(evidencePath, JSON.stringify(ev, null, 2) + "\n");
 const fmt = (p) => (p.score == null ? "未評分" : `${p.score}${p.provisional ? `（暫定，覆蓋 ${p.coverage}%）` : ""}`);
-console.log(`載入 ${fmt(ev.score.loading)}　順暢 ${fmt(ev.score.smooth)}　記憶體 ${fmt(ev.score.memory)}　要處理 ${ev.todo.length} 條（Cocos ${ev.cocosAdvice.items.length}）`);
+console.log(`載入階段 ${fmt(ev.score.loading)}　幀率穩定度 ${fmt(ev.score.smooth)}　資源占用 ${fmt(ev.score.memory)}　要處理 ${ev.todo.length} 條（Cocos ${ev.cocosAdvice.items.length}）`);

@@ -1,11 +1,12 @@
 // Engineering readout shared by report.html and report.md.
-// The report opens with three scores, 載入, 幀率 and 占用, then the numbers behind them.
+// The report opens with three scores, 載入階段, 幀率穩定度 and 資源占用, then the numbers behind them.
 "use strict";
 
 const { groups, groupOf, SOFTWARE_GPU } = require("./findings");
 
 const CELLS = require("../protocol/thresholds.json").cells;
 
+const NAMES = { loading: "載入階段", smooth: "幀率穩定度", memory: "資源占用" };
 const COLOR = { red: "#e5484d", orange: "#f76b15", yellow: "#e2a336", green: "#30a46c" };
 
 // One cell, judged by its own row's thresholds. Only failing cells get a color.
@@ -124,7 +125,15 @@ function cpuText(col) {
   if (col.cpuMax == null) return "—";
   const max = round(col.cpuMax, 1);
   const where = spinWhere(col.cpuStage);
-  if (col.many && col.cpuMed != null && col.cpuMax - col.cpuMed >= 1.5) return `最高 ${max} ms${where ? `（${where}）` : ""}，中位 ${round(col.cpuMed, 1)} ms`;
+  if (col.many && col.cpuMed != null && col.cpuMax - col.cpuMed >= 1.5) return `${max} ms（中位 ${round(col.cpuMed, 1)}${where ? `，${where}` : ""}）`;
+  return `${max} ms`;
+}
+// Same reading for the page: the worst value up front, the median and where on a small second line.
+function cpuHtml(col) {
+  if (col.cpuMax == null) return "—";
+  const max = round(col.cpuMax, 1);
+  const where = spinWhere(col.cpuStage);
+  if (col.many && col.cpuMed != null && col.cpuMax - col.cpuMed >= 1.5) return `${max} ms<div class="sub">中位 ${round(col.cpuMed, 1)}${where ? ` · ${esc(where)}` : ""}</div>`;
   return `${max} ms`;
 }
 
@@ -208,8 +217,8 @@ function scoreLine(ev) {
     return `${name} ${p.score == null ? "未評分" : p.score}${cov}（${bits.join("；")}）`;
   };
   const load = S.loading || { fatal: [] };
-  const fatals = load.fatal.map((f) => `載入${FATAL[f.id] || f.id}`).concat(S.smooth.fatal.concat(S.memory.fatal).map((f) => FATAL[f.id] || f.id));
-  return `${S.loading ? `${part("載入", S.loading)}。` : ""}${part("幀率", S.smooth)}。${part("占用", S.memory)}。` + (fatals.length ? `同時成立：${fatals.join("、")}。` : "");
+  const fatals = load.fatal.map((f) => `${NAMES.loading}${FATAL[f.id] || f.id}`).concat(S.smooth.fatal.concat(S.memory.fatal).map((f) => FATAL[f.id] || f.id));
+  return `${S.loading ? `${part(NAMES.loading, S.loading)}。` : ""}${part(NAMES.smooth, S.smooth)}。${part(NAMES.memory, S.memory)}。` + (fatals.length ? `同時成立：${fatals.join("、")}。` : "");
 }
 
 function readoutMarkdown(ev) {
@@ -218,9 +227,9 @@ function readoutMarkdown(ev) {
   const lines = [];
   lines.push(`| | 分數 |`);
   lines.push(`| --- | --- |`);
-  if (S.loading) lines.push(`| 載入 | ${DOT[levelOf(S.loading.score)] || ""} ${S.loading.score == null ? "未評分" : S.loading.score} |`);
-  lines.push(`| 幀率 | ${DOT[levelOf(S.smooth.score)] || ""} ${S.smooth.score == null ? "未評分" : S.smooth.score} |`);
-  lines.push(`| 占用 | ${DOT[levelOf(S.memory.score)] || ""} ${S.memory.score == null ? "未評分" : S.memory.score} |`);
+  if (S.loading) lines.push(`| ${NAMES.loading} | ${DOT[levelOf(S.loading.score)] || ""} ${S.loading.score == null ? "未評分" : S.loading.score} |`);
+  lines.push(`| ${NAMES.smooth} | ${DOT[levelOf(S.smooth.score)] || ""} ${S.smooth.score == null ? "未評分" : S.smooth.score} |`);
+  lines.push(`| ${NAMES.memory} | ${DOT[levelOf(S.memory.score)] || ""} ${S.memory.score == null ? "未評分" : S.memory.score} |`);
   lines.push("");
   lines.push(scoreLine(ev));
   lines.push("");
@@ -270,7 +279,7 @@ function gauge(part, name, hint) {
     <svg width="148" height="148" viewBox="0 0 148 148" aria-hidden="true">
       <circle cx="74" cy="74" r="${r}" fill="none" stroke="#e6e8eb" stroke-width="8"/>
       ${shown > 0 ? `<circle cx="74" cy="74" r="${r}" fill="none" stroke="${color}" stroke-width="8" stroke-linecap="round" stroke-dasharray="${(c * shown).toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 74 74)"/>` : ""}
-      <text x="74" y="82" text-anchor="middle" font-size="42" font-weight="500" fill="${color}">${score == null ? "—" : score}</text>
+      <text x="74" y="74" text-anchor="middle" dominant-baseline="central" font-size="42" font-weight="500" fill="${color}">${score == null ? "—" : score}</text>
     </svg>
     <div class="gauge-name" style="color:${color}">${esc(name)}</div>
     <div class="gauge-hint">${esc(hint)}${part.provisional ? ` · 暫定 ${part.coverage}%` : ""}</div>
@@ -299,19 +308,19 @@ function heroMetrics(ev, m) {
 function readoutHtml(ev) {
   const m = model(ev);
   const S = ev.score;
-  const cell = (text, level) => `<td class="num"${level ? ` style="color:${COLOR[level]};font-weight:600"` : ""}>${esc(text)}</td>`;
-  let html = `<section class="card hero"><div class="gauges">${S.loading ? gauge(S.loading, "載入", "100 是載入時畫面不卡") : ""}${gauge(S.smooth, "幀率", "100 是穩在 60")}${gauge(S.memory, "占用", "100 是遠低於裝置預算")}</div>${heroMetrics(ev, m)}</section>`;
+  const cell = (text, level, raw) => `<td class="num"${level ? ` style="color:${COLOR[level]};font-weight:600"` : ""}>${raw ? text : esc(text)}</td>`;
+  let html = `<section class="card hero"><div class="gauges">${S.loading ? gauge(S.loading, NAMES.loading, "載入時的幀穩定度與最長停頓") : ""}${gauge(S.smooth, NAMES.smooth, "進遊戲後的 60 FPS 穩定度與卡頓")}${gauge(S.memory, NAMES.memory, `JS 與 GPU 記憶體對比 ${(S.memory && S.memory.budgetMb) || 300} MB 預算`)}</div>${heroMetrics(ev, m)}</section>`;
   html += '<section class="card"><h2>各階段</h2><div class="scroll">';
   if (m.cols.length) {
     html += "<table><tr><th>讀數</th>" + m.cols.map((c) => `<th class="num">${esc(c.label)}</th>`).join("") + "</tr>";
-    const tr = (name, pick, level) =>
-      "<tr><td>" + esc(name) + "</td>" + m.cols.map((c) => cell(pick(c), level && level(c))).join("") + "</tr>";
+    const tr = (name, pick, level, raw) =>
+      '<tr><td class="lab">' + esc(name) + "</td>" + m.cols.map((c) => cell(pick(c), level && level(c), raw)).join("") + "</tr>";
     const L = cellLevels(m);
     html += tr("平均 FPS", (c) => (c.fps == null ? "—" : String(c.fps)), L.fps);
     html += tr("掉幀", (c) => pct(c.drop), L.drop);
     html += tr("超過 33 ms", (c) => pct(c.bad), L.bad);
     html += tr("1% low", (c) => (c.low == null ? "—" : String(c.low)), L.low);
-    if (m.cpuOn) html += tr("CPU p95", cpuText, L.cpu);
+    if (m.cpuOn) html += tr("CPU p95", cpuHtml, L.cpu, true);
     html += tr("每幀 draw", (c) => (c.draws == null ? "—" : String(c.draws)), L.draws);
     html += tr("GPU 峰值", (c) => mb(c.gpu), L.gpu);
     if (m.cols.some((c) => c.worst >= 50)) html += tr("最長停頓", (c) => (c.worst >= 50 ? `${Math.round(c.worst)} ms` : ""), L.stall);
@@ -321,9 +330,9 @@ function readoutHtml(ev) {
   html += "</div></section>";
   const facts = factRows(ev, m);
   if (facts.length) {
-    html += '<section class="card"><h2>貼圖與場景</h2><table><tr><th></th><th>這次</th><th></th></tr>' + facts.map(([k, a, b]) => `<tr><td>${esc(k)}</td><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("") + "</table></section>";
+    html += '<section class="card"><h2>貼圖與場景</h2><table><tr><th></th><th>這次</th><th></th></tr>' + facts.map(([k, a, b]) => `<tr><td class="lab">${esc(k)}</td><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("") + "</table></section>";
   }
   return html;
 }
 
-module.exports = { metaLine, readoutHtml, readoutMarkdown };
+module.exports = { metaLine, readoutHtml, readoutMarkdown, NAMES };

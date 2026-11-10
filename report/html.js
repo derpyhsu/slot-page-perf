@@ -60,6 +60,8 @@ table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nu
 th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-size: 11px; color: var(--faint); font-weight: 500; letter-spacing: .03em; }
 td.num, th.num { text-align: right; white-space: nowrap; }
+td.lab { white-space: nowrap; }
+td .sub { font-size: 11px; font-weight: 400; color: var(--faint); }
 tr.go { cursor: pointer; }
 tr.go:hover td { background: var(--soft); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
@@ -169,7 +171,7 @@ if (facts.length) html += '<ul class="facts">' + facts.map((f) => "<li>" + f + "
 $("state").innerHTML = html;
 
 // Collapsed details.
-const crit = (S.loading ? [["載入", S.loading]] : []).concat([["幀率", S.smooth], ["占用", S.memory]]).flatMap(([g, p]) => p.items.map((i) => [g, i]));
+const crit = (S.loading ? [["載入階段", S.loading]] : []).concat([["幀率穩定度", S.smooth], ["資源占用", S.memory]]).flatMap(([g, p]) => p.items.map((i) => [g, i]));
 $("criteria").innerHTML = '<p class="small">每項在滿分與零分之間內插。沒量到的項目不計入，分數標暫定。有致命漏洞時該分數最高 49。90 以上綠、70 以上黃、50 以上橘、其餘紅。</p>' +
   "<table><tr><th></th><th>看什麼</th><th class=num>權重</th><th class=num>這次</th><th class=num>滿分</th><th class=num>零分</th><th class=num>得分</th></tr>" +
   crit.map(([g, i]) => "<tr><td>" + g + "</td><td>" + esc(i.label) + "</td><td class=num>" + i.weight + "</td><td class=num>" + (i.value == null ? "沒量到" : (i.approx ? "約 " : "") + i.value + " " + i.unit) + "</td><td class=num>" + esc(i.full) + "</td><td class=num>" + esc(i.zero) + '</td><td class=num style="color:' + COLOR[scoreLevel(i.score)] + ';font-weight:600">' + (i.score == null ? "不計" : i.score) + "</td></tr>").join("") + "</table>";
