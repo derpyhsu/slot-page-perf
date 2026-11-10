@@ -923,7 +923,12 @@
     try {
       var rect = canvas.getBoundingClientRect();
       var p = null;
-      var ui = cc.UITransform && node.getComponent && node.getComponent(cc.UITransform);
+      // window.cc can be a different copy from the engine the game runs, so ask by class name too.
+      var ui = node._uiProps && node._uiProps.uiTransformComp;
+      if (!ui && node.getComponent) {
+        try { ui = node.getComponent("cc.UITransform"); } catch (e) {}
+        if (!ui && cc.UITransform) ui = node.getComponent(cc.UITransform);
+      }
       if (ui && cc.Camera) {
         var cams = cc.director.getScene().getComponentsInChildren(cc.Camera);
         var cam = null;
@@ -932,8 +937,15 @@
         }
         if (!cam) return null;
         var box = ui.getBoundingBoxToWorld();
+        var cx = box.x + box.width / 2;
+        var cy = box.y + box.height / 2;
+        // 3.4 and later take (worldPos, out); 3.0 to 3.3 take (out, worldPos).
         var out = new cc.Vec3();
-        cam.worldToScreen(out, new cc.Vec3(box.x + box.width / 2, box.y + box.height / 2, 0));
+        cam.worldToScreen(new cc.Vec3(cx, cy, 0), out);
+        if (!out.x && !out.y) {
+          out = new cc.Vec3();
+          cam.worldToScreen(out, new cc.Vec3(cx, cy, 0));
+        }
         p = { x: out.x / canvas.width, y: 1 - out.y / canvas.height };
       } else if (node.convertToWorldSpaceAR && cc.view) {
         var w = node.convertToWorldSpaceAR(cc.v2(0, 0));
@@ -977,6 +989,7 @@
   }
 
   // Clickable Cocos nodes: cc.Button, or any node with a touch or mouse listener.
+  var GENERIC_NAME = /^(hit[_ ]?area|hit|button|btn|bg|background|touch([_ ]?area)?|click([_ ]?area)?|icon|img|image|sprite)$/i;
   function clickables(limit) {
     var list = [];
     var root = window.cc && window.cc.director.getScene();
@@ -988,7 +1001,10 @@
         if (className(comps[i]) === "cc.Button" && comps[i].enabled !== false) { btn = comps[i]; break; }
       }
       if (!btn && !listensToTouch(node)) return;
-      list.push({ kind: btn ? "button" : "touch", name: node.name || "", text: nodeText(node), interactable: btn ? btn.interactable !== false : true, node: node });
+      // A generic name such as HitArea says nothing; its parent (SpinButtonView) does.
+      var name = node.name || "";
+      if (GENERIC_NAME.test(name) && node.parent && node.parent !== root) name = (node.parent.name || "") + "/" + name;
+      list.push({ kind: btn ? "button" : "touch", name: name, text: nodeText(node), interactable: btn ? btn.interactable !== false : true, node: node });
     });
     return list;
   }

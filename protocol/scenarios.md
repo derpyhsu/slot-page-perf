@@ -7,13 +7,12 @@
 1. `boot`：網址開始到第一個 WebGL 幀。探針自動切。
 2. `loading`：第一個幀到 agent 呼叫 `mark("game-ready")`。spin 鈕可按時才打這個 mark。引擎主迴圈掛上之前，主執行緒時間只靠 long task。中間要按開始或關公告時，照下面「進遊戲」切成 `splash` 和 `enter`。
 3. `idle`：`mark("idle")` 後等待 `idleSeconds`。這是後面所有差值的基準。
-4. 功能列表只負責打開，不單獨成結論。
-5. `history-before`：打開下注紀錄。先記 `panelSpikeSeconds` 的尖峰，再記 `panelSteadySeconds` 的穩態，然後關閉。
+4. 截一張遊戲畫面，標出 spin、功能列表、下注紀錄、遊戲規則、加速的位置（見下面「按鈕位置」）。同時向使用者確認畫面上的目前押注。未確認不開始 spin。
+5. `history-before`：打開下注紀錄。先記 `panelSpikeSeconds` 的尖峰，再記 `panelSteadySeconds` 的穩態，然後關閉。功能列表只負責打開，不單獨成結論。
 6. `rules`：打開遊戲規則，同樣先尖峰再穩態，然後關閉。關閉後再量一段短待機，記進 `idle-after-rules`。
-7. 向使用者確認畫面上的目前押注。未確認不開始 spin。
-8. 一般 spin `normalSpins` 次。每一次 `mark("spin-N")` 開始，停穩後結束。
-9. 有加速鈕時，接著 `turboSpins` 次，mark 名為 `turbo-N`。沒有加速鈕就繼續一般 spin，直到 `maxSpins`。
-10. `history-after`：轉完後再打開一次下注紀錄，量法與第 5 步相同。
+7. 一般 spin `normalSpins` 次。每一次 `mark("spin-N")` 開始，停穩後結束。
+8. 有加速鈕時，接著 `turboSpins` 次，mark 名為 `turbo-N`。沒有加速鈕就繼續一般 spin，直到 `maxSpins`。
+9. `history-after`：轉完後再打開一次下注紀錄，量法與第 5 步相同。
 
 Feature 或大獎只在該轉的 mark 上記 `tags`。不另外加轉，不買 Feature。
 
@@ -54,23 +53,21 @@ Feature 或大獎只在該轉的 mark 上記 `tags`。不另外加轉，不買 F
 
 `splash` 是等人按的時間，由 agent 決定長短，不評分。`enter` 是按下去到下一個畫面，跟 `loading` 一樣算載入。有好幾層就會有好幾段 `splash` 和 `enter`，報告會合在一起畫。
 
-## 按鈕別名
+## 按鈕位置
 
-進遊戲用的字表在 `thresholds.json` 的 `entry`。其他按鈕先用 `__slotPerf.buttons(["字1", "字2"])` 讀引擎節點名與 Label 字串。沒有引擎文字時才用截圖座標。點擊後確認面板出現才計時。
+每款遊戲的節點命名都不一樣，所以按哪裡由截圖決定，不靠名字。
 
-| 目標 | 可接受的字 |
-| --- | --- |
-| 功能列表 | 功能列表、選單、menu、Menu |
-| 下注紀錄 | 下注紀錄、遊戲紀錄、歷史、Bet History、History |
-| 遊戲規則 | 遊戲規則、規則、說明、Help、Paytable、Game Rules |
-| spin | Spin、旋轉，或節點名含 Spin 的可點擊鈕 |
-| 加速 | 加速、Turbo、Speed |
+- 進遊戲後，agent 看一張截圖，給出 spin、功能列表、下注紀錄、遊戲規則、加速的座標；沒有的給 null。`thresholds.json` 的 `buttons` 字表只用來猜候選，讓 agent 對照。
+- 下注紀錄或規則在功能列表裡時，第一次打開功能列表再截一張，標出它們和關閉功能列表的位置。
+- 面板打開、量完穩態之後，才截圖找關閉鈕，這樣思考時間不會算進面板。同一個面板第二次打開時沿用同一個位置。
+- 按任何座標之前，探針檢查那裡的節點。名字或短字串對得上 `neverPress`（購買、押注、複製、自動、大廳等）就拒絕，請 agent 重給。這是唯一用名字判斷的規則。
+- 遊戲在 iframe 裡時，探針會把截圖座標換成 iframe 裡的座標。
 
-找不到就在 evidence 的 `coverage` 寫明試過的字，不拿待機數字充當該面板。
+找不到某個面板就在 `coverage` 寫 `not on screen`，不拿待機數字充當該面板。
 
 ## 停穩
 
-同時成立才算這一轉結束：至少過了 500 ms，而且停止鈕已關掉或 draw call 回到這一轉開始前的待機附近。下一次點擊要等這個條件。沒有停止鈕時，可以讀轉輪節點的狀態回到待機。
+同時成立才算這一轉結束：至少過了 500 ms，而且 spin 位置上的鈕可按，加上下面任一條：這一轉中它曾經不能按、draw call 回到待機附近、或畫面文字與 draw call 都靜止了 `settle.quietMs`（預設 4 秒）。下一次點擊要等這個條件。沒有停止鈕時，可以讀轉輪節點的狀態回到待機。
 
 停穩當下就 `mark("gap")`，把等待和讀 summary 的時間切出去。`gap` 不寫進 `spins`，也不進報告。不然一轉的紀錄會含幾十秒的等待，平均值會被待機稀釋。
 

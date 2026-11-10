@@ -15,6 +15,7 @@
     "close": ["關閉", "关闭", "返回", "close", "btn_back", "btnback", "exit", "btn_x", "btnx", "cancel", "quit"],
     "bet": ["押注", "下注", "投注", "總押", "总押", "bet", "stake"]
   },
+  "neverPress": ["購買", "购买", "buy", "purchase", "super", "超轉", "超转", "feature", "特色", "充值", "儲值", "储值", "加注", "減注", "减注", "bet", "copy", "複製", "复制", "auto", "自動", "自动", "lobby", "大廳", "大厅", "home"],
   "settle": { "minMs": 1500, "stablePolls": 3, "pollMs": 250, "nudgeAfterMs": 30000, "maxMs": 120000, "stillMs": 15000, "hardMaxMs": 600000 },
   "entry": {
     "maxSeconds": 90,
@@ -25,7 +26,7 @@
     "startWords": ["開始", "开始", "進入", "进入", "start", "play", "btn_enter", "btnenter", "點擊開始", "点击开始", "開始遊戲", "开始游戏"],
     "dismissWords": ["確定", "确定", "知道了", "繼續", "继续", "下一步", "跳過", "跳过", "關閉", "关闭", "ok", "continue", "next", "skip", "close", "confirm"],
     "tapAnywhereWords": ["任意", "點擊螢幕", "点击屏幕", "觸碰", "触碰", "觸摸", "触摸", "tap anywhere", "tap to", "touch to", "click to", "press to", "click anywhere"],
-    "avoidWords": ["購買", "购买", "buy", "super", "超轉", "超转", "feature", "特色", "充值", "儲值", "加注", "減注", "减注", "bet", "不再", "退出", "返回", "大廳", "大厅", "lobby", "home", "設定", "设置", "setting", "自動", "自动", "auto", "音效", "音樂", "音乐", "sound", "music", "turbo", "加速", "history", "紀錄", "记录", "規則", "规则", "help", "menu"]
+    "avoidWords": ["購買", "购买", "buy", "copy", "複製", "复制", "super", "超轉", "超转", "feature", "特色", "充值", "儲值", "加注", "減注", "减注", "bet", "不再", "退出", "返回", "大廳", "大厅", "lobby", "home", "設定", "设置", "setting", "自動", "自动", "auto", "音效", "音樂", "音乐", "sound", "music", "turbo", "加速", "history", "紀錄", "记录", "規則", "规则", "help", "menu"]
   },
   "frameBudgetMs": 16.7,
   "cpuHeavyP95Ms": 12,

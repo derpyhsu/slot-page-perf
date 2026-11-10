@@ -26,13 +26,15 @@ Use the `chrome-devtools` MCP. If it is not connected, stop and point at the REA
 4. `navigate_page` to the game URL with `initScript` = the loader. Then `evaluate_script` `() => typeof __slotPerf`. If it is not `"object"`, the game moved to another origin: navigate again with `initScript` = the contents of `probe/dist/bundle.js`.
 5. `evaluate_script` `() => __slotPerf.auto.start()`.
 6. Loop on `evaluate_script` `async () => __slotPerf.auto.wait(100000)`. It returns a short status as soon as the driver needs you, finishes, or 100 seconds pass:
-   - `needs: "bet"`: take one screenshot. Show the user `bet`. Check that `spin.chosen` sits on the plain spin button, not a buy, super, or feature button; `spin.others` lists the other candidates. Do not spin, and do not change the bet, until they confirm. Then `__slotPerf.auto.go()`, or `__slotPerf.auto.go(null, "<node name>")` to press another candidate.
-   - `needs: "screen"`: take a screenshot and read `note`.
-     - Entry or a blocked spin: decide what to press using the 進遊戲 rules in scenarios.md, then `__slotPerf.auto.click(x, y, "label")`.
-     - "no history/rules button found by name": if you see it, `__slotPerf.auto.click(x, y, "label")` on it, or on the menu that holds it; otherwise `__slotPerf.auto.resume()`.
-     - "could not close": find the ✕ or back button on the screenshot and `__slotPerf.auto.click()` it. Clicks reach HTML panels in same-origin iframes.
-     - "saw no change" after a panel button: `__slotPerf.auto.opened()` if the panel is on screen (HTML panels count), otherwise `__slotPerf.auto.resume()`.
+   Every `needs` reply starts with a fresh screenshot. Points are screenshot pixels of the whole page; the probe converts them when the game sits in an iframe. Never point at buy, bet, auto, copy, or lobby controls; the probe refuses them anyway.
+   - `needs: "map"`: find on the screenshot the spin button, the menu, bet history, game rules, and turbo. `guess` lists what node names suggest, as screenshot points; use them only when they sit on the right thing. Show the user `bet`. Do not spin, and do not change the bet, until they confirm. Then `__slotPerf.auto.map({ spin: {x, y}, menu, history, rules, turbo })`, with null for anything not on the main screen (history and rules are often inside the menu).
+   - `needs: "menu"`: the menu is open. `__slotPerf.auto.map({ history, rules, close })`, where close shuts the menu.
+   - `needs: "close"`: a panel or menu is open. `__slotPerf.auto.click(x, y, "close")` on its ✕ or back button, or `__slotPerf.auto.resume()` if the game screen is already clear.
+   - `needs: "screen"`: read `note`.
+     - Entry: decide what to press using the 進遊戲 rules in scenarios.md, then `__slotPerf.auto.click(x, y, "label")`; `__slotPerf.auto.ready()` if the game with its spin button is already up.
+     - "saw no change" after a panel button: `__slotPerf.auto.opened()` if the panel is on screen, otherwise `__slotPerf.auto.resume()`.
      - "has run Ns": `__slotPerf.auto.resume()` if a free game or win is playing; if the screen is a store or anything other than a spin, `__slotPerf.auto.click(x, y, "close")` and tell the user.
+     - "turbo was pressed again": `__slotPerf.auto.click()` on turbo if it still shows on, otherwise `__slotPerf.auto.resume()`.
      - If nothing is safe to press, stop and show the user the screenshot.
    - `needs: "error"` or `phase: "stuck"`: stop and report `note`.
    - After `phase: "idle"`, check that `channels.engineCpu` is true. If `frameLoop` is `raf`, CPU is unavailable for the run.
@@ -57,7 +59,7 @@ Do not hand-write findings, scores, or the report. If something important is mis
 
 ## Rules that still apply
 
-- Pointer events only. The autopilot dispatches them on the canvas at the node's position. Never call an internal spin handler.
+- Pointer events only. The autopilot dispatches them at the points you give. Never call an internal spin handler.
 - Never write the URL query string or a session token anywhere. `report/build.js` scrubs URLs, but do not rely on it.
 - If `conditions.gpu` is a software renderer, the FPS numbers describe this computer, not a phone GPU. The report says so.
 

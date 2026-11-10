@@ -1,6 +1,7 @@
 // In-page driver for the whole scenario in protocol/scenarios.md. Loaded after probe/install.js.
-// The agent starts it, waits on short status replies, confirms the bet with the user, and saves
-// the result to a file. Clicks are pointer and mouse events on the canvas at the node's position.
+// The agent starts it, waits on short status replies, and saves the result to a file. Where to
+// press comes from the agent's screenshots (auto.map, auto.click); node names only suggest
+// candidates and block buy, bet and similar controls. Clicks are pointer and mouse events.
 (function () {
   "use strict";
   if (!window.__slotPerf || window.__slotPerf.auto) return;
@@ -19,7 +20,10 @@
     snapshots: [],
     entry: { result: null, steps: [] },
     idleDraws: null,
-    spinName: null,
+    map: null,
+    close: {},
+    menuAsked: false,
+    clearRef: null,
     coverBase: null,
     spinTimes: [],
     longAsks: 0,
@@ -67,20 +71,6 @@
     }
     return el ? { el: el, x: x, y: y } : null;
   }
-  // Same-origin documents inside this one, with their offset in this page.
-  function frames() {
-    var out = [{ doc: document, dx: 0, dy: 0 }];
-    for (var i = 0; i < out.length && out.length < 8; i += 1) {
-      var fs = out[i].doc.querySelectorAll("iframe");
-      for (var j = 0; j < fs.length; j += 1) {
-        var r = fs[j].getBoundingClientRect();
-        if (!r.width || !r.height) continue;
-        try { if (fs[j].contentDocument) out.push({ doc: fs[j].contentDocument, dx: out[i].dx + r.left, dy: out[i].dy + r.top }); } catch (e) {}
-      }
-    }
-    return out;
-  }
-
   function click(x, y) {
     var hit = deepAt(x, y);
     var target = (hit && hit.el) || (window.cc && cc.game && cc.game.canvas) || document.querySelector("canvas");
@@ -119,6 +109,69 @@
     return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
   }
 
+  // The agent's screenshot shows the top page. Inside an iframe, its points are offset by where
+  // the frame sits.
+  function frameOffset() {
+    var o = { x: 0, y: 0 };
+    try {
+      for (var w = window; w.frameElement; w = w.parent) {
+        var r = w.frameElement.getBoundingClientRect();
+        o.x += r.left;
+        o.y += r.top;
+      }
+    } catch (e) {}
+    return o;
+  }
+  function toLocal(p) {
+    if (!p || p.x == null || p.y == null) return null;
+    var o = frameOffset();
+    return { x: Math.round(p.x - o.x), y: Math.round(p.y - o.y) };
+  }
+  function toTop(p) {
+    if (!p) return null;
+    var o = frameOffset();
+    return { x: Math.round(p.x + o.x), y: Math.round(p.y + o.y) };
+  }
+  // The Cocos button whose center is nearest p, within a finger's reach.
+  function nodeNear(p) {
+    if (!p) return null;
+    var best = null;
+    var bestD = 40;
+    P.buttons().buttons.forEach(function (b) {
+      if (!b.point) return;
+      var d = Math.sqrt(Math.pow(b.point.x - p.x, 2) + Math.pow(b.point.y - p.y, 2));
+      if (d < bestD) {
+        bestD = d;
+        best = b;
+      }
+    });
+    return best;
+  }
+  // The one name rule left: never press a buy, bet, copy or similar control, even at the
+  // agent's point. Long texts are paragraphs, not labels, and are not checked.
+  function unsafeAt(p) {
+    if (!p) return null;
+    var words = lower(CFG.neverPress);
+    var b = nodeNear(p);
+    if (b) {
+      var hay = (b.name + " " + (b.text.length <= 30 ? b.text : "")).toLowerCase();
+      if (words.some(function (w) { return hay.indexOf(w) >= 0; })) return b.name || b.text;
+    }
+    var h = deepAt(p.x, p.y);
+    var t = h && h.el && h.el.tagName !== "CANVAS" ? ((h.el.innerText || h.el.textContent || "") + " " + (h.el.id || "")).trim().toLowerCase() : "";
+    if (t && t.length <= 30 && words.some(function (w) { return t.indexOf(w) >= 0; })) return t;
+    return null;
+  }
+  function pressAt(p, label) {
+    var bad = unsafeAt(p);
+    if (bad) {
+      log("refused " + label + " at " + p.x + "," + p.y + ": " + bad);
+      return false;
+    }
+    log("press " + label + " @" + p.x + "," + p.y);
+    return click(p.x, p.y);
+  }
+
   // Stop and wait for the agent. resolve() is called by auto.resume().
   function ask(needs, note, extra) {
     st.needs = needs;
@@ -145,19 +198,17 @@
       .map(function (x) { return x.b; });
   }
 
-  function spinButton() {
-    var e = P.entry(CFG.entry);
-    // A plain "spin" name beats a longer one like "autoSpinBtn": the extra words usually mean another feature.
-    var plain = function (b) {
-      if (st.spinName) return b.name === st.spinName ? 0 : 2;
-      return /^(btn[_-]?)?spin([_-]?(btn|button))?$/i.test(b.name) ? 0 : 1;
-    };
-    var spin = e.spin.map(function (b, i) { return { b: b, i: i }; })
-      .sort(function (a, c) { return plain(a.b) - plain(c.b) || a.i - c.i; })
-      .map(function (x) { return x.b; });
-    e.spin = spin;
-    var ready = spin.filter(function (b) { return b.interactable && b.point; });
-    return { ready: ready[0] || null, any: e.spin[0] || null, all: spin, texts: (e.texts || []).join("|") };
+  // The spin button by name, only as a guess for the agent. A plain "spin" name goes first.
+  function spinGuess() {
+    var plain = function (b) { return /^(btn[_-]?)?spin([_-]?(btn|button))?$/i.test(b.name) ? 0 : 1; };
+    return P.entry(CFG.entry).spin.filter(function (b) { return b.interactable && b.point; })
+      .sort(function (a, c) { return plain(a) - plain(c); })[0] || null;
+  }
+  // The agent's spin point, and the node there when the engine can name one, for readiness.
+  function spinState() {
+    var p = st.map && st.map.spin;
+    var b = nodeNear(p);
+    return { point: p, ready: b ? b.interactable !== false : true, texts: (P.entry(CFG.entry).texts || []).join("|") };
   }
 
   async function entryLoop() {
@@ -197,7 +248,13 @@
       if (!pick) {
         if (st.entry.steps.length >= (E.maxSteps || 5)) break;
         // Nothing the engine can name. The agent looks at a screenshot and calls auto.click(x, y).
-        var r = await ask("screen", "loading looks done but nothing safe to press was found", { texts: e.texts });
+        var r = await ask("screen", "loading looks done but nothing safe to press was found: auto.click(x, y) on what leads into the game, or auto.ready() if the game with its spin button is up", { texts: e.texts });
+        if (r && r.ready) {
+          st.entry.result = st.entry.steps.length ? "pressed" : "direct";
+          P.mark("game-ready");
+          log("game-ready (agent)");
+          return true;
+        }
         if (r && r.click) {
           if (!splashMarked) { P.mark("splash"); splashMarked = true; }
           P.mark("enter");
@@ -271,176 +328,160 @@
     return null;
   }
 
-  function domClose() {
-    var words = lower((CFG.buttons || {}).close).concat(["×", "✕", "x"]);
-    // Innermost frames first: an HTML panel in an iframe sits on top of the page.
-    var fr = frames();
-    for (var f = fr.length - 1; f >= 0; f -= 1) {
-      var hitEl = closeIn(fr[f].doc, words);
-      if (hitEl) {
-        hitEl.point.x = Math.round(hitEl.point.x + fr[f].dx);
-        hitEl.point.y = Math.round(hitEl.point.y + fr[f].dy);
-        return hitEl;
-      }
-    }
-    return null;
+  function isBack(fp, refs) {
+    return refs.some(function (r) { return r && !differs(fp, r); });
   }
-  function closeIn(doc, words) {
-    var els = doc.querySelectorAll("button, a, [role=button], [onclick], div, span, i, img");
-    for (var i = els.length - 1; i >= 0; i -= 1) {
-      var el = els[i];
-      var text = ((el.innerText || el.textContent || "") + " " + (el.className && el.className.baseVal == null ? el.className : "") + " " + (el.getAttribute("aria-label") || "")).trim().toLowerCase();
-      if (!text || text.length > 40) continue;
-      if (!words.some(function (w) { return w.length > 1 ? text.indexOf(w) >= 0 : text === w; })) continue;
-      var r = el.getBoundingClientRect();
-      if (r.width && r.height) return { kind: "dom", name: el.tagName.toLowerCase(), text: text.slice(0, 16), interactable: true, point: { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } };
+  async function waitBack(refs, ms) {
+    var end = now() + ms;
+    while (now() < end) {
+      await sleep(200);
+      if (isBack(footprint(), refs)) return true;
     }
-    return null;
+    return false;
   }
 
-  // Open a panel, record spike then steady, close it. Returns false when the button is not found.
-  // Several nodes can match the menu words (a Feature list named MenuButton, the real ≡ menu).
-  // Try each, keep the one that shows the wanted button, close the others.
-  async function openMenuFor(kind) {
-    var B = CFG.buttons || {};
-    var menus = find(B.menu, { interactable: true });
-    // A menu seen before but gone now is usually disabled by a free game or win. Wait for it.
-    for (var w = 0; !menus.length && st.menuKey && w < 45; w += 1) {
-      if (w === 0) log("menu disabled, waiting");
-      await sleep(2000);
-      menus = find(B.menu, { interactable: true });
-    }
-    if (st.menuKey) menus.sort(function (a, b) { return (key(b) === st.menuKey) - (key(a) === st.menuKey); });
-    for (var i = 0; i < menus.length && i < 3; i += 1) {
-      var before = new Set(P.buttons().buttons.map(key));
-      var f0 = footprint();
-      P.mark("menu");
-      press(menus[i]);
-      await waitChange(f0, 2000);
-      await sleep(600);
-      var t = find(B[kind], { interactable: true })[0];
-      if (t) {
-        st.menuKey = key(menus[i]);
-        return { menu: menus[i], target: t, before: before };
+  // Open the menu at the agent's point. The first time, ask what is inside it.
+  async function openMenu(pre) {
+    var m = st.map;
+    P.mark("menu");
+    pressAt(m.menu, "menu");
+    await waitChange(pre, 2000);
+    await sleep(600);
+    if (st.menuAsked) return;
+    st.menuAsked = true;
+    var r = await ask("menu", "the menu should be open: screenshot it, then auto.map({history, rules, close}) with points inside it (close shuts the menu), null where absent");
+    var mm = (r && r.map) || {};
+    ["history", "rules"].forEach(function (k) {
+      if (mm[k] && !m[k]) {
+        m[k] = mm[k];
+        m[k + "InMenu"] = true;
       }
-      await closeOpened(before, menus[i], f0);
-    }
-    return null;
+    });
+    if (mm.close) st.close.menu = mm.close;
   }
 
+  // Close whatever is still over the game after a panel, usually the menu.
+  async function clearScreen(pre) {
+    if (await waitBack([pre, st.clearRef], 1200)) return;
+    var p = st.close.menu;
+    if (p) {
+      pressAt(p, "menu close");
+      if (await waitBack([pre, st.clearRef], 1500)) return;
+    }
+    var r = await ask("close", "something is still over the game (a menu?): screenshot, then auto.click(x, y) on what closes it, or auto.resume() if the game screen is clear");
+    if (r && r.click) {
+      st.close.menu = r.click;
+      pressAt(r.click, "menu close");
+      await sleep(900);
+    }
+    st.clearRef = footprint();
+  }
+
+  async function closePanel(kind, refs) {
+    for (var attempt = 0; attempt < 3; attempt += 1) {
+      var p = st.close[kind];
+      var fromAgent = false;
+      if (!p) {
+        var r = await ask("close", "the " + kind + " panel is open: screenshot, then auto.click(x, y) on its close or back button");
+        if (!r || !r.click) return false;
+        p = r.click;
+        fromAgent = true;
+      }
+      if (!pressAt(p, kind + " close")) {
+        st.close[kind] = null;
+        continue;
+      }
+      if (await waitBack(refs, 2000)) {
+        st.close[kind] = p;
+        return true;
+      }
+      // The agent saw the screen. Trust its point even when the page does not match the state
+      // before the panel exactly.
+      if (fromAgent) {
+        st.close[kind] = p;
+        return true;
+      }
+      st.close[kind] = null;
+    }
+    return false;
+  }
+
+  // Open a panel at the agent's point, record spike then steady, close it. The stage marks match
+  // scenarios.md, so the report reads them unchanged.
   async function panel(kind, stage, snapLabel) {
-    var B = CFG.buttons || {};
-    var openedMenu = null;
-    var target = find(B[kind], { interactable: true })[0];
-    var byAgent = null;
-    var menuBefore = null;
-    if (!target) {
-      var om = await openMenuFor(kind);
-      if (om) {
-        openedMenu = om.menu;
-        menuBefore = om.before;
-        target = om.target;
-      }
+    var m = st.map || {};
+    var pre = footprint();
+    var viaMenu = false;
+    if ((!m[kind] || m[kind + "InMenu"]) && m.menu) {
+      await openMenu(pre);
+      viaMenu = true;
     }
-    // Not found by name. The agent can still see it on a screenshot.
+    var target = m[kind];
     if (!target) {
-      if (openedMenu) await closeOpened(new Set(), openedMenu);
-      openedMenu = null;
-      var shown = await ask("screen", "no " + kind + " button found by name: press it with auto.click() if you see one (open the menu first if needed), otherwise auto.resume()");
-      if (shown && shown.click) {
-        // The agent pressed either a menu (then the button shows up by name) or the button itself.
-        var b1 = new Set(P.buttons().buttons.map(key));
-        var f1 = footprint();
-        P.mark(stage + "-spike");
-        click(shown.click.x, shown.click.y);
-        var c1 = await waitChange(f1, 3000);
-        target = find(B[kind], { interactable: true })[0];
-        // Only a new layer, new buttons or new page elements count; a free game also changes nodes.
-        var opened1 = c1 && (c1.onScreen !== f1.onScreen || c1.cover !== f1.cover || Math.abs(c1.dom - f1.dom) > 3);
-        if (!target && opened1) {
-          target = { kind: "agent", name: shown.text || kind, text: shown.text || "", point: shown.click };
-          byAgent = { before: b1, nodes: f1, changed: c1 };
-        } else {
-          P.mark("gap");
-          if (target) openedMenu = { kind: "agent", name: "menu", text: shown.text || "", point: shown.click };
-        }
-      }
-    }
-    if (!target) {
-      st.coverage[stage] = "not found: " + (B[kind] || []).join("/");
-      if (openedMenu) await closeOpened(new Set(), openedMenu);
+      st.coverage[stage] = "not on screen";
+      if (viaMenu) await clearScreen(pre);
       P.mark("gap");
       return false;
     }
-    var before = byAgent ? byAgent.before : new Set(P.buttons().buttons.map(key));
-    var nodes = byAgent ? byAgent.nodes : footprint();
-    var changed = byAgent ? byAgent.changed : null;
-    if (!byAgent) {
-      P.mark(stage + "-spike");
-      press(target);
-      changed = await waitChange(nodes, 3000);
-    }
-    // Buttons folded inside a closed menu still report active. Open the menu and try again.
-    if (changed == null && !openedMenu && !byAgent) {
-      var om2 = await openMenuFor(kind);
-      if (om2) {
-        openedMenu = om2.menu;
-        menuBefore = om2.before;
-        target = om2.target;
-        before = new Set(P.buttons().buttons.map(key));
-        nodes = footprint();
-        P.mark(stage + "-spike");
-        press(target);
-        changed = await waitChange(nodes, 3000);
-      }
-    }
-    // Not sure. Some panels are HTML or change too little to see; let the agent look.
+    var nodes = footprint();
+    P.mark(stage + "-spike");
+    pressAt(target, kind);
+    var changed = await waitChange(nodes, 3000);
     if (changed == null) {
-      var seen = await ask("screen", "pressed " + (target.text || target.name) + " for " + kind + " but saw no change: if a panel is open call auto.opened(), otherwise auto.resume()");
+      var seen = await ask("screen", "pressed " + kind + " but saw no change: screenshot, then auto.opened() if the panel is up, otherwise auto.resume()");
       if (seen && seen.opened) changed = footprint();
     }
     if (changed == null) {
-      st.coverage[stage] = "pressed " + (target.text || target.name) + " but nothing opened";
+      st.coverage[stage] = "pressed " + kind + " but nothing opened";
       P.mark("gap");
-      if (openedMenu) await closeOpened(new Set(), openedMenu, null);
+      await clearScreen(pre);
       return false;
     }
     await sleep((CFG.panelSpikeSeconds || 2) * 1000);
     P.mark(stage);
     await sleep((CFG.panelSteadySeconds || 5) * 1000);
     if (snapLabel) st.snapshots.push(P.cocos(snapLabel));
-    st.coverage[stage] = "ok via " + (target.text || target.name);
+    st.coverage[stage] = "ok";
+    // Ask for the close point only after the steady stage, so thinking time is not measured.
     P.mark("gap");
-    var closed = await closeOpened(before, target, nodes);
-    if (closed && covered()) closed = false;
-    if (!closed) {
-      var r = await ask("screen", "could not close the " + kind + " panel");
-      if (r && r.click) click(r.click.x, r.click.y);
+    if (!(await closePanel(kind, [nodes, pre]))) {
+      var r = await ask("screen", "could not close the " + kind + " panel: auto.click(x, y) on its close, or auto.resume() if it is closed");
+      if (r && r.click) pressAt(r.click, kind + " close");
       await sleep(1000);
     }
-    // The menu can stay open over a spin button that still reports ready. Its own close button tells.
-    var menuOpen = menuBefore && P.buttons(B.close).buttons.some(function (b) { return b.point && b.interactable && !menuBefore.has(key(b)); });
-    if (openedMenu && (menuOpen || !spinButton().ready)) await closeOpened(menuBefore || new Set(), openedMenu, null);
+    await clearScreen(pre);
     return true;
   }
 
-  async function closeOpened(before, opener, footBefore) {
+  // Where to press, from one screenshot. This stop is also the bet check before any spin.
+  async function mapStop() {
     var B = CFG.buttons || {};
-    for (var attempt = 0; attempt < 3; attempt += 1) {
-      var fresh = P.buttons(B.close).buttons.filter(function (b) { return b.interactable && b.point && !before.has(key(b)); });
-      // An HTML layer over the canvas is closed by its own button, not a Cocos one under it.
-      var htmlOnTop = footBefore ? cover() !== footBefore.cover : covered();
-      var pick = (htmlOnTop && domClose()) || fresh[0] || domClose() || (attempt === 2 ? opener : null);
-      if (!pick) pick = P.buttons(B.close).buttons.filter(function (b) { return b.interactable && b.point; })[0];
-      if (!pick) break;
-      press(pick);
-      await sleep(900);
-      if (footBefore == null) return true;
-      if (!differs(footprint(), footBefore)) return true;
-      // Closing can also fold the menu, so the page will not match the pre-open state. The close
-      // button going away is enough.
-      var k = key(pick);
-      if (pick.kind !== "dom" && !P.buttons(B.close).buttons.some(function (b) { return b.point && key(b) === k; })) return true;
+    var guess = function (b) { return b && b.point ? { name: b.name, text: (b.text || "").slice(0, 20), point: toTop(b.point) } : null; };
+    var guesses = {
+      spin: guess(spinGuess()),
+      menu: guess(find(B.menu, { interactable: true })[0]),
+      history: guess(find(B.history, { interactable: true })[0]),
+      rules: guess(find(B.rules, { interactable: true })[0]),
+      turbo: guess(find(B.turbo, { interactable: true })[0])
+    };
+    var note = "screenshot the game, show the user the bet and wait for their go, then auto.map({spin, menu, history, rules, turbo}) with screenshot points (null where absent). guess is what node names suggest";
+    for (var tries = 0; tries < 4; tries += 1) {
+      var r = await ask("map", note, { bet: betCandidates(), guess: guesses });
+      var m = (r && r.map) || {};
+      if (!m.spin) {
+        note = "the spin point is required. " + note;
+        continue;
+      }
+      var bad = ["spin", "menu", "history", "rules", "turbo"].filter(function (k) { return m[k] && unsafeAt(m[k]); });
+      if (bad.length) {
+        note = "refused " + bad.join(", ") + ": the node there looks like buy, bet or copy. " + note;
+        log("map refused " + bad.join(","));
+        continue;
+      }
+      st.map = m;
+      if (r.spins != null) st.plan = Math.min(r.spins, CFG.maxSpins || 30);
+      log("map " + JSON.stringify(m).slice(0, 100));
+      return true;
     }
     return false;
   }
@@ -471,17 +512,17 @@
   async function oneSpin(name) {
     var S = CFG.settle || {};
     var wait = now() + 30000;
-    var b = spinButton();
+    var b = spinState();
     while (!b.ready && now() < wait) {
       await nudge();
       await sleep(500);
-      b = spinButton();
+      b = spinState();
     }
     if (!b.ready || covered()) {
       var r = await ask("screen", (b.ready ? "something covers the game before " : "spin button is not ready before ") + name);
       if (r && r.click) click(r.click.x, r.click.y);
       await sleep(1000);
-      b = spinButton();
+      b = spinState();
       if (!b.ready) return false;
     }
     // A spin far longer than the others is a feature, a big win, or the wrong screen. Look once.
@@ -492,24 +533,34 @@
     var asked = false;
     P.mark(name);
     var t0 = now();
-    press(b.ready);
+    log("press spin");
+    click(b.point.x, b.point.y);
     var sawBusy = false;
     var stable = 0;
     var nudged = false;
     var lastTexts = "";
     var lastChange = now();
+    var lastDraws = null;
+    var lastDrawChange = now();
     while (true) {
       await sleep(S.pollMs || 250);
       var el = now() - t0;
-      var sb = spinButton();
+      var sb = spinState();
       if (sb.texts !== lastTexts) {
         lastTexts = sb.texts;
         lastChange = now();
       }
       var draws = P.live().draws;
+      if (draws !== lastDraws) {
+        lastDraws = draws;
+        lastDrawChange = now();
+      }
       if (!sb.ready) sawBusy = true;
       var drawsBack = st.idleDraws == null || draws == null || Math.abs(draws - st.idleDraws) <= Math.max(3, st.idleDraws * 0.15);
-      stable = sb.ready && (sawBusy || drawsBack) ? stable + 1 : 0;
+      // Some spin buttons never disable and the idle glow changes the draw count. Then a screen
+      // whose texts and draw calls have both held still for a few seconds has settled.
+      var quiet = now() - lastChange > (S.quietMs || 4000) && now() - lastDrawChange > (S.quietMs || 4000);
+      stable = sb.ready && (sawBusy || drawsBack || quiet) ? stable + 1 : 0;
       if (el >= (S.minMs || 1500) && stable >= (S.stablePolls || 3)) break;
       if (el > longMs && !asked && st.longAsks < 4) {
         asked = true;
@@ -566,22 +617,20 @@
     if (!ch.engineCpu) st.coverage.cpu = "frameLoop " + ch.frameLoop + ": per-frame CPU unavailable";
     P.mark("gap");
 
+    st.phase = "map";
+    st.plan = CFG.maxSpins || 30;
+    if (!(await mapStop())) {
+      st.phase = "stuck";
+      await ask("screen", "no usable spin point from the agent");
+      st.phase = "done";
+      return;
+    }
+
     st.phase = "panels";
     await panel("history", "history-before", null);
     await panel("rules", "rules", "rules");
     await idle("idle-after-rules", 4, null);
     P.mark("gap");
-
-    st.phase = "confirm-bet";
-    st.plan = CFG.maxSpins || 30;
-    var sb0 = spinButton();
-    var spinInfo = { chosen: sb0.ready ? { name: sb0.ready.name, point: sb0.ready.point } : null, others: sb0.all.slice(1, 6).map(function (b) { return b.name + (b.point ? "@" + b.point.x + "," + b.point.y : ""); }) };
-    var go = await ask("bet", "show the bet to the user, check on a screenshot that spin.chosen is the plain spin button, then call auto.go()", { bet: betCandidates(), spin: spinInfo });
-    if (go && go.spins != null) st.plan = Math.min(go.spins, CFG.maxSpins || 30);
-    if (go && go.spinName) {
-      st.spinName = go.spinName;
-      log("spin button set to " + go.spinName);
-    }
 
     st.phase = "spins";
     var normal = Math.min(st.plan, CFG.normalSpins || 24);
@@ -590,18 +639,27 @@
     }
     var rest = st.plan - st.spins;
     if (rest > 0) {
-      var turbo = find((CFG.buttons || {}).turbo, { interactable: true })[0];
-      if (turbo) {
-        press(turbo);
+      var turbo = st.map.turbo;
+      if (turbo && pressAt(turbo, "turbo")) {
         await sleep(600);
-        st.coverage.turbo = "ok via " + (turbo.text || turbo.name);
-      } else st.coverage.turbo = "not found, normal spins instead";
+        st.coverage.turbo = "ok";
+      } else {
+        turbo = null;
+        st.coverage.turbo = "not on screen, normal spins instead";
+      }
       for (var j = 1; j <= rest; j += 1) {
         if (!(await oneSpin((turbo ? "turbo-" : "spin-") + (turbo ? j : normal + j)))) break;
       }
+      // Some toggles cycle through several speeds, so one more press may not turn it off.
       if (turbo) {
-        press(turbo);
-        await sleep(600);
+        pressAt(turbo, "turbo");
+        await sleep(800);
+        for (var k = 0; k < 3; k += 1) {
+          var tr = await ask("screen", "turbo was pressed again to turn it off: screenshot, auto.click(x, y) on it if it is still on, otherwise auto.resume()");
+          if (!tr || !tr.click) break;
+          pressAt(tr.click, "turbo");
+          await sleep(800);
+        }
       }
     }
 
@@ -616,9 +674,9 @@
   function status() {
     var live = P.live();
     var out = { phase: st.phase, needs: st.needs, note: st.note, spins: st.spins, plan: st.plan, t: Math.round((now() - st.started) / 1000), stage: live.stage, fps: live.fps, gpuMb: live.gpuMb, heapMb: live.heapMb };
-    if (st.needs === "bet") {
+    if (st.needs === "map") {
       out.bet = st.bet;
-      out.spin = st.spin;
+      out.guess = st.guess;
     }
     if (st.needs === "screen" && st.texts) out.texts = st.texts.slice(0, 12);
     if (st.channels && st.phase !== "spins") out.channels = st.channels;
@@ -637,12 +695,19 @@
       return status();
     },
     status: status,
-    // After the user confirms the bet. spins defaults to maxSpins.
-    // spinName: the node name to press when spin.chosen is not the plain spin button.
-    go: function (spins, spinName) { return resume({ spins: spins == null ? null : spins, spinName: spinName || null }); },
+    // Points read off the agent's screenshot of the top page: { spin, menu, history, rules, turbo,
+    // close } as { x, y } or null. At the map stop it is also the user's go for the bet; spins
+    // defaults to maxSpins.
+    map: function (m, spins) {
+      var out = {};
+      Object.keys(m || {}).forEach(function (k) { out[k] = toLocal(m[k]); });
+      return resume({ map: out, spins: spins == null ? null : spins });
+    },
     // The panel the driver could not see is open.
     opened: function () { return resume({ opened: true }); },
-    click: function (x, y, text) { return resume({ click: { x: x, y: y }, text: text }); },
+    // The game screen is up although no spin button could be named.
+    ready: function () { return resume({ ready: true }); },
+    click: function (x, y, text) { return resume({ click: toLocal({ x: x, y: y }), text: text }); },
     resume: function () { return resume({}); },
     result: function () {
       return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, log: st.log };
