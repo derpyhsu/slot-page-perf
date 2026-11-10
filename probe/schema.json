@@ -75,6 +75,7 @@
     "shaders": { "type": "object", "description": "compileShader and linkProgram time. status none means no call was observed." },
     "audio": { "type": "object", "description": "decodeAudioData PCM bytes. status none means no decode was observed." },
     "findings": { "type": "array" },
-    "coverage": { "type": "object" }
+    "coverage": { "type": "object" },
+    "gc": { "type": "array", "description": "Heap floor right after a forced full GC (heap snapshot): after-warmup and end", "items": { "type": "object" } }
   }
 }

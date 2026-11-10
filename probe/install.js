@@ -373,15 +373,18 @@
         return orig.apply(this, arguments);
       };
     });
-    ["compileShader", "linkProgram"].forEach(function (name) {
+    // Chrome compiles and links in the background. The wait lands on the first status query
+    // (getShaderParameter, getProgramParameter), so those are timed too; only compile and link count.
+    ["compileShader", "linkProgram", "getShaderParameter", "getProgramParameter"].forEach(function (name) {
       if (typeof proto[name] !== "function") return;
       var orig = proto[name];
+      var counts = name === "compileShader" || name === "linkProgram";
       proto[name] = function () {
         var t0 = performance.now();
         var ret = orig.apply(this, arguments);
         var ms = performance.now() - t0;
         state.shaderMs += ms;
-        state.shaderN += 1;
+        if (counts) state.shaderN += 1;
         if (ms >= HITCH_MS && state.shaderStalls.length < 8) state.shaderStalls.push({ t: rel(t0), ms: round(ms), kind: name });
         return ret;
       };
@@ -553,6 +556,11 @@
   }
   hookAudio(window.AudioContext);
   hookAudio(window.webkitAudioContext);
+
+  // Chrome keeps 250 resource entries by default; a slot loads more than that before game-ready.
+  try {
+    if (performance.setResourceTimingBufferSize) performance.setResourceTimingBufferSize(3000);
+  } catch (e) {}
 
   // Compact resource timing. Paths drop the query string so a session token never lands in the report.
   function resourceSummary() {
@@ -831,6 +839,7 @@
     var npot = 0;
     var compressed = 0;
     var big = [];
+    var bigCount = 0;
     var formats = {};
     function isPot(n) { return n > 0 && (n & (n - 1)) === 0; }
     items.forEach(function (tex) {
@@ -847,6 +856,7 @@
       if (isCompressed(name)) compressed += 1;
       if (!(isPot(w) && isPot(h))) npot += 1;
       formats[name] = (formats[name] || 0) + 1;
+      if (b > 16 * 1048576) bigCount += 1;
       big.push({ w: w, h: h, format: name, mb: round(b / 1048576), file: assetFile(tex), uuid: tex._uuid || null });
     });
     big.sort(function (a, b) { return b.mb - a.mb; });
@@ -857,6 +867,7 @@
       npot: npot,
       compressed: compressed,
       formats: formats,
+      bigCount: bigCount,
       largest: big.slice(0, 8),
       note: "Bytes from the Cocos pixel format name. Unknown formats count as 4 bytes per pixel."
     };

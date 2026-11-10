@@ -207,7 +207,7 @@ function factRows(ev, m) {
 
 function scoreLine(ev) {
   const S = ev.score;
-  const FATAL = { stall: "停頓超過門檻", "low-fps": "FPS 低於門檻", "over-budget": "超過記憶體預算", "leak-suspected": "JS heap 轉完沒回到轉前" };
+  const FATAL = { stall: "停頓超過門檻", "low-fps": "FPS 低於門檻", "over-budget": "超過記憶體預算兩倍", "leak-suspected": "JS heap 轉完沒回到轉前" };
   const part = (name, p) => {
     const bits = (p.items || []).filter((i) => i.value != null).map((i) => {
       const shown = i.unit === "%" ? `${i.value}%` : `${i.value} ${i.unit}`;
@@ -269,8 +269,10 @@ function gauge(part, name, hint) {
   const r = 52;
   const c = 2 * Math.PI * r;
   const shown = score == null ? 0 : score / 100;
-  const bits = (part.items || [])
-    .filter((i) => i.value != null)
+  // Only the three items that cost the most points; the rest sit in the collapsed 全部依據 table.
+  const lost = (i) => (i.score == null ? 0 : i.weight * (100 - i.score));
+  const losers = (part.items || []).filter((i) => i.value != null && lost(i) > 0).sort((a, b) => lost(b) - lost(a)).slice(0, 3);
+  const bits = (losers.length ? losers : [])
     .map((i) => {
       const shownValue = i.unit === "%" ? `${i.value}%` : `${i.value} ${i.unit}`;
       const where = spinWhere(i.stage);
@@ -285,7 +287,7 @@ function gauge(part, name, hint) {
     </svg>
     <div class="gauge-name" style="color:${color}">${esc(name)}</div>
     <div class="gauge-hint">${esc(hint)}${part.provisional ? ` · 暫定 ${part.coverage}%` : ""}</div>
-    <ul class="gauge-bits">${bits}</ul>
+    <ul class="gauge-bits">${bits || "<li><span>每一項都滿分</span></li>"}</ul>
   </div>`;
 }
 
@@ -299,7 +301,7 @@ function heroMetrics(ev, m) {
   if (spin && spin.cpuMed != null) cards.push({ k: "CPU p95 中位", v: `${round(spin.cpuMed, 1)} ms`, sub: spin.cpuMax != null && spin.cpuMax - spin.cpuMed >= 1.5 ? `最高 ${round(spin.cpuMax, 1)} ms${spinWhere(spin.cpuStage) ? ` · ${spinWhere(spin.cpuStage)}` : ""}` : "", level: cellLevel("cpuP95Ms", spin.cpuMed) || "green" });
   else if (spin && spin.cpuMax != null) cards.push({ k: "CPU p95", v: `${round(spin.cpuMax, 1)} ms`, level: cellLevel("cpuP95Ms", spin.cpuMax) || "green" });
   if (est) cards.push({ k: "GPU", v: mb(est.texture), sub: `預算 ${budget} MB`, level: cellLevel("gpuMb", est.texture) || "green" });
-  if (est) cards.push({ k: "推估", v: mb(est.total), sub: `JS ${Math.round(est.heap)} + 畫面 ${Math.round(est.framebuffer)}`, level: est.total > budget ? "red" : "green" });
+  if (est) cards.push({ k: "推估", v: mb(est.total), sub: `JS ${Math.round(est.heap)} + 畫面 ${Math.round(est.framebuffer)}`, level: est.total > budget * 2 ? "red" : est.total > budget ? "orange" : "green" });
   const worst = m.cols.reduce((a, c) => (c.worst > (a ? a.worst : 0) ? c : a), null);
   if (worst && worst.worst >= 50) cards.push({ k: "最長停頓", v: `${Math.round(worst.worst)} ms`, sub: worst.label, level: cellLevel("stallMs", worst.worst) || "yellow" });
   return `<div class="metrics">${cards
@@ -311,7 +313,7 @@ function readoutHtml(ev) {
   const m = model(ev);
   const S = ev.score;
   const cell = (text, level, raw) => `<td class="num"${level ? ` style="color:${COLOR[level]};font-weight:600"` : ""}>${raw ? text : esc(text)}</td>`;
-  let html = `<section class="card hero"><div class="gauges">${S.loading ? gauge(S.loading, NAMES.loading, "載入時的幀穩定度與最長停頓") : ""}${gauge(S.smooth, NAMES.smooth, "進遊戲後的 60 FPS 穩定度與卡頓")}${gauge(S.memory, NAMES.memory, `JS 與 GPU 記憶體對比 ${(S.memory && S.memory.budgetMb) || 300} MB 預算`)}</div>${heroMetrics(ev, m)}</section>`;
+  let html = `<section class="card hero"><div class="gauges">${S.loading ? gauge(S.loading, NAMES.loading, "載入時的幀穩定度與最長停頓") : ""}${gauge(S.smooth, NAMES.smooth, "進遊戲後的 60 FPS 穩定度與卡頓")}${gauge(S.memory, NAMES.memory, "GPU、JS heap、增長、大貼圖、音效、面板殘留")}</div>${heroMetrics(ev, m)}</section>`;
   html += '<section class="card"><h2>各階段</h2><div class="scroll">';
   if (m.cols.length) {
     html += "<table><tr><th>讀數</th>" + m.cols.map((c) => `<th class="num">${esc(c.label)}</th>`).join("") + "</tr>";

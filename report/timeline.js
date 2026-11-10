@@ -7,6 +7,8 @@ const C = {
   red: "#e5484d",
   orange: "#f76b15",
   yellow: "#e2a336",
+  cpu: "#f2c94c",
+  cpuEdge: "#d9a925",
   green: "#30a46c",
   blue: "#0090ff",
   purple: "#8e4ec6",
@@ -124,22 +126,38 @@ function timelineSvg(ev, range, mark) {
   out.push(`<line x1="${L}" x2="${W - R}" y1="${FY(60).toFixed(1)}" y2="${FY(60).toFixed(1)}" stroke="${C.ink}" stroke-width="1" stroke-dasharray="4 3" opacity="0.6"/>`);
   out.push(`<text x="${L - 4}" y="${(FY(60) + 4).toFixed(1)}" font-size="10" text-anchor="end" fill="${C.faint}">60</text>`);
 
-  // CPU: main-thread busy share per bucket from the engine loop.
+  // CPU, drawn like the DevTools overview: main-thread busy share per bucket as a yellow step
+  // area (engine frame time plus long tasks), and long tasks as red marks along the top.
   const CY0 = 150;
   const CH = 40;
   label(134, "CPU");
   out.push(`<rect x="${L}" y="${CY0 - CH}" width="${W - L - R}" height="${CH}" fill="${C.lane}"/>`);
-  if (tl && ev.channels && ev.channels.engineCpu) {
+  const longs = (tl && tl.longTasks) || [];
+  const engineCpu = tl && ev.channels && ev.channels.engineCpu;
+  if (tl && (engineCpu || longs.length)) {
     const bm = tl.bucketMs;
-    const budget = 16.7;
-    const pts = tl.buckets
-      .filter((b) => inView(b[0], b[0] + bm) && b[1] && b[3] != null)
-      .map((b) => `L${X(b[0] + bm / 2).toFixed(1)},${(CY0 - Math.min(1, b[3] / b[1] / budget) * CH).toFixed(1)}`)
-      .join(" ");
-    if (pts) out.push(`<path d="M${L},${CY0} ${pts} L${W - R},${CY0} Z" fill="${C.yellow}" opacity="0.85"/>`);
-    out.push(`<text x="${L - 4}" y="${(CY0 - CH + 4).toFixed(1)}" font-size="10" text-anchor="end" fill="${C.faint}">16.7</text>`);
+    const overlap = (t0, t1) => longs.reduce((a, l) => a + Math.max(0, Math.min(t1, l[0] + l[1]) - Math.max(t0, l[0])), 0);
+    let d = "";
+    let lastX = null;
+    tl.buckets.forEach((b) => {
+      if (!inView(b[0], b[0] + bm)) return;
+      const busy = Math.min(1, Math.max(engineCpu && b[3] != null ? b[3] : 0, overlap(b[0], b[0] + bm)) / bm);
+      const x0 = X(b[0]).toFixed(1);
+      const x1 = X(b[0] + bm).toFixed(1);
+      const y = (CY0 - busy * CH).toFixed(1);
+      d += lastX != null ? ` L${x0},${y} L${x1},${y}` : `M${x0},${CY0} L${x0},${y} L${x1},${y}`;
+      lastX = x1;
+    });
+    if (d) out.push(`<path d="${d} L${lastX},${CY0} Z" fill="${C.cpu}" stroke="${C.cpuEdge}" stroke-width="0.6"/>`);
+    longs.filter((l) => inView(l[0], l[0] + l[1])).forEach((l) => {
+      const x = X(l[0]);
+      const w = Math.max(2, X(l[0] + l[1]) - x);
+      out.push(`<rect x="${x.toFixed(1)}" y="${CY0 - CH}" width="${w.toFixed(1)}" height="4" fill="${C.red}"><title>${clock(l[0])} long task ${Math.round(l[1])} ms</title></rect>`);
+    });
+    out.push(`<text x="${L - 4}" y="${(CY0 - CH + 4).toFixed(1)}" font-size="10" text-anchor="end" fill="${C.faint}">100%</text>`);
+    if (!engineCpu) out.push(`<text x="${(L + W) / 2}" y="${CY0 - 15}" font-size="11" text-anchor="middle" fill="${C.sub}">沒有每幀 CPU，只畫 long task</text>`);
   } else {
-    out.push(`<text x="${(L + W) / 2}" y="${CY0 - 15}" font-size="12" text-anchor="middle" fill="${C.sub}">這次沒量到每幀 CPU</text>`);
+    out.push(`<text x="${(L + W) / 2}" y="${CY0 - 15}" font-size="12" text-anchor="middle" fill="${C.sub}">這次沒量到 CPU</text>`);
   }
 
   // Stalls over 50 ms, plus todo numbers above where they happen.

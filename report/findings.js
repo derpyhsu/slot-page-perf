@@ -210,7 +210,14 @@ function findings(ev, T) {
   if (gpu && gpu.status === "ok" && gpu.peakMb > T.gpuMemoryWarnMb) out.push({ id: "gpu-memory-heavy", value: gpu.peakMb, textureMb: gpu.textureMb, bufferMb: gpu.bufferMb, renderbufferMb: gpu.renderbufferMb });
 
   const fit = heapFit(ev, T);
-  if (fit.status === "not-enough-spins") out.push({ id: "leak-check", status: "not-enough-spins", spins: fit.spins });
+  const gc = (ev.gc || []).filter((x) => x.mb != null);
+  const gcA = gc.find((x) => x.at === "after-warmup");
+  const gcB = gc.find((x) => x.at === "end");
+  if (gcA && gcB && gcB.spins > gcA.spins) {
+    // Both ends were taken right after a forced full GC, so the difference is what really stayed.
+    const delta = gcB.mb - gcA.mb;
+    if (delta > T.leakMb) out.push({ id: "leak-suspected", status: "retained-after-gc", from: gcA.mb, to: gcB.mb, delta, forced: true });
+  } else if (fit.status === "not-enough-spins") out.push({ id: "leak-check", status: "not-enough-spins", spins: fit.spins });
   else if (fit.status === "ok" && fit.majorGcs.length) {
     // A major GC ran: only what it did not reclaim counts.
     if (fit.retainedMb > T.leakMb) out.push({ id: "leak-suspected", status: "retained-after-gc", from: fit.from, to: fit.from + fit.retainedMb, delta: fit.retainedMb, slopeMb: fit.slopeMb, majorGcs: fit.majorGcs, featureSpins: fit.featureSpins });

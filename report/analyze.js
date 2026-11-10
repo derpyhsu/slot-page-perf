@@ -83,10 +83,15 @@ function steadyShare(inWindow, minFps, fallbackStages) {
   return total ? { share: ok / total, approx: true } : null;
 }
 
+// gap is the driver waiting on the agent or a forced GC, not play. Its seconds are left out.
+const gapStages = stages.filter((s) => s.name === "gap" && s.startMs != null);
+function inGap(t, B) {
+  return gapStages.some((s) => t + B > s.startMs && t < s.startMs + s.wallMs);
+}
 function stableShare() {
   const ready = gameReadyMs();
   if (ready == null) return steadyShare(() => false, cfg.smooth.steady.minFps, gameStages);
-  return steadyShare((t) => t >= ready, cfg.smooth.steady.minFps, gameStages);
+  return steadyShare((t, B) => t >= ready && !inGap(t, B), cfg.smooth.steady.minFps, gameStages);
 }
 
 // Same measure over the loading and enter stages only. splash waits for a person.
@@ -156,10 +161,22 @@ function framebufferMb() {
 // After a major GC, growth is what the GC did not reclaim, spread over the fitted spins.
 const fit = heapFit(ev, thresholds);
 ev.heapFit = fit;
+// Forced GC points (heap snapshots after warm-up and after the last spin) beat any fit: the
+// difference is what really stayed. Without them and without a major GC, growth is provisional.
+function gcRetained() {
+  const gc = (ev.gc || []).filter((g) => g.mb != null);
+  const a = gc.find((g) => g.at === "after-warmup");
+  const b = gc.find((g) => g.at === "end");
+  if (!a || !b || b.spins <= a.spins) return null;
+  return { from: a.mb, to: b.mb, spins: b.spins - a.spins, retainedMb: round(b.mb - a.mb, 2) };
+}
+const gcFit = gcRetained();
+ev.heapGc = gcFit;
 function growthPerSpin() {
+  if (gcFit) return { value: Math.max(0, gcFit.retainedMb) / gcFit.spins, basis: "gc" };
   if (fit.status !== "ok") return null;
-  if (fit.majorGcs.length) return Math.max(0, fit.retainedMb) / fit.points;
-  return Math.max(0, fit.slopeMb);
+  if (fit.majorGcs.length) return { value: Math.max(0, fit.retainedMb) / fit.points, basis: "major-gc" };
+  return { value: Math.max(0, fit.slopeMb), basis: "no-gc" };
 }
 
 // Presented-frame view of the game stages, frame-weighted: share off cadence and expected FPS.
@@ -182,10 +199,48 @@ function gameFrames() {
 }
 const gf = gameFrames();
 
+// Larger than 16 MB, so a 2048x2048 RGBA atlas (exactly 16 MB) does not count. New probes count
+// every texture; older ones only list the largest 8.
 function bigTextureCount() {
   const tex = ev.memory && ev.memory.textures;
-  if (!tex || tex.status !== "ok" || !tex.largest) return null;
-  return tex.largest.filter((t) => t.mb >= cfg.memory.bigTextures.mb).length;
+  if (!tex || tex.status !== "ok") return null;
+  if (tex.bigCount != null) return tex.bigCount;
+  if (!tex.largest) return null;
+  const limit = cfg.memory.bigTextures.mb * 1048576;
+  return tex.largest.filter((t) => (t.w && t.h && /8888/.test(t.format || "") ? t.w * t.h * 4 : t.mb * 1048576) > limit + 1).length;
+}
+
+// JS heap floor once the game is up: the 10th percentile of heap samples after game-ready.
+function heapFloor() {
+  const ready = gameReadyMs();
+  const xs = ((ev.timeline && ev.timeline.heap) || []).filter((p) => ready == null || p[0] >= ready).map((p) => p[1]).sort((a, b) => a - b);
+  return xs.length ? xs[Math.floor(xs.length * 0.1)] : null;
+}
+
+// GPU memory a panel left behind: right after it closed versus right before it opened.
+function gpuAt(t) {
+  const g = (ev.timeline && ev.timeline.gpu) || [];
+  let v = null;
+  g.forEach((p) => {
+    if (p[0] <= t) v = p[1];
+  });
+  return v;
+}
+function panelResidue() {
+  const by = (n) => stages.find((s) => s.name === n);
+  const pairs = [];
+  const firstPanel = by("history-before-spike") || by("rules-spike");
+  const afterRules = by("idle-after-rules");
+  if (firstPanel && afterRules) pairs.push([firstPanel.startMs, afterRules.startMs + afterRules.wallMs]);
+  const lateOpen = by("history-after-spike");
+  const end = by("idle-end");
+  if (lateOpen && end) pairs.push([lateOpen.startMs, end.startMs + end.wallMs]);
+  const deltas = pairs.map(([a, b]) => {
+    const x = gpuAt(a);
+    const y = gpuAt(b);
+    return x == null || y == null ? null : Math.max(0, y - x);
+  }).filter((d) => d != null);
+  return deltas.length ? Math.max(...deltas) : null;
 }
 
 function total(items, cap) {
@@ -275,39 +330,37 @@ const texture = texturePeak();
 const fb = framebufferMb();
 const estimate = heap != null && texture != null ? heap + texture + fb : null;
 const ratio = estimate == null ? null : estimate / cfg.memoryBudgetMb;
-const growth = growthPerSpin();
+const growthRow = growthPerSpin();
+const growth = growthRow && growthRow.value;
 const big = bigTextureCount();
+const heapLow = heapFloor();
+const audioMb = ev.audio && ev.audio.status === "ok" ? ev.audio.pcmMb : ev.audio && ev.audio.status === "none" ? 0 : null;
+const residue = panelResidue();
+const lowerIsBetter = (v, item) => (v == null ? null : v <= item.full ? 1 : curve(v, item.full, item.zero));
+// No GC seen: the rise may still be reclaimable, so it costs at most half the item.
+function growthScore() {
+  if (growth == null) return null;
+  const s = growth <= M.growth.full ? 1 : curve(growth, M.growth.full, M.growth.zero, { log: true });
+  return growthRow.basis === "no-gc" ? 0.5 + s / 2 : s;
+}
 const memoryItems = [
-  {
-    id: "budget",
-    label: "預算",
-    weight: M.budget.weight,
-    value: ratio == null ? null : round(ratio * 100, 0),
-    unit: "%",
-    full: `${M.budget.full * 100}%`,
-    zero: `${M.budget.zero * 100}%`,
-    score: ratio == null ? null : curve(ratio, M.budget.full, M.budget.zero),
-  },
+  { id: "gpu", label: "GPU 記憶體", weight: M.gpu.weight, value: texture == null ? null : round(texture, 0), unit: "MB", full: `${M.gpu.full} MB`, zero: `${M.gpu.zero} MB`, score: lowerIsBetter(texture, M.gpu) },
+  { id: "heap", label: "JS heap", weight: M.heap.weight, value: heapLow == null ? null : round(heapLow, 0), unit: "MB", full: `${M.heap.full} MB`, zero: `${M.heap.zero} MB`, score: lowerIsBetter(heapLow, M.heap) },
   {
     id: "growth",
     label: "增長",
     weight: M.growth.weight,
     value: growth == null ? null : round(growth, 2),
     unit: "MB/轉",
+    basis: growthRow && growthRow.basis,
+    provisional: growthRow ? growthRow.basis === "no-gc" : false,
     full: `${M.growth.full} MB/轉`,
     zero: `${M.growth.zero} MB/轉`,
-    score: growth == null ? null : growth <= M.growth.full ? 1 : curve(growth, M.growth.full, M.growth.zero, { log: true }),
+    score: growthScore(),
   },
-  {
-    id: "bigTextures",
-    label: "大貼圖",
-    weight: M.bigTextures.weight,
-    value: big,
-    unit: "張",
-    full: `${M.bigTextures.full} 張`,
-    zero: `${M.bigTextures.zero} 張`,
-    score: big == null ? null : curve(big, M.bigTextures.full, M.bigTextures.zero),
-  },
+  { id: "bigTextures", label: "大貼圖", weight: M.bigTextures.weight, value: big, unit: "張", full: `${M.bigTextures.full} 張`, zero: `${M.bigTextures.zero} 張`, score: big == null ? null : curve(big, M.bigTextures.full, M.bigTextures.zero) },
+  { id: "audio", label: "音效", weight: M.audio.weight, value: audioMb == null ? null : round(audioMb, 0), unit: "MB", full: `${M.audio.full} MB`, zero: `${M.audio.zero} MB`, score: lowerIsBetter(audioMb, M.audio) },
+  { id: "panelResidue", label: "面板殘留", weight: M.panelResidue.weight, value: residue == null ? null : round(residue, 1), unit: "MB", full: `${M.panelResidue.full} MB`, zero: `${M.panelResidue.zero} MB`, score: lowerIsBetter(residue, M.panelResidue) },
 ];
 
 const F = cfg.fatal;
@@ -328,11 +381,11 @@ if (stall.dt > F.stallMs) smoothFatal.push({ id: "stall", stage: stall.stage, t:
 gameStages.forEach((s) => {
   if (lowFps(s)) smoothFatal.push({ id: "low-fps", stage: s.name, value: lowFps(s) });
 });
-if (ratio != null && ratio > 1) memoryFatal.push({ id: "over-budget", value: round(estimate, 0) });
+if (ratio != null && ratio > (F.memoryBudgetFactor || 2)) memoryFatal.push({ id: "over-budget", value: round(estimate, 0) });
 if ((ev.findings || []).some((f) => f.id === "leak-suspected" && f.status === "retained-after-gc")) memoryFatal.push({ id: "leak-suspected" });
 
 ev.score = {
-  version: 3,
+  version: 4,
   // presented: bad frames and 節奏 from frames that reached the screen; engine-33ms: older probe.
   frameRule: gf ? "presented" : "engine-33ms",
   loading: Object.assign(total(loadingItems, loadingFatal.length ? F.cap : null), { items: loadingItems, fatal: loadingFatal }),
@@ -512,7 +565,7 @@ function findingRows() {
     const big = [...new Set((tex && tex.largest ? tex.largest : []).map((x) => `${x.w}×${x.h}`))].slice(0, 2).join("、");
     rows.push({
       rule: "memory-budget",
-      level: ratio > 1 ? "red" : ratio > 0.7 ? "orange" : "yellow",
+      level: ratio > (F.memoryBudgetFactor || 2) ? "red" : ratio > 1 ? "orange" : "yellow",
       title: `記憶體推估 ${Math.round(est.total)} MB，佔 ${cfg.memoryBudgetMb} MB 預算 ${Math.round(ratio * 100)}%`,
       area: "記憶體",
       fix: `GPU ${Math.round(est.texture)} MB 是大頭${big ? `，最大的是 ${big}` : ""}。待機時這些貼圖就在卡上，不是切場景會放掉的。格式見下面的未壓縮那條。`,

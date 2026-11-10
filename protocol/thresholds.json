@@ -87,10 +87,13 @@
       "stall": { "weight": 50, "full": 100, "zero": 1000 }
     },
     "memory": {
-      "budget": { "weight": 50, "full": 0.5, "zero": 1 },
-      "growth": { "weight": 30, "full": 0.05, "zero": 0.5 },
-      "bigTextures": { "weight": 20, "full": 0, "zero": 5, "mb": 16 }
+      "gpu": { "weight": 30, "full": 200, "zero": 600 },
+      "heap": { "weight": 15, "full": 80, "zero": 250 },
+      "growth": { "weight": 20, "full": 0.05, "zero": 0.5 },
+      "bigTextures": { "weight": 10, "full": 0, "zero": 8, "mb": 16 },
+      "audio": { "weight": 10, "full": 16, "zero": 64 },
+      "panelResidue": { "weight": 15, "full": 5, "zero": 40 }
     },
-    "fatal": { "stallMs": 1000, "minFps": 30, "cap": 49 }
+    "fatal": { "stallMs": 1000, "minFps": 30, "cap": 49, "memoryBudgetFactor": 2 }
   }
 }

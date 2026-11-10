@@ -233,7 +233,7 @@ ${readoutHtml(ev)}
 <div id="state"></div>
 </section>
 
-<details class="card"><summary>分數怎麼算</summary><div id="criteria"></div></details>
+<details class="card"><summary>全部依據（分數怎麼算）</summary><div id="criteria"></div></details>
 <details class="card"><summary>每一段的數字</summary><div class="scroll" id="stages"></div></details>
 <div class="missing" id="missing"></div>
 </main>

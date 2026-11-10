@@ -27,6 +27,8 @@
     coverBase: null,
     spinTimes: [],
     longAsks: 0,
+    entryPressed: {},
+    gc: [],
     resume: null,
     started: 0
   };
@@ -205,10 +207,13 @@
       .sort(function (a, c) { return plain(a) - plain(c); })[0] || null;
   }
   // The agent's spin point, and the node there when the engine can name one, for readiness.
+  // When the map found a node there, that node gone (hidden by a free game) means not ready.
   function spinState() {
     var p = st.map && st.map.spin;
     var b = nodeNear(p);
-    return { point: p, ready: b ? b.interactable !== false : true, texts: (P.entry(CFG.entry).texts || []).join("|") };
+    var ready = b ? b.interactable !== false : !st.spinKey;
+    if (b && st.spinKey && key(b) !== st.spinKey) ready = false;
+    return { point: p, ready: ready, texts: (P.entry(CFG.entry).texts || []).join("|") };
   }
 
   async function entryLoop() {
@@ -245,6 +250,9 @@
       if (!pick) pick = e.dismiss.filter(function (b) { return b.interactable && b.point; })[0];
       if (!pick) pick = e.dom.filter(function (b) { return b.interactable && b.point; })[0];
       if (!pick && e.tapAnywhere.length) pick = { kind: "tap-anywhere", name: "", text: e.tapAnywhere[0], point: canvasCenter() };
+      // Pressed once and the game is still not ready: it may be the spin button under another
+      // name (one game calls it "start"). Ask instead of pressing it again.
+      if (pick && pick.kind !== "tap-anywhere" && st.entryPressed[key(pick)]) pick = null;
       if (!pick) {
         if (st.entry.steps.length >= (E.maxSteps || 5)) break;
         // Nothing the engine can name. The agent looks at a screenshot and calls auto.click(x, y).
@@ -269,6 +277,7 @@
       if (!splashMarked) { P.mark("splash"); splashMarked = true; }
       P.mark("enter");
       st.entry.steps.push({ kind: pick.kind || kind, text: pick.text || pick.name, afterMs: now() });
+      st.entryPressed[key(pick)] = true;
       press(pick);
       prev = null;
       await sleep(1500);
@@ -479,6 +488,8 @@
         continue;
       }
       st.map = m;
+      var sn = nodeNear(m.spin);
+      st.spinKey = sn ? key(sn) : null;
       if (r.spins != null) st.plan = Math.min(r.spins, CFG.maxSpins || 30);
       log("map " + JSON.stringify(m).slice(0, 100));
       return true;
@@ -561,7 +572,16 @@
       // whose texts and draw calls have both held still for a few seconds has settled.
       var quiet = now() - lastChange > (S.quietMs || 4000) && now() - lastDrawChange > (S.quietMs || 4000);
       stable = sb.ready && (sawBusy || drawsBack || quiet) ? stable + 1 : 0;
-      if (el >= (S.minMs || 1500) && stable >= (S.stablePolls || 3)) break;
+      if (el >= (S.minMs || 1500) && stable >= (S.stablePolls || 3)) {
+        // A free game or big win often starts just after the reels stop and hides the spin button.
+        // Look once more first. Texts are not compared: tip marquees change them all the time.
+        await sleep(S.confirmMs || 1500);
+        var again = spinState();
+        if (again.ready && !covered()) break;
+        stable = 0;
+        lastTexts = again.texts;
+        lastChange = now();
+      }
       if (el > longMs && !asked && st.longAsks < 4) {
         asked = true;
         st.longAsks += 1;
@@ -587,6 +607,44 @@
     st.spins += 1;
     await sleep(300);
     return true;
+  }
+
+  // Spin point ready, nothing over the game, texts still for 2.5 s: a free game or win is over.
+  async function waitCalm(ms) {
+    var start = now();
+    var end = start + ms;
+    var last = null;
+    var since = now();
+    while (now() < end) {
+      await sleep(250);
+      var s = spinState();
+      if (s.texts !== last) {
+        last = s.texts;
+        since = now();
+      }
+      if (s.ready && !covered() && now() - since > 2500) return true;
+      // A tip marquee keeps changing texts; after 15 s a ready, uncovered spin point is enough.
+      if (s.ready && !covered() && now() - start > 15000) return true;
+    }
+    log("not calm after " + Math.round(ms / 1000) + "s");
+    return false;
+  }
+
+  // A forced full GC through the agent's heap snapshot, then the heap floor. Runs inside gap, so
+  // the freeze is not measured. Comparing the two floors gives what really stayed (leak rule).
+  async function gcPoint(label) {
+    P.mark("gap");
+    var before = P.live(true).heapMb;
+    await ask("gc", "take a heap snapshot with take_heapsnapshot (it forces a full GC). Save it to your scratchpad, never to runs/ (it holds session strings), delete it, then auto.resume()");
+    var low = null;
+    var end = now() + 2000;
+    while (now() < end) {
+      await sleep(250);
+      var h = P.live(true).heapMb;
+      if (h != null && (low == null || h < low)) low = h;
+    }
+    st.gc.push({ at: label, spins: st.spins, beforeMb: before, mb: low });
+    log("gc " + label + " " + before + " -> " + low + " MB");
   }
 
   // Close a big-win popup or a notice that blocks the spin button. Never presses avoid words.
@@ -649,6 +707,7 @@
     var normal = Math.min(st.plan, CFG.normalSpins || 24);
     for (var i = 1; i <= normal; i += 1) {
       if (!(await oneSpin("spin-" + i))) break;
+      if (i === (CFG.warmupSpins || 5)) await gcPoint("after-warmup");
     }
     var rest = st.plan - st.spins;
     if (rest > 0) {
@@ -664,7 +723,9 @@
         if (!(await oneSpin((turbo ? "turbo-" : "spin-") + (turbo ? j : normal + j)))) break;
       }
       // Some toggles cycle through several speeds, so one more press may not turn it off.
+      // A free game from the last spin hides the toggle, so wait until the game is calm.
       if (turbo) {
+        await waitCalm(180000);
         pressAt(turbo, "turbo");
         await sleep(800);
         for (var k = 0; k < 3; k += 1) {
@@ -675,6 +736,9 @@
         }
       }
     }
+
+    await waitCalm(180000);
+    await gcPoint("end");
 
     st.phase = "history-after";
     await panel("history", "history-after", "history-after");
@@ -723,7 +787,7 @@
     click: function (x, y, text) { return resume({ click: toLocal({ x: x, y: y }), text: text }); },
     resume: function () { return resume({}); },
     result: function () {
-      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, log: st.log };
+      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, log: st.log };
     }
   };
 

@@ -71,6 +71,8 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 - 有大 GC：最後一次大 GC 之後的最低地板，比第一個地板高出 `leakMb` 以上，標 `leak-suspected`，狀態 `retained-after-gc`。這是 GC 收不回來的部分。
 - 沒有大 GC：斜率 × 轉數大於 `leakMb`，而且最後 `leakTailSpins` 轉的斜率高於 `heap.tailSlopeMb`，標 `leak-suspected`，狀態 `no-major-gc`。大 GC 可能還會收回，所以只是疑似，要多轉或用 heap snapshot 確認。
 
+有強制 GC 點時（`evidence.gc` 裡的 `after-warmup` 和 `end`，各在一次 heap snapshot 之後量），上面的切段都不用：兩次 GC 後地板的差大於 `leakMb` 就標 `leak-suspected`，狀態 `retained-after-gc`。
+
 轉數不夠就寫 `not-enough-spins`，不要當成沒有洩漏。
 
 ## panel-heavier
@@ -101,7 +103,7 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 
 ## shader-stall
 
-單次 `compileShader` 或 `linkProgram` 達到 `hitchMs`。探針沒掛到呼叫時是 `none`，不觸發。
+單次 `compileShader`、`linkProgram`，或之後第一次查狀態的 `getShaderParameter`、`getProgramParameter` 達到 `hitchMs`。Chrome 在背景編譯，等待通常落在查狀態那一次。探針沒掛到呼叫時是 `none`，不觸發。
 
 ## audio-decode
 

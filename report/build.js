@@ -82,6 +82,7 @@ const ev = {
   audio: s.audio,
   cocos: raw.cocos || { snapshots: [] },
   entry: raw.entry,
+  gc: raw.gc || [],
   coverage,
   findings: [],
   summary: notes.summary,
