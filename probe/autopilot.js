@@ -114,6 +114,7 @@
     var prev = null;
     var same = 0;
     var splashMarked = false;
+    var progressSince = 0;
     while (now() < deadline) {
       var e = P.entry(E);
       if (e.spinReady) {
@@ -126,7 +127,13 @@
       same = sig === prev ? same + 1 : 0;
       prev = sig;
       var settled = e.quietMs >= (E.quietMs || 1500) && same + 1 >= (E.stablePolls || 2);
-      if (!settled || !e.scene) {
+      // A "45 %" label means a progress bar is still on screen, even when its text stopped updating.
+      // Wait on it for at most 30 s, in case the label outlives the loading screen.
+      var progress = (e.texts || []).some(function (t) { return /^\s*\d{1,3}\s*%\s*$/.test(t); });
+      if (progress && !progressSince) progressSince = now();
+      if (!progress) progressSince = 0;
+      var loadingBar = progress && now() - progressSince < 30000;
+      if (!settled || !e.scene || loadingBar) {
         await sleep(1000);
         continue;
       }
