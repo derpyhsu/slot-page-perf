@@ -53,7 +53,7 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 
 ## texture-heavy
 
-貼圖駐留 MB 大於 `textureWarnMb`。證據含張數、格式、最大的幾張尺寸。讀不到格式時駐留標 `unavailable`，不觸發。
+貼圖駐留 MB 大於 `textureWarnMb`。證據含張數、格式、最大的幾張尺寸與檔名。位元組數依格式算，ASTC 依區塊大小（4×4 每像素 1 byte、8×8 是 0.25）。讀不到格式時駐留標 `unavailable`，不觸發。
 
 ## leak-suspected
 
@@ -81,21 +81,23 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 
 ## Cocos 規則
 
-讀 `evidence.cocos.snapshots`。同一個數字取所有快照的最大值，主控台取最後一次（它是累計的）。門檻在 `thresholds.json` 的 `cocos`。這些規則由 `report/analyze.js` 判斷，和其他問題一起列在報告的「要處理的地方」。
+讀 `evidence.cocos.snapshots`。同一個數字取所有快照的最大值，標題寫出最大值在哪一次快照（`at`）；報告「貼圖與場景」那一列是最後一次快照，並註明。主控台取最後一次（它是累計的）。門檻在 `thresholds.json` 的 `cocos`。這些規則由 `report/analyze.js` 判斷，和其他問題一起列在報告的「要處理的地方」。
+
+建議文字依 `engine` 分三條線：2.0–2.3、2.4、3.x。貼圖壓縮與 WebGL 的做法在這三條線不一樣，不能寫成同一句。能定位的就附上：最大幾張貼圖的檔名（不含 query）、即時 Spine 依 skeletonData 分組的數量、Label 與 Mask 的前幾個節點路徑。
 
 | id | 條件 | 影響 |
 | --- | --- | --- |
 | `cocos-spine-realtime` | 畫面上的 realtime Spine 多於 `spineRealtimeActive` | CPU：每幀都在算骨骼 |
 | `cocos-spine-cache-warning` | 主控台有 Spine 快取模式不支援的呼叫（例如 `clearTrack`） | 動畫狀態會錯，也是無效呼叫 |
 | `cocos-texture-uncompressed` | 貼圖超過 `uncompressedMinMb`，而且未壓縮的比例超過 `uncompressedShare` | 記憶體 |
-| `cocos-texture-npot` | 邊長不是 2 的冪的比例超過 `npotShare` | 只有 PVRTC 和 mipmap 才需要 POT。ETC1、ASTC 不用，把圖墊成 POT 會更佔記憶體 |
-| `cocos-label-no-cache` | 畫面上 cacheMode 為 NONE 的 Label 多於 `labelNoCacheActive` | draw call 與 CPU：每個 Label 自己一張貼圖 |
-| `cocos-mask-many` | 畫面上的 Mask 多於 `masksActive` | draw call：每個 Mask 打斷合批 |
+| `cocos-texture-npot` | 邊長不是 2 的冪的比例超過 `npotShare` | 只有 PVRTC 和 mipmap 才需要 POT。ETC、ASTC 不用，把圖墊成 POT 會更佔記憶體 |
+| `cocos-label-no-cache` | 畫面上 cacheMode 為 NONE 的 TTF 或系統字 Label 多於 `labelNoCacheActive`。BMFont 本來就跟圖集合批，cacheMode 對它無效，不算。舊探針分不出 BMFont 時算全部，標題註明可能高估 | draw call 與 CPU：每個 Label 自己一張貼圖 |
+| `cocos-mask-many` | 畫面上的 Mask 多於 `masksActive` | draw call：每個 Mask 要寫 stencil，前後打斷合批，矩形 Mask 也一樣 |
 | `cocos-particles-many` | 畫面上粒子上限加總超過 `particlesMax` | CPU 與填色 |
 | `cocos-nodes-many` | 場景節點多於 `nodesTotal` | CPU 與記憶體：隱藏的節點也還在 |
 | `cocos-image-cache-kept` | `CLEANUP_IMAGE_CACHE` 為 false | 上傳後原圖還留在 JS。動態合圖開著時不能同時把 CLEANUP_IMAGE_CACHE 設成 true，合圖會失效 |
 | `cocos-dynamic-atlas-off` | 動態合圖關閉 | draw call |
-| `cocos-webgl1` | 瀏覽器有 WebGL 2，遊戲卻用 WebGL 1 | Cocos 2.4 只有 WebGL 1，沒有開關。WebGL 2 要換 3.x |
+| `cocos-webgl1` | 瀏覽器有 WebGL 2，遊戲卻用 WebGL 1 | 2.x 只有 WebGL 1，沒有開關，WebGL 2 要換 3.x；3.x 用 WebGL 1 時檢查設定是否被關掉 |
 | `cocos-frame-rate` | 上限不能整除螢幕更新率（橘）、高於螢幕更新率（黃）、或低於 60 但能整除（黃） | 說明 FPS 為什麼到不了 60 或節奏不齊；本身不計分 |
 | `cocos-console-errors` | 主控台有引擎 error，或同一句 warning 超過 `consoleRepeat` 次 | 穩定性：資源或流程有錯 |
 

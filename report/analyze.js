@@ -538,25 +538,49 @@ function cocosAdvice() {
   const out = [];
   if (!snaps.length && !tex) return { status: "unavailable", items: out };
 
-  const max = (pick) => {
-    const xs = snaps.map((s) => {
-      try {
-        return pick(s);
-      } catch (e) {
-        return null;
-      }
-    }).filter((x) => typeof x === "number");
-    return xs.length ? Math.max(...xs) : null;
+  // Counts are the most seen in any snapshot; peakAt names the stage that snapshot was taken in,
+  // so the title says where the number comes from instead of mixing it with the last snapshot.
+  const pick = (f, s) => {
+    try {
+      const v = f(s);
+      return typeof v === "number" ? v : null;
+    } catch (e) {
+      return null;
+    }
+  };
+  const peakOf = (f) => snaps.reduce((best, s) => {
+    const v = pick(f, s);
+    return v != null && (!best || v > best.value) ? { value: v, snap: s } : best;
+  }, null);
+  const max = (f) => {
+    const p = peakOf(f);
+    return p ? p.value : null;
+  };
+  const peakAt = (f) => {
+    const p = peakOf(f);
+    const at = p && p.snap.at;
+    return snaps.length > 1 && at ? `（最多時在${stageName(String(at).replace(/^cocos[:-]?/, ""))}）` : "";
   };
   const last = snaps[snaps.length - 1] || {};
   const settings = last.settings || {};
   const add = (id, area, title, fix) => out.push({ id, level: COCOS_LEVEL[id] || "yellow", area, title, fix });
+  const list = (xs) => (xs && xs.length ? `例如 ${xs.slice(0, 3).join("、")}。` : "");
+
+  // Advice differs by engine line. 2.0–2.3, 2.4 and 3.x have different compression and WebGL options.
+  const ver = String(last.engine || "").match(/(\d+)\.(\d+)/);
+  const major = ver ? Number(ver[1]) : null;
+  const minor = ver ? Number(ver[2]) : null;
+  const line = major == null ? null : major >= 3 ? "3" : minor >= 4 ? "2.4" : "2.0";
+  const engineName = last.engine ? `Cocos ${last.engine}` : "這個版本";
 
   const realtime = max((s) => s.spine.realtime);
   const spineActive = max((s) => s.spine.active);
   const bones = max((s) => s.spine.activeRealtimeBones);
   if (realtime != null && realtime > C.spineRealtimeActive) {
-    add("cocos-spine-realtime", "CPU", `畫面上有 ${realtime} 個即時運算的 Spine${spineActive != null ? `（共 ${spineActive} 個在畫）` : ""}${bones ? `，合計 ${bones} 根骨頭` : ""}`, "不需要即時混合的動畫改成 SHARED_CACHE，看不到的骨架關掉 active，同圖集的開 enableBatch。");
+    const peak = peakOf((s) => s.spine.realtime);
+    const by = (peak && peak.snap.spine && peak.snap.spine.realtimeBy) || {};
+    const groups = Object.keys(by).map((k) => `${k} ×${by[k]}`);
+    add("cocos-spine-realtime", "CPU", `畫面上有 ${realtime} 個即時運算的 Spine${spineActive != null ? `（共 ${spineActive} 個在畫）` : ""}${bones ? `，合計 ${bones} 根骨頭` : ""}${peakAt((s) => s.spine.realtime)}`, `不需要即時混合的動畫改成 SHARED_CACHE，看不到的骨架關掉 active，同圖集的開 enableBatch。${groups.length ? `最多的是 ${groups.slice(0, 3).join("、")}。` : ""}`);
   }
 
   const consoleGroups = last.console || [];
@@ -571,21 +595,34 @@ function cocosAdvice() {
     const uncompressed = texSource.count - (texSource.compressed || 0);
     const share = texSource.count ? uncompressed / texSource.count : 0;
     if (texSource.mb > C.uncompressedMinMb && share > C.uncompressedShare) {
-      add("cocos-texture-uncompressed", "記憶體", `${texSource.count} 張貼圖裡 ${uncompressed} 張沒壓縮，約 ${Math.round(texSource.mb)} MB`, "Cocos 2.4 的 web-mobile 用 ETC1。裝置支援 ASTC 再用 ASTC。WebGL 1 沒有 ETC2／PVRTC 這個預設。");
+      const how = {
+        "2.0": `${engineName} 在貼圖的壓縮設定加 ETC1（Android）與 PVRTC（iOS），沒壓縮的格式留作備援。`,
+        "2.4": `${engineName} 在貼圖的壓縮設定加 ETC1（Android）與 PVRTC（iOS）；目標裝置支援 ASTC 時優先用 ASTC。`,
+        "3": `${engineName} 以 ASTC 為主，ETC2 備援，在貼圖的壓縮設定或壓縮預設集設定。`,
+      }[line] || "在貼圖的壓縮設定加上目標裝置支援的格式（ETC、PVRTC 或 ASTC）。";
+      const files = (texSource.largest || []).map((t) => t.file).filter(Boolean);
+      add("cocos-texture-uncompressed", "記憶體", `${texSource.count} 張貼圖裡 ${uncompressed} 張沒壓縮，約 ${Math.round(texSource.mb)} MB`, `${how}先從最大的開始。${list(files)}`);
     }
     if (texSource.count && texSource.npot / texSource.count > C.npotShare) {
-      add("cocos-texture-npot", "記憶體", `${texSource.npot} 張貼圖的邊長不是 2 的冪`, "ETC1 和 ASTC 不需要 POT。把圖墊成 POT 會更佔記憶體；只有 PVRTC 或 mipmap 才勾。");
+      add("cocos-texture-npot", "記憶體", `${texSource.npot} 張貼圖的邊長不是 2 的冪`, "ETC 和 ASTC 不需要 POT，把圖墊成 POT 只會更佔記憶體；只有用 PVRTC（要正方形 POT）或要 mipmap 的圖才需要。");
     }
   }
 
-  const noCache = max((s) => s.labels.noCache);
+  // Probes that tell BMFont apart count only TTF and system-font labels; older ones count every NONE label.
+  const ttfKnown = snaps.some((s) => s.labels && s.labels.noCacheTtf != null);
+  const labelPick = ttfKnown ? (s) => s.labels.noCacheTtf : (s) => s.labels.noCache;
+  const noCache = max(labelPick);
   if (noCache != null && noCache > C.labelNoCacheActive) {
-    const system = last.labels && last.labels.systemFont;
-    add("cocos-label-no-cache", "draw call", `${noCache} 個 Label 沒開快取${system ? `，其中 ${system} 個是系統字` : ""}`, "系統字不會跟圖集合批。固定文字改 BitmapFont，常變的數字用 CHAR。");
+    const peak = peakOf(labelPick);
+    const samples = (peak && peak.snap.labels && peak.snap.labels.samples) || [];
+    const kind = ttfKnown ? "TTF 或系統字的 Label 沒開快取" : "Label 沒開快取（這次沒分出 BMFont，可能高估）";
+    add("cocos-label-no-cache", "draw call", `${noCache} 個 ${kind}${peakAt(labelPick)}`, `沒開快取的 TTF 與系統字每個都自己一張貼圖，不能跟圖集合批。固定文字改 BitmapFont 或 BITMAP 模式，常變的數字用 CHAR。${list(samples)}`);
   }
   const masks = max((s) => s.masks.active);
   if (masks != null && masks > C.masksActive) {
-    add("cocos-mask-many", "draw call", `畫面上同時有 ${masks} 個 Mask`, "每個 Mask 都會打斷合批。能用矩形裁切或預先裁好的圖就不要用 Mask。");
+    const peak = peakOf((s) => s.masks.active);
+    const samples = (peak && peak.snap.masks && peak.snap.masks.samples) || [];
+    add("cocos-mask-many", "draw call", `畫面上同時有 ${masks} 個 Mask${peakAt((s) => s.masks.active)}`, `每個 Mask 都要寫 stencil，前後都會打斷合批，矩形 Mask 也一樣。固定形狀的裁切改用預先裁好的圖；只留捲動列表這類真的要動態裁切的。${list(samples)}`);
   }
   const particles = max((s) => s.particles.maxParticles);
   if (particles != null && particles > C.particlesMax) {
@@ -594,7 +631,7 @@ function cocosAdvice() {
   const nodes = max((s) => s.nodes.total);
   if (nodes != null && nodes > C.nodesTotal) {
     const active = max((s) => s.nodes.active);
-    add("cocos-nodes-many", "CPU", `場景有 ${nodes} 個節點${active != null ? `，${active} 個在顯示` : ""}`, "不在畫面的面板與特效改成用時再生，或放進物件池。");
+    add("cocos-nodes-many", "CPU", `場景有 ${nodes} 個節點${active != null ? `，${active} 個在顯示` : ""}${peakAt((s) => s.nodes.total)}`, "不在畫面的面板與特效改成用時再生，或放進物件池。");
   }
   if (settings.cleanupImageCache === false) {
     add(
@@ -608,7 +645,8 @@ function cocosAdvice() {
     add("cocos-dynamic-atlas-off", "draw call", "動態合圖是關的", "小圖多的介面打開 cc.dynamicAtlasManager.enabled。");
   }
   if (settings.webglVersion === 1 && settings.webgl2Available) {
-    add("cocos-webgl1", "draw call", `用的是 WebGL 1${last.engine ? `（Cocos ${last.engine}）` : ""}，瀏覽器有 WebGL 2`, "Cocos 2.4 只有 WebGL 1，沒有開關。WebGL 2 要換 3.x。這次先降 draw call。");
+    const how = line === "3" ? `${engineName} 支援 WebGL 2，檢查專案設定或啟動參數是否把它關掉了。` : `${engineName} 只有 WebGL 1，沒有開關；WebGL 2 要升到 3.x。這次先降 draw call。`;
+    add("cocos-webgl1", "draw call", `用的是 WebGL 1${last.engine ? `（Cocos ${last.engine}）` : ""}，瀏覽器有 WebGL 2`, how);
   }
   const cap = settings.frameRate;
   const hz = gf ? gf.hz : 60;

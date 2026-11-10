@@ -172,20 +172,17 @@ function factRows(ev, m) {
     rows.push(["推估", `${mb(est.total)} = JS ${mb(est.heap)} + ${est.gpuSource === "gpu" ? "GPU" : "貼圖"} ${mb(est.texture)} + 畫面 ${mb(est.framebuffer)}`, `預算 ${budget} MB，${Math.round((est.total / budget) * 100)}%`]);
   }
   if (m.tex) {
-    const big = m.top ? `最大 ${m.top.w}×${m.top.h} ${m.top.format || ""} ${m.top.mb} MB × ${m.topN}` : "";
+    const big = m.top ? `最大 ${m.top.w}×${m.top.h} ${m.top.format || ""} ${m.top.mb} MB × ${m.topN}${m.top.file ? `（${m.top.file}）` : ""}` : "";
     rows.push(["貼圖", `${m.tex.count} 張，壓縮 ${m.tex.compressed || 0}，約 ${mb(m.tex.mb)}`, [big, m.tex.npot ? `邊長不是 2 的冪 ${m.tex.npot} 張` : ""].filter(Boolean).join("；")]);
   }
-  const spins = (ev.stages || []).filter((s) => /^spin-\d+$/.test(s.name) && s.heapEndMb != null);
-  if (m.leak) rows.push(["JS heap", `${Math.round(m.leak.from)} MB → ${Math.round(m.leak.to)} MB`, growth && growth.value != null ? `每轉 +${growth.value} MB` : ""]);
-  else if (spins.length >= 8) {
-    const mid = spins.slice(4);
-    const tail = spins.slice(-10).map((s) => s.heapEndMb);
-    const peak = Math.max(...mid.map((s) => s.heapEndMb));
-    rows.push([
-      "JS heap",
-      `第 5 轉 ${round(spins[4].heapEndMb, 1)} MB，之後最高 ${round(peak, 1)} MB，最後 10 轉在 ${Math.round(Math.min(...tail))}–${Math.round(Math.max(...tail))} MB，最後 ${round(spins[spins.length - 1].heapEndMb, 1)} MB`,
-      growth && growth.value != null ? `第 5 轉到最後，平均每轉 +${growth.value} MB` : "",
-    ]);
+  // Heap floors from findings.js heapFit: the same numbers the growth score and leak rule use.
+  const fit = ev.heapFit;
+  if (fit && fit.status === "ok") {
+    const notes = [];
+    if (fit.featureSpins && fit.featureSpins.length) notes.push(`Feature 轉 ${fit.featureSpins.map(spinWhere).join("、")} 不算`);
+    if (fit.majorGcs && fit.majorGcs.length) notes.push(`大 GC ${fit.majorGcs.length} 次，GC 後留下 ${fit.retainedMb} MB`);
+    else notes.push("這輪沒看到大 GC");
+    rows.push(["JS heap", `地板 ${Math.round(fit.from)} MB → ${Math.round(fit.to)} MB，每轉 ${fit.slopeMb >= 0 ? "+" : ""}${fit.slopeMb} MB`, notes.join("；")]);
   } else if (growth && growth.value != null) rows.push(["JS heap", `每轉 +${growth.value} MB`, ""]);
   const sc = ev.cocosAdvice && ev.cocosAdvice.scene;
   const labels = m.snap.labels;
@@ -194,11 +191,11 @@ function factRows(ev, m) {
     const bits = [
       `節點 ${sc.nodes}（顯示中 ${sc.activeNodes}）`,
       m.snap.spine ? `Spine ${m.snap.spine.total}，在畫 ${m.snap.spine.active}，即時 ${m.snap.spine.realtime}，骨頭 ${m.snap.spine.activeRealtimeBones}，batched ${m.snap.spine.batched}` : sc.spine != null ? `Spine ${sc.spine}，在畫 ${sc.spineActive}，即時 ${sc.spineRealtime}` : "",
-      labels ? `Label ${labels.active}，未開快取 ${labels.noCache}` : sc.labels != null ? `Label ${sc.labels}` : "",
+      labels ? `Label ${labels.active}，未開快取 ${labels.noCacheTtf != null ? `${labels.noCacheTtf}（不含 BMFont ${labels.bmfont}）` : labels.noCache}` : sc.labels != null ? `Label ${sc.labels}` : "",
       sc.masks != null ? `Mask ${sc.masks}` : "",
       sc.particles != null ? `粒子 ${sc.particles}` : "",
     ].filter(Boolean);
-    rows.push(["場景", bits.join(" · "), ""]);
+    rows.push(["場景", bits.join(" · "), m.snap.at ? `最後一次快照（${((ev.fps || []).find((r) => r.group === m.snap.at) || {}).label || m.snap.at}）；要處理的地方用各次快照的最大值` : ""]);
   }
   const flags = [];
   if (settings.cleanupImageCache != null) flags.push(`CLEANUP_IMAGE_CACHE ${settings.cleanupImageCache}`);

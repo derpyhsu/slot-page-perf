@@ -674,10 +674,13 @@
   }
 
   // Bytes per pixel by Cocos PixelFormat name. Unknown names fall back to 4.
+  // ASTC packs one block of WxH pixels into 16 bytes, so 4x4 is 1 byte per pixel and 8x8 is 0.25.
   function bytesPerPixel(name) {
+    var astc = /ASTC_(\d+)x(\d+)/.exec(name);
+    if (astc) return 16 / (Number(astc[1]) * Number(astc[2]));
     if (/PVRTC_2/.test(name)) return 0.25;
     if (/PVRTC|ETC1|ETC2_RGB$|RGB_ETC2|RGB_ETC1|RGB_A_PVRTC/.test(name)) return 0.5;
-    if (/ETC2|ASTC_4x4|ASTC/.test(name)) return 1;
+    if (/ETC2/.test(name)) return 1;
     if (/^A8$|^I8$/.test(name)) return 1;
     if (/565|4444|5551|AI88/.test(name)) return 2;
     return 4;
@@ -685,6 +688,33 @@
 
   function isCompressed(name) {
     return /PVRTC|ETC|ASTC/.test(name);
+  }
+
+  // Last path segment of an asset's native URL, without the query string, so a report can name the file.
+  function assetFile(a) {
+    try {
+      var url = a.nativeUrl || a._nativeUrl || a.url || (a._image && a._image.src) || "";
+      if (typeof url !== "string" || !url || url.indexOf("data:") === 0) return a.name || a._name || null;
+      return url.split("?")[0].split("#")[0].split("/").pop() || a.name || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // The last few node names up to the scene, enough to find a node in the editor.
+  function nodePath(node) {
+    var names = [];
+    var n = node;
+    while (n && names.length < 5) {
+      if (n.name) names.unshift(n.name);
+      n = n.parent || n._parent;
+      if (n && !n.parent && !n._parent) break;
+    }
+    return names.join("/");
+  }
+
+  function pushSample(list, value) {
+    if (list.length < 5 && list.indexOf(value) < 0) list.push(value);
   }
 
   function textureInfo() {
@@ -713,7 +743,7 @@
       if (isCompressed(name)) compressed += 1;
       if (!(isPot(w) && isPot(h))) npot += 1;
       formats[name] = (formats[name] || 0) + 1;
-      big.push({ w: w, h: h, format: name, mb: round(b / 1048576) });
+      big.push({ w: w, h: h, format: name, mb: round(b / 1048576), file: assetFile(tex), uuid: tex._uuid || null });
     });
     big.sort(function (a, b) { return b.mb - a.mb; });
     return {
@@ -751,10 +781,12 @@
       engine: cc.ENGINE_VERSION || cc.version || null,
       nodes: { total: 0, active: 0, maxDepth: 0 },
       components: {},
-      spine: { total: 0, active: 0, realtime: 0, sharedCache: 0, privateCache: 0, batched: 0, activeRealtimeBones: 0 },
+      spine: { total: 0, active: 0, realtime: 0, sharedCache: 0, privateCache: 0, batched: 0, activeRealtimeBones: 0, realtimeBy: {} },
       dragonBones: { total: 0, active: 0 },
-      labels: { total: 0, active: 0, noCache: 0, bitmap: 0, char: 0, systemFont: 0 },
-      masks: { total: 0, active: 0 },
+      // noCacheTtf: TTF or system-font labels with cacheMode NONE. BMFont labels batch with their atlas,
+      // so cacheMode does not apply to them and they are not counted there.
+      labels: { total: 0, active: 0, noCache: 0, noCacheTtf: 0, bmfont: 0, bitmap: 0, char: 0, systemFont: 0, samples: [] },
+      masks: { total: 0, active: 0, byType: {}, samples: [] },
       particles: { total: 0, active: 0, maxParticles: 0 },
       graphics: { active: 0 },
       settings: {},
@@ -778,6 +810,9 @@
             out.spine.active += 1;
             if (!mode) {
               out.spine.realtime += 1;
+              var data = c.skeletonData;
+              var key = (data && (data.name || data._name)) || assetFile(data || {}) || "?";
+              out.spine.realtimeBy[key] = (out.spine.realtimeBy[key] || 0) + 1;
               try {
                 var sk = c._skeleton || (c.getSkeleton && c.getSkeleton());
                 if (sk && sk.bones) out.spine.activeRealtimeBones += sk.bones.length;
@@ -794,14 +829,27 @@
           if (live) {
             out.labels.active += 1;
             var cm = c.cacheMode || 0;
-            if (cm === 0) out.labels.noCache += 1;
-            else if (cm === 1) out.labels.bitmap += 1;
+            var bm = !c.useSystemFont && cc.BitmapFont && c.font instanceof cc.BitmapFont;
+            if (bm) out.labels.bmfont += 1;
+            if (cm === 0) {
+              out.labels.noCache += 1;
+              if (!bm) {
+                out.labels.noCacheTtf += 1;
+                pushSample(out.labels.samples, nodePath(node));
+              }
+            } else if (cm === 1) out.labels.bitmap += 1;
             else out.labels.char += 1;
             if (c.useSystemFont) out.labels.systemFont += 1;
           }
         } else if (name === "cc.Mask") {
           out.masks.total += 1;
-          if (live) out.masks.active += 1;
+          if (live) {
+            out.masks.active += 1;
+            var types = cc.Mask && cc.Mask.Type ? cc.Mask.Type : {};
+            var tname = Object.keys(types).filter(function (k) { return types[k] === c.type; })[0] || String(c.type);
+            out.masks.byType[tname] = (out.masks.byType[tname] || 0) + 1;
+            pushSample(out.masks.samples, nodePath(node));
+          }
         } else if (name === "cc.ParticleSystem" || name === "cc.ParticleSystem2D") {
           out.particles.total += 1;
           if (live) {
@@ -818,6 +866,10 @@
     var comps = {};
     top.forEach(function (k) { comps[k] = out.components[k]; });
     out.components = comps;
+    var groups = out.spine.realtimeBy;
+    var topGroups = {};
+    Object.keys(groups).sort(function (a, b) { return groups[b] - groups[a]; }).slice(0, 5).forEach(function (k) { topGroups[k] = groups[k]; });
+    out.spine.realtimeBy = topGroups;
     try {
       var m = cc.macro || {};
       var game = cc.game || {};
