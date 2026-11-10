@@ -81,7 +81,7 @@ function findings(ev, T) {
   });
 
   const F = T.fps || {};
-  gs.filter((x) => GAME_GROUPS.has(x.group)).forEach((x) => {
+  gs.filter((x) => GAME_GROUPS.has(x.group) || x.group === "loading" || x.group === "enter").forEach((x) => {
     const why = [];
     if (x.fps != null && x.fps < F.stageMin) why.push("fps");
     if (x.fpsLow != null && x.fpsLow < F.lowMin) why.push("fpsLow");

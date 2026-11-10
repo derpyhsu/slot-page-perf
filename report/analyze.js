@@ -21,6 +21,7 @@ const NOT_GAME = new Set(["boot", "loading", "splash", "enter", "game-ready", "g
 const stages = ev.stages || [];
 const gameStages = stages.filter((s) => !NOT_GAME.has(s.name) && s.frames > 0);
 const spinStages = stages.filter((s) => /^(spin|turbo)-\d+$/.test(s.name));
+const loadStages = stages.filter((s) => (s.name === "loading" || s.name === "enter") && s.frames > 0);
 
 function round(n, d = 1) {
   const k = Math.pow(10, d);
@@ -69,9 +70,31 @@ function stableShare() {
   return { share: Math.max(0, (total - bad) / total), approx: true };
 }
 
-function worstStall() {
+// Same measure as stableShare, over the loading and enter stages only. splash waits for a person.
+function loadingStableShare() {
+  const buckets = ev.timeline && ev.timeline.buckets;
+  if (!loadStages.length) return null;
+  if (buckets && buckets.length) {
+    const inLoad = (t) => loadStages.some((s) => t >= s.startMs && t < s.startMs + s.wallMs);
+    const load = buckets.filter((b) => inLoad(b[0]) && b[1] > 0);
+    if (load.length) return { share: load.filter((b) => b[4] === 0).length / load.length, approx: false };
+  }
+  const bucketMs = (thresholds.timeline && thresholds.timeline.bucketMs) || 250;
+  let total = 0;
+  let bad = 0;
+  loadStages.forEach((s) => {
+    total += Math.max(1, Math.round(s.wallMs / bucketMs));
+    (s.hitches || []).forEach((h) => {
+      if (h.source !== "longtask" && h.dt > cfg.loading.stable.badFrameMs) bad += Math.ceil(h.dt / bucketMs);
+    });
+  });
+  if (!total) return null;
+  return { share: Math.max(0, (total - bad) / total), approx: true };
+}
+
+function worstStall(list = gameStages) {
   let worst = { dt: 0, stage: null, t: null };
-  gameStages.forEach((s) => {
+  list.forEach((s) => {
     (s.hitches || []).forEach((h) => {
       if (h.dt > worst.dt) worst = { dt: h.dt, stage: s.name, t: h.t != null ? h.t : null };
     });
@@ -192,6 +215,35 @@ const smoothItems = [
   },
 ];
 
+const L = cfg.loading;
+const loadStable = loadingStableShare();
+const loadStall = worstStall(loadStages);
+const loadingItems = [
+  {
+    id: "stable",
+    label: "畫面穩定",
+    weight: L.stable.weight,
+    value: loadStable ? round(loadStable.share * 100, 1) : null,
+    unit: "%",
+    approx: loadStable ? loadStable.approx : false,
+    full: `${L.stable.full * 100}%`,
+    zero: `${L.stable.zero * 100}%`,
+    score: loadStable ? curve(loadStable.share, L.stable.full, L.stable.zero, { higherIsBetter: true }) : null,
+  },
+  {
+    id: "stall",
+    label: "卡頓",
+    weight: L.stall.weight,
+    value: loadStages.length ? round(loadStall.dt, 0) : null,
+    unit: "ms",
+    stage: loadStall.stage,
+    t: loadStall.t,
+    full: `${L.stall.full} ms`,
+    zero: `${L.stall.zero} ms`,
+    score: !loadStages.length ? null : loadStall.dt <= L.stall.full ? 1 : curve(loadStall.dt, L.stall.full, L.stall.zero, { log: true }),
+  },
+];
+
 const M = cfg.memory;
 const heap = heapPeak();
 const texture = texturePeak();
@@ -236,6 +288,11 @@ const memoryItems = [
 const F = cfg.fatal;
 const smoothFatal = [];
 const memoryFatal = [];
+const loadingFatal = [];
+if (loadStall.dt > F.stallMs) loadingFatal.push({ id: "stall", stage: loadStall.stage, t: loadStall.t, value: round(loadStall.dt, 0) });
+loadStages.forEach((s) => {
+  if (s.fps != null && s.fps < F.minFps) loadingFatal.push({ id: "low-fps", stage: s.name, value: s.fps });
+});
 if (stall.dt > F.stallMs) smoothFatal.push({ id: "stall", stage: stall.stage, t: stall.t, value: round(stall.dt, 0) });
 gameStages.forEach((s) => {
   if (s.fps != null && s.fps < F.minFps) smoothFatal.push({ id: "low-fps", stage: s.name, value: s.fps });
@@ -244,7 +301,8 @@ if (ratio != null && ratio > 1) memoryFatal.push({ id: "over-budget", value: rou
 if ((ev.findings || []).some((f) => f.id === "leak-suspected")) memoryFatal.push({ id: "leak-suspected" });
 
 ev.score = {
-  version: 1,
+  version: 2,
+  loading: Object.assign(total(loadingItems, loadingFatal.length ? F.cap : null), { items: loadingItems, fatal: loadingFatal }),
   smooth: Object.assign(total(smoothItems, smoothFatal.length ? F.cap : null), { items: smoothItems, fatal: smoothFatal }),
   memory: Object.assign(total(memoryItems, memoryFatal.length ? F.cap : null), {
     items: memoryItems,
@@ -253,7 +311,7 @@ ev.score = {
     estimateMb: estimate == null ? null : { heap: round(heap), texture: round(texture), framebuffer: round(fb), total: round(estimate), gpuSource: gpuSource() },
   }),
 };
-smoothItems.concat(memoryItems).forEach((i) => {
+loadingItems.concat(smoothItems, memoryItems).forEach((i) => {
   if (i.score != null) i.score = Math.round(i.score * 100);
 });
 
@@ -315,8 +373,7 @@ function fpsTable() {
         (g.badShare != null && g.badShare > F.badShareMax) ||
         (g.fpsLow != null && g.fpsLow < F.lowMin);
       const bad = (g.fps != null && g.fps < 45) || (g.dropShare != null && g.dropShare > 0.1);
-      const loading = g.group === "loading" || g.group === "enter";
-      const level = bad && !loading ? "red" : fails ? (loading ? "yellow" : "orange") : g.dropShare > F.dropShareMax / 2 ? "yellow" : "green";
+      const level = bad ? "red" : fails ? "orange" : g.dropShare > F.dropShareMax / 2 ? "yellow" : "green";
       return { group: g.group, label: stageName(g.group), stages: g.stages, fps: g.fps, fpsLow: g.fpsLow, dropShare: g.dropShare, badShare: g.badShare, gpuPeakMb: g.gpuPeakMb, level };
     });
 }
@@ -334,6 +391,12 @@ function findingRows() {
   const snaps = (ev.cocos && ev.cocos.snapshots) || [];
   const cap = ((snaps[snaps.length - 1] || {}).settings || {}).frameRate;
 
+  const isLoading = (g) => g === "loading" || g === "enter";
+  const loadingFix = (net) =>
+    net
+      ? "停頓時還有資源在下載；把大檔移到前段預載，下載完的初始化拆成幾幀做。"
+      : "主執行緒一次做太多；把初始化拆成幾幀做，不要一次建完。";
+
   const hitches = found.filter((f) => /^hitch-/.test(f.id) && f.value >= thresholds.hitchMs);
   const byGroup = new Map();
   hitches.forEach((h) => {
@@ -343,16 +406,14 @@ function findingRows() {
   byGroup.forEach((hs, g) => {
     const worst = hs.reduce((a, b) => (b.value > a.value ? b : a));
     const net = hs.filter((h) => h.id === "hitch-network").length;
-    const loading = g === "loading" || g === "enter";
+    const loading = isLoading(g);
     const name = stageName(g);
     const title = loading
       ? `${name}時頓了 ${hs.length} 次，最長 ${sec(worst.value)}`
       : hs.length > 1 ? `${name}時畫面停了 ${hs.length} 次，最長 ${sec(worst.value)}` : `${name}時畫面停 ${sec(worst.value)}`;
-    const level = loading ? (worst.value >= 500 ? "orange" : "yellow") : worst.value >= 250 ? "red" : worst.value >= 100 ? "orange" : "yellow";
+    const level = worst.value >= 250 ? "red" : worst.value >= 100 ? "orange" : "yellow";
     const fix = loading
-      ? net >= hs.length / 2
-        ? "停頓時還有資源在下載；把大檔移到前段預載，下載完的初始化拆成幾幀做。"
-        : "主執行緒一次做太多；把初始化拆成幾幀做，不要一次建完。"
+      ? loadingFix(net >= hs.length / 2)
       : "在這一刻錄一次 DevTools Performance，看這段時間在做什麼；常見是一次建好整頁節點或同步上傳貼圖。";
     rows.push({ rule: `stall-${g}`, level, title, area: "卡頓", fix, stage: worst.stage, t: worst.t });
   });
@@ -370,6 +431,10 @@ function findingRows() {
   const names = (xs) => xs.map((f) => stageName(f.stage)).join("、");
   const worstOf = (xs, k, dir) => xs.reduce((a, b) => ((dir < 0 ? b[k] < a[k] : b[k] > a[k]) ? b : a));
   const fpsHint = (f) => {
+    if (isLoading(f.stage)) {
+      const hs = byGroup.get(f.stage) || [];
+      return loadingFix(hs.length > 0 && hs.filter((h) => h.id === "hitch-network").length >= hs.length / 2);
+    }
     const g = grp(f.stage);
     return g && g.cpuP95 != null && g.cpuP95 > 12 ? `${stageName(f.stage)}每幀 CPU 到 ${g.cpuP95} ms，先看腳本和動畫。` : `${stageName(f.stage)}每幀畫 ${g ? Math.round(g.draws) : "?"} 次，先減少 draw call 和疊圖。`;
   };
@@ -535,4 +600,4 @@ function cocosAdvice() {
 
 fs.writeFileSync(evidencePath, JSON.stringify(ev, null, 2) + "\n");
 const fmt = (p) => (p.score == null ? "未評分" : `${p.score}${p.provisional ? `（暫定，覆蓋 ${p.coverage}%）` : ""}`);
-console.log(`順暢 ${fmt(ev.score.smooth)}　記憶體 ${fmt(ev.score.memory)}　要處理 ${ev.todo.length} 條（Cocos ${ev.cocosAdvice.items.length}）`);
+console.log(`載入 ${fmt(ev.score.loading)}　順暢 ${fmt(ev.score.smooth)}　記憶體 ${fmt(ev.score.memory)}　要處理 ${ev.todo.length} 條（Cocos ${ev.cocosAdvice.items.length}）`);

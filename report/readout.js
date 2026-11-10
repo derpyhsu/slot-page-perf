@@ -1,10 +1,24 @@
 // Engineering readout shared by report.html and report.md.
-// The report opens with two scores, 幀率 and 占用, then the numbers behind them.
+// The report opens with three scores, 載入, 幀率 and 占用, then the numbers behind them.
 "use strict";
 
 const { groups, groupOf, SOFTWARE_GPU } = require("./findings");
 
+const CELLS = require("../protocol/thresholds.json").cells;
+
 const COLOR = { red: "#e5484d", orange: "#f76b15", yellow: "#e2a336", green: "#30a46c" };
+
+// One cell, judged by its own row's thresholds. Only failing cells get a color.
+function cellLevel(key, v, higherIsBetter) {
+  const t = CELLS[key];
+  if (v == null || !t) return null;
+  const worse = (limit) => limit != null && (higherIsBetter ? v < limit : v > limit);
+  return worse(t.red) ? "red" : worse(t.orange) ? "orange" : null;
+}
+function drawsLevel(col, idle) {
+  if (!idle || idle === col || col.draws == null || !idle.draws) return null;
+  return col.draws >= idle.draws * CELLS.drawsVsIdle.orange ? "orange" : null;
+}
 const DOT = { red: "🔴", orange: "🟠", yellow: "🟡", green: "🟢" };
 
 function round(n, d) {
@@ -54,6 +68,7 @@ function model(ev) {
     const worst = hitches.reduce((a, h) => (h.dt > a ? h.dt : a), 0);
     const g = by.get(r.group);
     return {
+      group: r.group,
       label: r.stages > 1 ? `${r.label} ${r.stages} 段` : r.label,
       level: r.level,
       fps: r.fps,
@@ -91,6 +106,19 @@ function spinWhere(name) {
   const spin = /^(spin|turbo)-(\d+)$/.exec(name || "");
   if (spin) return spin[1] === "turbo" ? `加速第 ${spin[2]} 轉` : `第 ${spin[2]} 轉`;
   return "";
+}
+function cellLevels(m) {
+  const idle = m.cols.find((c) => c.group === "idle");
+  return {
+    fps: (c) => cellLevel("fps", c.fps, true),
+    drop: (c) => cellLevel("drop", c.drop),
+    bad: (c) => cellLevel("bad", c.bad),
+    low: (c) => cellLevel("low", c.low, true),
+    cpu: (c) => cellLevel("cpuP95Ms", c.cpuMax),
+    draws: (c) => drawsLevel(c, idle),
+    gpu: (c) => cellLevel("gpuMb", c.gpu),
+    stall: (c) => (c.worst >= 50 ? cellLevel("stallMs", c.worst) : null),
+  };
 }
 function cpuText(col) {
   if (col.cpuMax == null) return "—";
@@ -179,8 +207,9 @@ function scoreLine(ev) {
     const cov = p.provisional ? `，暫定，量到 ${p.coverage}%` : "";
     return `${name} ${p.score == null ? "未評分" : p.score}${cov}（${bits.join("；")}）`;
   };
-  const fatals = S.smooth.fatal.concat(S.memory.fatal).map((f) => FATAL[f.id] || f.id);
-  return `${part("幀率", S.smooth)}。${part("占用", S.memory)}。` + (fatals.length ? `同時成立：${fatals.join("、")}。` : "");
+  const load = S.loading || { fatal: [] };
+  const fatals = load.fatal.map((f) => `載入${FATAL[f.id] || f.id}`).concat(S.smooth.fatal.concat(S.memory.fatal).map((f) => FATAL[f.id] || f.id));
+  return `${S.loading ? `${part("載入", S.loading)}。` : ""}${part("幀率", S.smooth)}。${part("占用", S.memory)}。` + (fatals.length ? `同時成立：${fatals.join("、")}。` : "");
 }
 
 function readoutMarkdown(ev) {
@@ -189,6 +218,7 @@ function readoutMarkdown(ev) {
   const lines = [];
   lines.push(`| | 分數 |`);
   lines.push(`| --- | --- |`);
+  if (S.loading) lines.push(`| 載入 | ${DOT[levelOf(S.loading.score)] || ""} ${S.loading.score == null ? "未評分" : S.loading.score} |`);
   lines.push(`| 幀率 | ${DOT[levelOf(S.smooth.score)] || ""} ${S.smooth.score == null ? "未評分" : S.smooth.score} |`);
   lines.push(`| 占用 | ${DOT[levelOf(S.memory.score)] || ""} ${S.memory.score == null ? "未評分" : S.memory.score} |`);
   lines.push("");
@@ -198,15 +228,16 @@ function readoutMarkdown(ev) {
     const head = ["讀數"].concat(m.cols.map((c) => c.label));
     lines.push(`| ${head.join(" | ")} |`);
     lines.push(`| ${head.map(() => "---").join(" | ")} |`);
-    const row = (name, pick) => `| ${name} | ${m.cols.map(pick).join(" | ")} |`;
-    lines.push(row("平均 FPS", (c) => (c.fps == null ? "—" : `${DOT[c.level] || ""} ${c.fps}`)));
-    lines.push(row("掉幀", (c) => pct(c.drop)));
-    lines.push(row("超過 33 ms", (c) => pct(c.bad)));
-    lines.push(row("1% low", (c) => (c.low == null ? "—" : c.low)));
-    if (m.cpuOn) lines.push(row("CPU p95", cpuText));
-    lines.push(row("每幀 draw", (c) => (c.draws == null ? "—" : c.draws)));
-    lines.push(row("GPU 峰值", (c) => mb(c.gpu)));
-    if (m.cols.some((c) => c.worst >= 50)) lines.push(row("最長停頓", (c) => (c.worst >= 50 ? `${Math.round(c.worst)} ms` : "")));
+    const row = (name, pick, level) => `| ${name} | ${m.cols.map((c) => { const l = level && level(c); return l ? `${DOT[l]} ${pick(c)}` : pick(c); }).join(" | ")} |`;
+    const L = cellLevels(m);
+    lines.push(row("平均 FPS", (c) => (c.fps == null ? "—" : c.fps), L.fps));
+    lines.push(row("掉幀", (c) => pct(c.drop), L.drop));
+    lines.push(row("超過 33 ms", (c) => pct(c.bad), L.bad));
+    lines.push(row("1% low", (c) => (c.low == null ? "—" : c.low), L.low));
+    if (m.cpuOn) lines.push(row("CPU p95", cpuText, L.cpu));
+    lines.push(row("每幀 draw", (c) => (c.draws == null ? "—" : c.draws), L.draws));
+    lines.push(row("GPU 峰值", (c) => mb(c.gpu), L.gpu));
+    if (m.cols.some((c) => c.worst >= 50)) lines.push(row("最長停頓", (c) => (c.worst >= 50 ? `${Math.round(c.worst)} ms` : ""), L.stall));
     lines.push("");
     lines.push("CPU p95 是該階段 95% 的幀裡，主執行緒花的時間。一幀預算 16.7 ms。不是作業系統的 CPU。掉幀以螢幕更新率和幀率上限較低者為準。");
     lines.push("");
@@ -252,14 +283,14 @@ function heroMetrics(ev, m) {
   const est = ev.score.memory.estimateMb;
   const budget = (ev.score.memory && ev.score.memory.budgetMb) || 300;
   const cards = [];
-  if (spin && spin.fps != null) cards.push({ k: "spin FPS", v: String(spin.fps), level: spin.level });
-  if (spin) cards.push({ k: "掉幀", v: pct(spin.drop), level: spin.drop > 0.03 ? "orange" : "green" });
-  if (spin && spin.cpuMed != null) cards.push({ k: "CPU p95 中位", v: `${round(spin.cpuMed, 1)} ms`, sub: spin.cpuMax != null && spin.cpuMax - spin.cpuMed >= 1.5 ? `最高 ${round(spin.cpuMax, 1)} ms${spinWhere(spin.cpuStage) ? ` · ${spinWhere(spin.cpuStage)}` : ""}` : "", level: spin.cpuMed > 12 ? "red" : spin.cpuMed > 8 ? "orange" : "green" });
-  else if (spin && spin.cpuMax != null) cards.push({ k: "CPU p95", v: `${round(spin.cpuMax, 1)} ms`, level: spin.cpuMax > 12 ? "red" : "green" });
-  if (est) cards.push({ k: "GPU", v: mb(est.texture), sub: `預算 ${budget} MB`, level: est.texture > budget ? "red" : est.texture > budget * 0.7 ? "orange" : "green" });
+  if (spin && spin.fps != null) cards.push({ k: "spin FPS", v: String(spin.fps), level: cellLevel("fps", spin.fps, true) || "green" });
+  if (spin) cards.push({ k: "掉幀", v: pct(spin.drop), level: cellLevel("drop", spin.drop) || "green" });
+  if (spin && spin.cpuMed != null) cards.push({ k: "CPU p95 中位", v: `${round(spin.cpuMed, 1)} ms`, sub: spin.cpuMax != null && spin.cpuMax - spin.cpuMed >= 1.5 ? `最高 ${round(spin.cpuMax, 1)} ms${spinWhere(spin.cpuStage) ? ` · ${spinWhere(spin.cpuStage)}` : ""}` : "", level: cellLevel("cpuP95Ms", spin.cpuMed) || "green" });
+  else if (spin && spin.cpuMax != null) cards.push({ k: "CPU p95", v: `${round(spin.cpuMax, 1)} ms`, level: cellLevel("cpuP95Ms", spin.cpuMax) || "green" });
+  if (est) cards.push({ k: "GPU", v: mb(est.texture), sub: `預算 ${budget} MB`, level: cellLevel("gpuMb", est.texture) || "green" });
   if (est) cards.push({ k: "推估", v: mb(est.total), sub: `JS ${Math.round(est.heap)} + 畫面 ${Math.round(est.framebuffer)}`, level: est.total > budget ? "red" : "green" });
   const worst = m.cols.reduce((a, c) => (c.worst > (a ? a.worst : 0) ? c : a), null);
-  if (worst && worst.worst >= 50) cards.push({ k: "最長停頓", v: `${Math.round(worst.worst)} ms`, sub: worst.label, level: worst.worst >= 200 ? "red" : worst.worst >= 100 ? "orange" : "yellow" });
+  if (worst && worst.worst >= 50) cards.push({ k: "最長停頓", v: `${Math.round(worst.worst)} ms`, sub: worst.label, level: cellLevel("stallMs", worst.worst) || "yellow" });
   return `<div class="metrics">${cards
     .map((c) => `<div class="metric" style="border-top-color:${COLOR[c.level] || COLOR.yellow}"><div class="mv" style="color:${COLOR[c.level] || COLOR.yellow}">${esc(c.v)}</div><div class="mk">${esc(c.k)}</div>${c.sub ? `<div class="ms">${esc(c.sub)}</div>` : ""}</div>`)
     .join("")}</div>`;
@@ -269,20 +300,21 @@ function readoutHtml(ev) {
   const m = model(ev);
   const S = ev.score;
   const cell = (text, level) => `<td class="num"${level ? ` style="color:${COLOR[level]};font-weight:600"` : ""}>${esc(text)}</td>`;
-  let html = `<section class="card hero"><div class="gauges">${gauge(S.smooth, "幀率", "100 是穩在 60")}${gauge(S.memory, "占用", "100 是遠低於裝置預算")}</div>${heroMetrics(ev, m)}</section>`;
+  let html = `<section class="card hero"><div class="gauges">${S.loading ? gauge(S.loading, "載入", "100 是載入時畫面不卡") : ""}${gauge(S.smooth, "幀率", "100 是穩在 60")}${gauge(S.memory, "占用", "100 是遠低於裝置預算")}</div>${heroMetrics(ev, m)}</section>`;
   html += '<section class="card"><h2>各階段</h2><div class="scroll">';
   if (m.cols.length) {
     html += "<table><tr><th>讀數</th>" + m.cols.map((c) => `<th class="num">${esc(c.label)}</th>`).join("") + "</tr>";
-    const tr = (name, pick, colored) =>
-      "<tr><td>" + esc(name) + "</td>" + m.cols.map((c) => cell(pick(c), colored ? c.level : null)).join("") + "</tr>";
-    html += tr("平均 FPS", (c) => (c.fps == null ? "—" : String(c.fps)), true);
-    html += tr("掉幀", (c) => pct(c.drop));
-    html += tr("超過 33 ms", (c) => pct(c.bad));
-    html += tr("1% low", (c) => (c.low == null ? "—" : String(c.low)));
-    if (m.cpuOn) html += tr("CPU p95", cpuText);
-    html += tr("每幀 draw", (c) => (c.draws == null ? "—" : String(c.draws)));
-    html += tr("GPU 峰值", (c) => mb(c.gpu));
-    if (m.cols.some((c) => c.worst >= 50)) html += tr("最長停頓", (c) => (c.worst >= 50 ? `${Math.round(c.worst)} ms` : ""));
+    const tr = (name, pick, level) =>
+      "<tr><td>" + esc(name) + "</td>" + m.cols.map((c) => cell(pick(c), level && level(c))).join("") + "</tr>";
+    const L = cellLevels(m);
+    html += tr("平均 FPS", (c) => (c.fps == null ? "—" : String(c.fps)), L.fps);
+    html += tr("掉幀", (c) => pct(c.drop), L.drop);
+    html += tr("超過 33 ms", (c) => pct(c.bad), L.bad);
+    html += tr("1% low", (c) => (c.low == null ? "—" : String(c.low)), L.low);
+    if (m.cpuOn) html += tr("CPU p95", cpuText, L.cpu);
+    html += tr("每幀 draw", (c) => (c.draws == null ? "—" : String(c.draws)), L.draws);
+    html += tr("GPU 峰值", (c) => mb(c.gpu), L.gpu);
+    if (m.cols.some((c) => c.worst >= 50)) html += tr("最長停頓", (c) => (c.worst >= 50 ? `${Math.round(c.worst)} ms` : ""), L.stall);
     html += "</table>";
     html += '<p class="small">CPU p95 是該階段 95% 的幀裡，主執行緒花的時間。一幀預算 16.7 ms。不是作業系統的 CPU。掉幀以螢幕更新率和幀率上限較低者為準。</p>';
   }

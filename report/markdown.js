@@ -95,7 +95,7 @@ lines.push("每項在滿分與零分之間內插。沒量到的項目不計入�
 lines.push("");
 lines.push("| | 看什麼 | 權重 | 這次 | 滿分 | 零分 | 得分 |");
 lines.push("| --- | --- | --- | --- | --- | --- | --- |");
-[["順暢", score.smooth], ["記憶體", score.memory]].forEach(([g, part]) =>
+(score.loading ? [["載入", score.loading]] : []).concat([["順暢", score.smooth], ["記憶體", score.memory]]).forEach(([g, part]) =>
   part.items.forEach((i) =>
     lines.push(`| ${g} | ${i.label} | ${i.weight} | ${i.value == null ? "沒量到" : `${i.approx ? "約 " : ""}${i.value} ${i.unit}`} | ${i.full} | ${i.zero} | ${i.score == null ? "不計" : i.score} |`),
   ),

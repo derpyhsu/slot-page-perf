@@ -34,7 +34,7 @@ h2 { font-size: 16px; font-weight: 500; margin: 0 0 14px; }
 .meta { color: var(--faint); font-size: 12px; margin-top: 6px; }
 .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 2px rgba(60,64,67,.12), 0 0 0 1px rgba(60,64,67,.06); padding: 20px 22px 18px; margin-top: 16px; }
 .hero { padding-top: 8px; }
-.gauges { display: flex; justify-content: center; gap: 72px; padding: 12px 0 4px; }
+.gauges { display: flex; justify-content: center; gap: 48px; padding: 12px 0 4px; }
 .gauge { width: 240px; text-align: center; }
 .gauge svg { display: block; margin: 0 auto; }
 .gauge-name { font-size: 18px; font-weight: 500; margin-top: -4px; }
@@ -169,7 +169,7 @@ if (facts.length) html += '<ul class="facts">' + facts.map((f) => "<li>" + f + "
 $("state").innerHTML = html;
 
 // Collapsed details.
-const crit = [["幀率", S.smooth], ["占用", S.memory]].flatMap(([g, p]) => p.items.map((i) => [g, i]));
+const crit = (S.loading ? [["載入", S.loading]] : []).concat([["幀率", S.smooth], ["占用", S.memory]]).flatMap(([g, p]) => p.items.map((i) => [g, i]));
 $("criteria").innerHTML = '<p class="small">每項在滿分與零分之間內插。沒量到的項目不計入，分數標暫定。有致命漏洞時該分數最高 49。90 以上綠、70 以上黃、50 以上橘、其餘紅。</p>' +
   "<table><tr><th></th><th>看什麼</th><th class=num>權重</th><th class=num>這次</th><th class=num>滿分</th><th class=num>零分</th><th class=num>得分</th></tr>" +
   crit.map(([g, i]) => "<tr><td>" + g + "</td><td>" + esc(i.label) + "</td><td class=num>" + i.weight + "</td><td class=num>" + (i.value == null ? "沒量到" : (i.approx ? "約 " : "") + i.value + " " + i.unit) + "</td><td class=num>" + esc(i.full) + "</td><td class=num>" + esc(i.zero) + '</td><td class=num style="color:' + COLOR[scoreLevel(i.score)] + ';font-weight:600">' + (i.score == null ? "不計" : i.score) + "</td></tr>").join("") + "</table>";

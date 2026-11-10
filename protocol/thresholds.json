@@ -34,6 +34,16 @@
   "textureWarnMb": 150,
   "gpuMemoryWarnMb": 200,
   "fps": { "stageMin": 55, "dropShareMax": 0.03, "badShareMax": 0.01, "lowMin": 25 },
+  "cells": {
+    "fps": { "orange": 55, "red": 45 },
+    "drop": { "orange": 0.03, "red": 0.1 },
+    "bad": { "orange": 0.01, "red": 0.05 },
+    "low": { "orange": 25, "red": 15 },
+    "cpuP95Ms": { "orange": 12, "red": 16.7 },
+    "drawsVsIdle": { "orange": 2 },
+    "gpuMb": { "orange": 200, "red": 300 },
+    "stallMs": { "orange": 100, "red": 250 }
+  },
   "leakMb": 15,
   "leakTailSpins": 10,
   "timeline": {
@@ -58,6 +68,10 @@
       "stable": { "weight": 40, "full": 0.99, "zero": 0.9, "badFrameMs": 33 },
       "stall": { "weight": 30, "full": 50, "zero": 1000 },
       "cpu": { "weight": 30, "full": 4, "zero": 16.7 }
+    },
+    "loading": {
+      "stable": { "weight": 50, "full": 0.9, "zero": 0.5, "badFrameMs": 33 },
+      "stall": { "weight": 50, "full": 100, "zero": 1000 }
     },
     "memory": {
       "budget": { "weight": 50, "full": 0.5, "zero": 1 },
