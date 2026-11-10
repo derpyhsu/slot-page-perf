@@ -24,6 +24,7 @@
     loopHooked: false,
     loopName: null,
     loopFrames: 0,
+    frameCount: 0,
     loopHookedAt: 0,
     seenFrame: false,
     drawTotal: 0,
@@ -86,13 +87,13 @@
     return Math.round(t - state.t0);
   }
 
-  // Bucket row: [startMs, frames, maxDtMs, cpuMsSum or null, badFrames, maxDraws, texUploadMb]
+  // Bucket row: [startMs, frames, maxDtMs, cpuMsSum or null, badFrames, maxDraws, texUploadMb, maxPresentMs, presentedFrames]
   function bucketFrame(now, dt, cpu, draws) {
     var start = Math.floor((now - state.t0) / BUCKET_MS) * BUCKET_MS;
     var b = state.bucket;
     if (!b || b[0] !== start) {
       if (b && state.buckets.length < SERIES_CAP) state.buckets.push(b);
-      b = state.bucket = [start, 0, 0, null, 0, 0, 0];
+      b = state.bucket = [start, 0, 0, null, 0, 0, 0, 0, 0];
       b.texStart = state.texBytes;
     }
     b[1] += 1;
@@ -125,7 +126,9 @@
       texStart: state.texBytes,
       gpuStart: gpuTotal(),
       gpuPeak: gpuTotal(),
-      bad: 0
+      bad: 0,
+      // Frames that reached the screen, as vsync multiples: hist[k] counts gaps of k vsyncs.
+      pres: { n: 0, hist: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], wasted: 0 }
     };
   }
 
@@ -136,6 +139,8 @@
     s.heapEnd = heapMb();
     s.texEnd = state.texBytes;
     s.gpuEnd = gpuTotal();
+    s.vsyncMs = vsyncMs();
+    s.capFps = frameCap();
     state.stages.push(s);
     state.stage = null;
   }
@@ -160,6 +165,7 @@
     bucketFrame(now, dt, cpu, draws);
     var s = state.stage;
     if (!s) return;
+    state.frameCount += 1;
     s.frames += 1;
     s.sumDt += dt;
     s.sumDraws += draws;
@@ -396,12 +402,47 @@
 
   var origRAF = window.requestAnimationFrame.bind(window);
   var lastRaf = performance.now();
+  // The engine loop can run off vsync (Creator 2.x uses setTimeout for caps other than 30 and 60),
+  // so its call interval is not what reaches the screen. This loop ticks once per vsync: it
+  // measures the refresh interval, and a tick that sees new engine frames counts one presented frame.
+  var vsyncRing = [];
+  var lastSeen = 0;
+  var lastPresent = 0;
+  function vsyncMs() {
+    if (vsyncRing.length < 10) return null;
+    return pct(vsyncRing.slice().sort(function (a, b) { return a - b; }), 0.5);
+  }
+  function presentTick(t, dt) {
+    if (dt > 0 && dt < 100) {
+      vsyncRing.push(dt);
+      if (vsyncRing.length > 240) vsyncRing.shift();
+    }
+    var seen = state.frameCount - lastSeen;
+    if (seen <= 0) return;
+    lastSeen = state.frameCount;
+    var gap = lastPresent ? t - lastPresent : 0;
+    lastPresent = t;
+    var s = state.stage;
+    var v = vsyncMs();
+    if (!s || !v || !gap || gap > 10000) return;
+    var k = Math.max(1, Math.round(gap / v));
+    s.pres.n += 1;
+    s.pres.hist[Math.min(k, 9)] += 1;
+    s.pres.wasted += seen - 1;
+    // Credit the bucket of the engine frame that was presented, which may be one vsync back.
+    var b = state.bucket;
+    if (b) {
+      b[8] += 1;
+      if (gap > b[7]) b[7] = round(gap);
+    }
+  }
   function rafLoop(t) {
     var dt = t - lastRaf;
     lastRaf = t;
     if (performance.now() - state.loopHookedAt > 500) {
       recordFrame(dt, null, drawsThisFrame());
     }
+    presentTick(t, dt);
     origRAF(rafLoop);
   }
   origRAF(rafLoop);
@@ -588,7 +629,9 @@
       hitches: s.hitches,
       heapStartMb: s.heapStart,
       heapEndMb: s.heapEnd == null ? heapMb() : s.heapEnd,
-      texUploadMb: round((s.texEnd - s.texStart) / 1048576)
+      texUploadMb: round((s.texEnd - s.texStart) / 1048576),
+      // What reached the screen. capFps is cc.game's frame cap when the stage closed.
+      presented: { frames: s.pres.n, hist: s.pres.hist, wasted: s.pres.wasted, vsyncMs: s.vsyncMs != null ? s.vsyncMs : vsyncMs(), capFps: s.capFps != null ? s.capFps : frameCap() }
     };
   }
 
@@ -1061,8 +1104,8 @@
         timeline: {
           bucketMs: BUCKET_MS,
           badFrameMs: BAD_FRAME_MS,
-          bucketFields: ["startMs", "frames", "maxDtMs", "cpuMs", "badFrames", "maxDraws", "texUploadMb"],
-          buckets: state.buckets.concat(state.bucket ? [state.bucket.slice(0, 7)] : []),
+          bucketFields: ["startMs", "frames", "maxDtMs", "cpuMs", "badFrames", "maxDraws", "texUploadMb", "maxPresentMs", "presentedFrames"],
+          buckets: state.buckets.concat(state.bucket ? [state.bucket.slice(0, 9)] : []),
           longTasks: state.longTasks,
           longTaskFields: ["startMs", "durationMs", "inFlight"],
           marks: state.marks,

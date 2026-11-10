@@ -16,14 +16,26 @@
 
 `channels.engineCpu` 為 false 時，所有 CPU 平均、p95、CPU% 都是 `unavailable`，`cpu-heavy` 不觸發。
 
+## 幀節奏
+
+引擎主迴圈不一定跟著螢幕更新跑：Creator 2.x 的上限不是 30 或 60 時改用 setTimeout，所以主迴圈的間隔不是畫面真正換幀的間隔。探針另有一條每個 vsync 跑一次的 rAF，量出螢幕更新間隔（vsync），並在每次看到新的引擎幀時記一次「上螢幕的幀」，間隔以 vsync 的整數倍記錄（`stages[].presented`）。
+
+- 應有幀長 E：vsync 與 `1000 / cc.game 幀率上限` 較長者。
+- 壞幀：上螢幕間隔超過 `frames.badFactor` × E。60 上限在 60 Hz 時，33 ms 是壞幀；40 上限時 E 是 25 ms，33 ms 不是壞幀。
+- 節奏不齊：上螢幕間隔離 E 超過 `frames.paceTolerance` × E。40 上限在 60 Hz 會 16.7、33.3 ms 交替，幾乎每一幀都不齊。
+- 下面的 FPS、1% low、掉幀、壞幀都用上螢幕的幀；舊探針沒有這組資料時，退回引擎幀與 33 ms。
+- 每 250 ms 的 bucket 也記上螢幕的幀數（`presentedFrames`），計分的「55 FPS 以上」用它算每一秒的 FPS。
+
 ## fps-drop
 
 遊戲階段（待機、spin、加速、面板穩態）與載入（`loading`、`enter`），同類階段合在一起看。載入跟遊戲階段用同一套門檻和顏色。下面任一條成立就觸發，證據寫三個數字：
 
-- 平均 FPS 低於 `fps.stageMin`
-- 掉幀比例 `dropShare` 高於 `fps.dropShareMax`。掉幀是「應該出現卻沒出現」的幀占比：應有幀率取螢幕更新率（該階段中位數幀長）和引擎幀率上限 `cc.game.getFrameRate()` 較低者。所以 64 Hz 螢幕配 60 上限的正常跳幀不算掉幀。
-- 超過 33 ms 的幀佔比 `badShare` 高於 `fps.badShareMax`
-- 1% low 低於 `fps.lowMin`。1% low 是最慢那 1% 幀的 FPS；幀長只會落在螢幕更新的整數倍，所以它常在 60 和 30 之間跳，只當輔助。
+- 平均 FPS 低於 `fps.stageMin` × 應有 FPS / 60
+- 掉幀比例 `dropShare` 高於 `fps.dropShareMax`。掉幀是「應該出現卻沒出現」的幀占比，應有 FPS 是 1000 / E。所以 64 Hz 螢幕配 60 上限的正常跳幀不算掉幀，40 上限跑滿 40 也不算。
+- 壞幀佔比 `badShare` 高於 `fps.badShareMax`
+- 1% low 低於 `fps.lowMin` × 應有 FPS / 60。1% low 是最慢那 1% 幀的 FPS；幀長只會落在螢幕更新的整數倍，所以它常在 60 和 30 之間跳，只當輔助。
+
+`stageMin` 和 `lowMin` 是照 60 的目標寫的，所以依上限換算。上限本身低於 60，已經反映在計分的「55 FPS 以上」，並由 `cocos-frame-rate` 說明原因，不在這裡再算一次。
 
 `conditions.gpu` 是軟體繪製（SwiftShader、Microsoft Basic Render Driver、llvmpipe）時照樣觸發，但證據註明這是這台電腦的軟體繪製，不代表手機 GPU。
 
@@ -45,12 +57,19 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 
 ## leak-suspected
 
-只在完成至少 `warmupSpins` 之後、而且有第 `warmupSpins` 轉停穩與最後一轉停穩的 heap 地板時才判斷。
+只看 `warmupSpins` 之後的轉，由 `report/findings.js` 的 `heapFit` 算，結果寫在 evidence 的 `heapFit`。
 
-- 增量大於 `leakMb`
-- 最後 `leakTailSpins` 轉的地板仍在上升。地板是這段的局部低點；低點沒有再抬高，或只是跳上去之後鋸齒來回，都不算還在上升
+- 每轉的地板：從該轉開始往後 `heap.floorWindowMs`（或整轉，取較長者）裡最低的 heap 取樣。短的一轉也能涵蓋幾次取樣，避開 GC 鋸齒。
+- Feature 轉：牆鐘時間超過同組（spin、加速各自）中位數 `heap.featureFactor` 倍的轉，例如免費遊戲。它會載入之後一直留著的資源，不參與計算。
+- 大 GC：相鄰兩轉的地板掉了 `heap.majorGcDropMb` 以上。
+- 地板以 Feature 轉和大 GC 切段，每段各自扣掉平均後合起來算斜率（MB／轉），所以 Feature 帶來的階梯和 GC 的回落都不算增長。
 
-兩件都成立才標 `leak-suspected`。沒有第 5 轉與最後一轉的 heap snapshot 差值時，狀態寫「疑似」，不寫「已證實」。轉數不夠就寫 `not-enough-spins`，不要當成沒有洩漏。
+判定：
+
+- 有大 GC：最後一次大 GC 之後的最低地板，比第一個地板高出 `leakMb` 以上，標 `leak-suspected`，狀態 `retained-after-gc`。這是 GC 收不回來的部分。
+- 沒有大 GC：斜率 × 轉數大於 `leakMb`，而且最後 `leakTailSpins` 轉的斜率高於 `heap.tailSlopeMb`，標 `leak-suspected`，狀態 `no-major-gc`。大 GC 可能還會收回，所以只是疑似，要多轉或用 heap snapshot 確認。
+
+轉數不夠就寫 `not-enough-spins`，不要當成沒有洩漏。
 
 ## panel-heavier
 
@@ -77,7 +96,7 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 | `cocos-image-cache-kept` | `CLEANUP_IMAGE_CACHE` 為 false | 上傳後原圖還留在 JS。動態合圖開著時不能同時把 CLEANUP_IMAGE_CACHE 設成 true，合圖會失效 |
 | `cocos-dynamic-atlas-off` | 動態合圖關閉 | draw call |
 | `cocos-webgl1` | 瀏覽器有 WebGL 2，遊戲卻用 WebGL 1 | Cocos 2.4 只有 WebGL 1，沒有開關。WebGL 2 要換 3.x |
-| `cocos-frame-rate` | `frameRate` 設成 60 以外 | 上限不是 60 |
+| `cocos-frame-rate` | 上限不能整除螢幕更新率（橘）、高於螢幕更新率（黃）、或低於 60 但能整除（黃） | 說明 FPS 為什麼到不了 60 或節奏不齊；本身不計分 |
 | `cocos-console-errors` | 主控台有引擎 error，或同一句 warning 超過 `consoleRepeat` 次 | 穩定性：資源或流程有錯 |
 
 讀不到的欄位是 `null`，該規則不觸發。

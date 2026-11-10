@@ -73,6 +73,8 @@ function model(ev) {
       label: r.stages > 1 ? `${r.label} ${r.stages} 段` : r.label,
       level: r.level,
       fps: r.fps,
+      expFps: r.expectedFps || 60,
+      pace: r.offShare,
       drop: r.dropShare,
       bad: r.badShare,
       low: r.fpsLow,
@@ -111,7 +113,9 @@ function spinWhere(name) {
 function cellLevels(m) {
   const idle = m.cols.find((c) => c.group === "idle");
   return {
+    // FPS and 1% low are judged against the 60 target; bad frames and cadence against the cap.
     fps: (c) => cellLevel("fps", c.fps, true),
+    pace: (c) => cellLevel("pace", c.pace),
     drop: (c) => cellLevel("drop", c.drop),
     bad: (c) => cellLevel("bad", c.bad),
     low: (c) => cellLevel("low", c.low, true),
@@ -241,14 +245,15 @@ function readoutMarkdown(ev) {
     const L = cellLevels(m);
     lines.push(row("平均 FPS", (c) => (c.fps == null ? "—" : c.fps), L.fps));
     lines.push(row("掉幀", (c) => pct(c.drop), L.drop));
-    lines.push(row("超過 33 ms", (c) => pct(c.bad), L.bad));
+    lines.push(row("壞幀", (c) => pct(c.bad), L.bad));
+    if (m.cols.some((c) => c.pace != null)) lines.push(row("節奏不齊", (c) => pct(c.pace), L.pace));
     lines.push(row("1% low", (c) => (c.low == null ? "—" : c.low), L.low));
     if (m.cpuOn) lines.push(row("CPU p95", cpuText, L.cpu));
     lines.push(row("每幀 draw", (c) => (c.draws == null ? "—" : c.draws), L.draws));
     lines.push(row("GPU 峰值", (c) => mb(c.gpu), L.gpu));
     if (m.cols.some((c) => c.worst >= 50)) lines.push(row("最長停頓", (c) => (c.worst >= 50 ? `${Math.round(c.worst)} ms` : ""), L.stall));
     lines.push("");
-    lines.push("CPU p95 是該階段 95% 的幀裡，主執行緒花的時間。一幀預算 16.7 ms。不是作業系統的 CPU。掉幀以螢幕更新率和幀率上限較低者為準。");
+    lines.push("FPS、壞幀、節奏看的是實際上螢幕的幀。應有幀長取螢幕更新間隔與 1000 / 幀率上限較長者；壞幀是超過應有幀長 1.5 倍的幀，節奏不齊是離應有幀長超過 25% 的幀。FPS 與 1% low 以 60 為目標上色；壞幀與節奏依幀率上限判。CPU p95 是引擎主迴圈在該階段 95% 的幀裡花的時間，不是作業系統的 CPU。");
     lines.push("");
   }
   const facts = factRows(ev, m);
@@ -318,14 +323,15 @@ function readoutHtml(ev) {
     const L = cellLevels(m);
     html += tr("平均 FPS", (c) => (c.fps == null ? "—" : String(c.fps)), L.fps);
     html += tr("掉幀", (c) => pct(c.drop), L.drop);
-    html += tr("超過 33 ms", (c) => pct(c.bad), L.bad);
+    html += tr("壞幀", (c) => pct(c.bad), L.bad);
+    if (m.cols.some((c) => c.pace != null)) html += tr("節奏不齊", (c) => pct(c.pace), L.pace);
     html += tr("1% low", (c) => (c.low == null ? "—" : String(c.low)), L.low);
     if (m.cpuOn) html += tr("CPU p95", cpuHtml, L.cpu, true);
     html += tr("每幀 draw", (c) => (c.draws == null ? "—" : String(c.draws)), L.draws);
     html += tr("GPU 峰值", (c) => mb(c.gpu), L.gpu);
     if (m.cols.some((c) => c.worst >= 50)) html += tr("最長停頓", (c) => (c.worst >= 50 ? `${Math.round(c.worst)} ms` : ""), L.stall);
     html += "</table>";
-    html += '<p class="small">CPU p95 是該階段 95% 的幀裡，主執行緒花的時間。一幀預算 16.7 ms。不是作業系統的 CPU。掉幀以螢幕更新率和幀率上限較低者為準。</p>';
+    html += '<p class="small">FPS、壞幀、節奏看的是實際上螢幕的幀。應有幀長取螢幕更新間隔與 1000 / 幀率上限較長者；壞幀是超過應有幀長 1.5 倍的幀，節奏不齊是離應有幀長超過 25% 的幀。FPS 與 1% low 以 60 為目標上色；壞幀與節奏依幀率上限判。CPU p95 是引擎主迴圈在該階段 95% 的幀裡花的時間，不是作業系統的 CPU。</p>';
   }
   html += "</div></section>";
   const facts = factRows(ev, m);

@@ -17,6 +17,9 @@ const thresholds = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "protoc
 const cfg = thresholds.scoring;
 const ev = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
 
+const { stageFrames } = require("./frames");
+const { heapFit } = require("./findings");
+
 const NOT_GAME = new Set(["boot", "loading", "splash", "enter", "game-ready", "gap"]);
 const stages = ev.stages || [];
 const gameStages = stages.filter((s) => !NOT_GAME.has(s.name) && s.frames > 0);
@@ -47,49 +50,50 @@ function gameReadyMs() {
   return m ? m[1] : null;
 }
 
-function stableShare() {
-  const buckets = ev.timeline && ev.timeline.buckets;
-  const ready = gameReadyMs();
-  if (buckets && buckets.length && ready != null) {
-    const game = buckets.filter((b) => b[0] >= ready && b[1] > 0);
-    if (!game.length) return null;
-    const good = game.filter((b) => b[4] === 0).length;
-    return { share: good / game.length, approx: false };
-  }
-  // Coarse fallback from stage summaries: each frame hitch spoils the buckets it spans.
-  const bucketMs = (thresholds.timeline && thresholds.timeline.bucketMs) || 250;
-  let total = 0;
-  let bad = 0;
-  gameStages.forEach((s) => {
-    total += Math.max(1, Math.round(s.wallMs / bucketMs));
-    (s.hitches || []).forEach((h) => {
-      if (h.source !== "longtask" && h.dt > cfg.smooth.stable.badFrameMs) bad += Math.ceil(h.dt / bucketMs);
-    });
+// Share of whole seconds whose presented FPS reached minFps (protocol/scoring.md 55 FPS 以上).
+// Buckets from older probes have no presented count, so they use engine frames.
+// inWindow picks the seconds: after game-ready for 幀率穩定度, loading and enter for 載入階段.
+function steadyShare(inWindow, minFps, fallbackStages) {
+  const B = (ev.timeline && ev.timeline.bucketMs) || (thresholds.timeline && thresholds.timeline.bucketMs) || 250;
+  const buckets = (ev.timeline && ev.timeline.buckets) || [];
+  const per = Math.round(1000 / B);
+  const secs = new Map();
+  buckets.forEach((b) => {
+    if (!inWindow(b[0], B)) return;
+    const k = Math.floor(b[0] / 1000);
+    const a = secs.get(k) || [];
+    a.push(b.length > 8 ? b[8] : b[1]);
+    secs.set(k, a);
   });
-  if (!total) return null;
-  return { share: Math.max(0, (total - bad) / total), approx: true };
+  const whole = [...secs.values()].filter((a) => a.length === per);
+  if (whole.length) {
+    const ok = whole.filter((a) => a.reduce((x, y) => x + y, 0) >= minFps).length;
+    return { share: ok / whole.length, seconds: whole.length, approx: false };
+  }
+  // Coarse fallback from stage summaries: wall time of stages whose FPS reached minFps.
+  let total = 0;
+  let ok = 0;
+  fallbackStages.forEach((s) => {
+    const f = stageFrames(s);
+    const fps = f ? f.fps : s.fps;
+    if (fps == null) return;
+    total += s.wallMs;
+    if (fps >= minFps) ok += s.wallMs;
+  });
+  return total ? { share: ok / total, approx: true } : null;
 }
 
-// Same measure as stableShare, over the loading and enter stages only. splash waits for a person.
+function stableShare() {
+  const ready = gameReadyMs();
+  if (ready == null) return steadyShare(() => false, cfg.smooth.steady.minFps, gameStages);
+  return steadyShare((t) => t >= ready, cfg.smooth.steady.minFps, gameStages);
+}
+
+// Same measure over the loading and enter stages only. splash waits for a person.
 function loadingStableShare() {
-  const buckets = ev.timeline && ev.timeline.buckets;
   if (!loadStages.length) return null;
-  if (buckets && buckets.length) {
-    const inLoad = (t) => loadStages.some((s) => t >= s.startMs && t < s.startMs + s.wallMs);
-    const load = buckets.filter((b) => inLoad(b[0]) && b[1] > 0);
-    if (load.length) return { share: load.filter((b) => b[4] === 0).length / load.length, approx: false };
-  }
-  const bucketMs = (thresholds.timeline && thresholds.timeline.bucketMs) || 250;
-  let total = 0;
-  let bad = 0;
-  loadStages.forEach((s) => {
-    total += Math.max(1, Math.round(s.wallMs / bucketMs));
-    (s.hitches || []).forEach((h) => {
-      if (h.source !== "longtask" && h.dt > cfg.loading.stable.badFrameMs) bad += Math.ceil(h.dt / bucketMs);
-    });
-  });
-  if (!total) return null;
-  return { share: Math.max(0, (total - bad) / total), approx: true };
+  const inLoad = (t, B) => loadStages.some((s) => t >= s.startMs && t + B <= s.startMs + s.wallMs);
+  return steadyShare(inLoad, cfg.loading.steady.minFps, loadStages);
 }
 
 function worstStall(list = gameStages) {
@@ -148,14 +152,35 @@ function framebufferMb() {
   return (c.w * dpr * c.h * dpr * 4 * 3) / 1048576;
 }
 
+// Heap floor slope per spin, fitted between feature spins and major GCs (findings.js heapFit).
+// After a major GC, growth is what the GC did not reclaim, spread over the fitted spins.
+const fit = heapFit(ev, thresholds);
+ev.heapFit = fit;
 function growthPerSpin() {
-  const warm = thresholds.warmupSpins;
-  if (spinStages.length < warm + 5) return null;
-  const from = spinStages[warm - 1];
-  const to = spinStages[spinStages.length - 1];
-  if (from.heapEndMb == null || to.heapEndMb == null) return null;
-  return Math.max(0, (to.heapEndMb - from.heapEndMb) / (spinStages.length - warm));
+  if (fit.status !== "ok") return null;
+  if (fit.majorGcs.length) return Math.max(0, fit.retainedMb) / fit.points;
+  return Math.max(0, fit.slopeMb);
 }
+
+// Presented-frame view of the game stages, frame-weighted: share off cadence and expected FPS.
+function gameFrames() {
+  let n = 0;
+  let off = 0;
+  let exp = 0;
+  let hz = 0;
+  let cap = null;
+  gameStages.forEach((s) => {
+    const f = stageFrames(s);
+    if (!f) return;
+    n += f.frames;
+    off += f.offShare * f.frames;
+    exp += f.expectedFps * f.frames;
+    hz += f.hz * f.frames;
+    cap = f.cap;
+  });
+  return n ? { frames: n, offShare: off / n, expectedFps: exp / n, hz: Math.round(hz / n), cap } : null;
+}
+const gf = gameFrames();
 
 function bigTextureCount() {
   const tex = ev.memory && ev.memory.textures;
@@ -180,15 +205,15 @@ const cpuStat = cpuP95();
 const cpu = cpuStat && cpuStat.value;
 const smoothItems = [
   {
-    id: "stable",
-    label: "幀穩定",
-    weight: S.stable.weight,
+    id: "steady",
+    label: "55 FPS 以上",
+    weight: S.steady.weight,
     value: stable ? round(stable.share * 100, 1) : null,
     unit: "%",
     approx: stable ? stable.approx : false,
-    full: `${S.stable.full * 100}%`,
-    zero: `${S.stable.zero * 100}%`,
-    score: stable ? curve(stable.share, S.stable.full, S.stable.zero, { higherIsBetter: true }) : null,
+    full: `${S.steady.full * 100}%`,
+    zero: `${S.steady.zero * 100}%`,
+    score: stable ? curve(stable.share, S.steady.full, S.steady.zero, { higherIsBetter: true }) : null,
   },
   {
     id: "stall",
@@ -220,15 +245,15 @@ const loadStable = loadingStableShare();
 const loadStall = worstStall(loadStages);
 const loadingItems = [
   {
-    id: "stable",
-    label: "幀穩定",
-    weight: L.stable.weight,
+    id: "steady",
+    label: "55 FPS 以上",
+    weight: L.steady.weight,
     value: loadStable ? round(loadStable.share * 100, 1) : null,
     unit: "%",
     approx: loadStable ? loadStable.approx : false,
-    full: `${L.stable.full * 100}%`,
-    zero: `${L.stable.zero * 100}%`,
-    score: loadStable ? curve(loadStable.share, L.stable.full, L.stable.zero, { higherIsBetter: true }) : null,
+    full: `${L.steady.full * 100}%`,
+    zero: `${L.steady.zero * 100}%`,
+    score: loadStable ? curve(loadStable.share, L.steady.full, L.steady.zero, { higherIsBetter: true }) : null,
   },
   {
     id: "stall",
@@ -286,22 +311,30 @@ const memoryItems = [
 ];
 
 const F = cfg.fatal;
+// Fatal below minFps on presented frames, whatever the cap. Returns the FPS when fatal.
+function lowFps(s) {
+  const f = stageFrames(s);
+  const fps = f ? f.fps : s.fps;
+  return fps != null && fps < F.minFps ? fps : null;
+}
 const smoothFatal = [];
 const memoryFatal = [];
 const loadingFatal = [];
 if (loadStall.dt > F.stallMs) loadingFatal.push({ id: "stall", stage: loadStall.stage, t: loadStall.t, value: round(loadStall.dt, 0) });
 loadStages.forEach((s) => {
-  if (s.fps != null && s.fps < F.minFps) loadingFatal.push({ id: "low-fps", stage: s.name, value: s.fps });
+  if (lowFps(s)) loadingFatal.push({ id: "low-fps", stage: s.name, value: lowFps(s) });
 });
 if (stall.dt > F.stallMs) smoothFatal.push({ id: "stall", stage: stall.stage, t: stall.t, value: round(stall.dt, 0) });
 gameStages.forEach((s) => {
-  if (s.fps != null && s.fps < F.minFps) smoothFatal.push({ id: "low-fps", stage: s.name, value: s.fps });
+  if (lowFps(s)) smoothFatal.push({ id: "low-fps", stage: s.name, value: lowFps(s) });
 });
 if (ratio != null && ratio > 1) memoryFatal.push({ id: "over-budget", value: round(estimate, 0) });
-if ((ev.findings || []).some((f) => f.id === "leak-suspected")) memoryFatal.push({ id: "leak-suspected" });
+if ((ev.findings || []).some((f) => f.id === "leak-suspected" && f.status === "retained-after-gc")) memoryFatal.push({ id: "leak-suspected" });
 
 ev.score = {
-  version: 2,
+  version: 3,
+  // presented: bad frames and 節奏 from frames that reached the screen; engine-33ms: older probe.
+  frameRule: gf ? "presented" : "engine-33ms",
   loading: Object.assign(total(loadingItems, loadingFatal.length ? F.cap : null), { items: loadingItems, fatal: loadingFatal }),
   smooth: Object.assign(total(smoothItems, smoothFatal.length ? F.cap : null), { items: smoothItems, fatal: smoothFatal }),
   memory: Object.assign(total(memoryItems, memoryFatal.length ? F.cap : null), {
@@ -315,6 +348,8 @@ loadingItems.concat(smoothItems, memoryItems).forEach((i) => {
   if (i.score != null) i.score = Math.round(i.score * 100);
 });
 
+// cocos-frame-rate explains a cap that keeps FPS off 60 or off cadence; it is not scored. Level set below.
+let frameRateLevel = "yellow";
 const COCOS_LEVEL = {
   "cocos-spine-realtime": "orange",
   "cocos-spine-cache-warning": "orange",
@@ -327,7 +362,9 @@ const COCOS_LEVEL = {
   "cocos-image-cache-kept": "orange",
   "cocos-dynamic-atlas-off": "yellow",
   "cocos-webgl1": "yellow",
-  "cocos-frame-rate": "red",
+  get "cocos-frame-rate"() {
+    return frameRateLevel;
+  },
   "cocos-console-errors": "yellow",
 };
 
@@ -367,14 +404,15 @@ function fpsTable() {
     .filter((g) => ORDER.includes(g.group) && g.frames >= 30)
     .sort((a, b) => ORDER.indexOf(a.group) - ORDER.indexOf(b.group))
     .map((g) => {
+      const scale = (g.expectedFps || 60) / 60;
       const fails =
-        (g.fps != null && g.fps < F.stageMin) ||
+        (g.fps != null && g.fps < F.stageMin * scale) ||
         (g.dropShare != null && g.dropShare > F.dropShareMax) ||
         (g.badShare != null && g.badShare > F.badShareMax) ||
-        (g.fpsLow != null && g.fpsLow < F.lowMin);
-      const bad = (g.fps != null && g.fps < 45) || (g.dropShare != null && g.dropShare > 0.1);
+        (g.fpsLow != null && g.fpsLow < F.lowMin * scale);
+      const bad = (g.fps != null && g.fps < 45 * scale) || (g.dropShare != null && g.dropShare > 0.1);
       const level = bad ? "red" : fails ? "orange" : g.dropShare > F.dropShareMax / 2 ? "yellow" : "green";
-      return { group: g.group, label: stageName(g.group), stages: g.stages, fps: g.fps, fpsLow: g.fpsLow, dropShare: g.dropShare, badShare: g.badShare, gpuPeakMb: g.gpuPeakMb, level };
+      return { group: g.group, label: stageName(g.group), stages: g.stages, fps: g.fps, fpsLow: g.fpsLow, dropShare: g.dropShare, badShare: g.badShare, gpuPeakMb: g.gpuPeakMb, expectedFps: g.expectedFps, offShare: g.offShare, presented: g.presented, level };
     });
 }
 
@@ -448,7 +486,7 @@ function findingRows() {
   }
   if (kinds.bad.length) {
     const w = worstOf(kinds.bad, "badShare", 1);
-    rows.push({ rule: "fps-bad", level: "orange", title: `${names(kinds.bad)}有 ${round((w.badShare || 0) * 100, 1)}% 的幀超過 33 ms`, area: "FPS", fix: fpsHint(w), stage: w.stage, t: null });
+    rows.push({ rule: "fps-bad", level: "orange", title: `${names(kinds.bad)}有 ${round((w.badShare || 0) * 100, 1)}% 的幀是壞幀`, area: "FPS", fix: fpsHint(w), stage: w.stage, t: null });
   }
 
   if (ratio != null && ratio > 0.5) {
@@ -466,7 +504,8 @@ function findingRows() {
   }
 
   const leak = found.find((f) => f.id === "leak-suspected");
-  if (leak) rows.push({ rule: "leak-suspected", level: "red", title: `轉了之後 JS 記憶體從 ${Math.round(leak.from)} 漲到 ${Math.round(leak.to)} MB`, area: "記憶體", fix: "轉前、轉後各拍一次 heap snapshot 比對，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。", stage: null, t: null });
+  if (leak && leak.status === "retained-after-gc") rows.push({ rule: "leak-suspected", level: "red", title: `大 GC 之後 JS 記憶體地板仍比轉前高 ${Math.round(leak.delta)} MB`, area: "記憶體", fix: "轉前、轉後各拍一次 heap snapshot 比對，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。", stage: null, t: null });
+  else if (leak) rows.push({ rule: "leak-suspected", level: "orange", title: `JS 記憶體地板每轉多 ${leak.slopeMb} MB，這輪沒看到大 GC`, area: "記憶體", fix: "還不能確定是洩漏：大 GC 可能會收回。多轉幾十轉看地板會不會掉回來，或轉前、轉後各拍一次 heap snapshot 比對。", stage: null, t: null });
 
   const idle = grp("idle");
   found.filter((f) => f.id === "panel-heavier").forEach((f) => {
@@ -571,8 +610,17 @@ function cocosAdvice() {
   if (settings.webglVersion === 1 && settings.webgl2Available) {
     add("cocos-webgl1", "draw call", `用的是 WebGL 1${last.engine ? `（Cocos ${last.engine}）` : ""}，瀏覽器有 WebGL 2`, "Cocos 2.4 只有 WebGL 1，沒有開關。WebGL 2 要換 3.x。這次先降 draw call。");
   }
-  if (settings.frameRate != null && settings.frameRate < 60) {
-    add("cocos-frame-rate", "穩定性", `幀率上限設成 ${settings.frameRate}`, "目標是穩定 60，確認 cc.game.frameRate 是 60。");
+  const cap = settings.frameRate;
+  const hz = gf ? gf.hz : 60;
+  if (cap != null && cap < hz && Math.abs(hz / cap - Math.round(hz / cap)) > 0.05) {
+    frameRateLevel = "orange";
+    add("cocos-frame-rate", "節奏", `幀率上限 ${cap} 不能整除螢幕 ${hz} Hz，畫面一幀快一幀慢`, `cc.game.frameRate 設成 ${Math.round(hz / 2)} 或 ${hz}。`);
+  } else if (cap != null && cap > hz) {
+    frameRateLevel = "yellow";
+    add("cocos-frame-rate", "節奏", `幀率上限 ${cap} 高於螢幕 ${hz} Hz，多算的幀不會上螢幕`, `cc.game.frameRate 設成 ${hz}，省下多算的 CPU。`);
+  } else if (cap != null && cap < 60 * 0.95) {
+    frameRateLevel = "yellow";
+    add("cocos-frame-rate", "節奏", `幀率上限 ${cap}，目標是 60`, "cc.game.frameRate 設成 60。");
   }
   const errors = consoleGroups.filter((g) => g.level === "error" || (g.count > C.consoleRepeat && !cacheWarn.includes(g)));
   if (errors.length) {

@@ -33,11 +33,13 @@
   "gpuLightP95Ms": 8,
   "textureWarnMb": 150,
   "gpuMemoryWarnMb": 200,
+  "frames": { "badFactor": 1.5, "paceTolerance": 0.25 },
   "fps": { "stageMin": 55, "dropShareMax": 0.03, "badShareMax": 0.01, "lowMin": 25 },
   "cells": {
     "fps": { "orange": 55, "red": 45 },
     "drop": { "orange": 0.03, "red": 0.1 },
     "bad": { "orange": 0.01, "red": 0.05 },
+    "pace": { "orange": 0.05, "red": 0.5 },
     "low": { "orange": 25, "red": 15 },
     "cpuP95Ms": { "orange": 12, "red": 16.7 },
     "drawsVsIdle": { "orange": 2 },
@@ -46,6 +48,7 @@
   },
   "leakMb": 15,
   "leakTailSpins": 10,
+  "heap": { "featureFactor": 5, "floorWindowMs": 10000, "majorGcDropMb": 8, "tailSlopeMb": 0.3 },
   "timeline": {
     "bucketMs": 250,
     "heapSampleMs": 1000,
@@ -65,12 +68,12 @@
   "scoring": {
     "memoryBudgetMb": 300,
     "smooth": {
-      "stable": { "weight": 40, "full": 0.99, "zero": 0.9, "badFrameMs": 33 },
-      "stall": { "weight": 30, "full": 50, "zero": 1000 },
-      "cpu": { "weight": 30, "full": 4, "zero": 16.7 }
+      "steady": { "weight": 50, "minFps": 55, "full": 0.99, "zero": 0.8 },
+      "stall": { "weight": 25, "full": 50, "zero": 1000 },
+      "cpu": { "weight": 25, "full": 4, "zero": 16.7 }
     },
     "loading": {
-      "stable": { "weight": 50, "full": 0.9, "zero": 0.5, "badFrameMs": 33 },
+      "steady": { "weight": 50, "minFps": 55, "full": 0.9, "zero": 0.5 },
       "stall": { "weight": 50, "full": 100, "zero": 1000 }
     },
     "memory": {
