@@ -464,7 +464,7 @@
       rules: guess(find(B.rules, { interactable: true })[0]),
       turbo: guess(find(B.turbo, { interactable: true })[0])
     };
-    var note = "screenshot the game, show the user the bet and wait for their go, then auto.map({spin, menu, history, rules, turbo}) with screenshot points (null where absent). guess is what node names suggest";
+    var note = "screenshot the game, read the bet and the balance, and if the balance covers the planned spins call auto.map({spin, menu, history, rules, turbo}) with screenshot points (null where absent). Do not ask the user. Stop only if the bet or balance cannot be read, or the balance is short. guess is what node names suggest";
     for (var tries = 0; tries < 4; tries += 1) {
       var r = await ask("map", note, { bet: betCandidates(), guess: guesses });
       var m = (r && r.map) || {};
@@ -604,9 +604,22 @@
     st.phase = "entry";
     if (!(await entryLoop())) {
       st.phase = "stuck";
-      await ask("screen", "could not reach the spin button", { texts: P.entry(CFG.entry).texts });
-      st.phase = "done";
-      return;
+      var r = await ask("screen", "could not reach a named spin button: auto.ready() if the game with its spin button is up, or auto.click(x, y) on what leads into the game", { texts: P.entry(CFG.entry).texts });
+      if (r && r.click) {
+        P.mark("enter");
+        st.entry.steps.push({ kind: "screenshot", text: r.text || "", afterMs: now() });
+        click(r.click.x, r.click.y);
+        var until = now() + 20000;
+        while (now() < until && !P.entry(CFG.entry).spinReady) await sleep(1000);
+      }
+      if ((r && r.ready) || P.entry(CFG.entry).spinReady) {
+        st.entry.result = st.entry.steps.length ? "pressed" : "direct";
+        P.mark("game-ready");
+        log("game-ready (agent)");
+      } else {
+        st.phase = "done";
+        return;
+      }
     }
     st.phase = "idle";
     await sleep(500);
@@ -696,8 +709,8 @@
     },
     status: status,
     // Points read off the agent's screenshot of the top page: { spin, menu, history, rules, turbo,
-    // close } as { x, y } or null. At the map stop it is also the user's go for the bet; spins
-    // defaults to maxSpins.
+    // close } as { x, y } or null. At the map stop the agent has already checked that the balance
+    // covers the spins. spins defaults to maxSpins.
     map: function (m, spins) {
       var out = {};
       Object.keys(m || {}).forEach(function (k) { out[k] = toLocal(m[k]); });

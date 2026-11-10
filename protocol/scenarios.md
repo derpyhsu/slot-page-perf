@@ -7,7 +7,7 @@
 1. `boot`：網址開始到第一個 WebGL 幀。探針自動切。
 2. `loading`：第一個幀到 agent 呼叫 `mark("game-ready")`。spin 鈕可按時才打這個 mark。引擎主迴圈掛上之前，主執行緒時間只靠 long task。中間要按開始或關公告時，照下面「進遊戲」切成 `splash` 和 `enter`。
 3. `idle`：`mark("idle")` 後等待 `idleSeconds`。這是後面所有差值的基準。
-4. 截一張遊戲畫面，標出 spin、功能列表、下注紀錄、遊戲規則、加速的位置（見下面「按鈕位置」）。同時向使用者確認畫面上的目前押注。未確認不開始 spin。
+4. 截一張遊戲畫面，標出 spin、功能列表、下注紀錄、遊戲規則、加速的位置（見下面「按鈕位置」）。同時讀畫面上的押注和餘額。餘額夠這一次的 spin 就繼續，不改押注，也不問使用者。讀不到押注或餘額，或餘額不夠，才停下來說明。
 5. `history-before`：打開下注紀錄。先記 `panelSpikeSeconds` 的尖峰，再記 `panelSteadySeconds` 的穩態，然後關閉。功能列表只負責打開，不單獨成結論。
 6. `rules`：打開遊戲規則，同樣先尖峰再穩態，然後關閉。關閉後再量一段短待機，記進 `idle-after-rules`。
 7. 一般 spin `normalSpins` 次。每一次 `mark("spin-N")` 開始，停穩後結束。
