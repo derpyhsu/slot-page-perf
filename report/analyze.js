@@ -565,18 +565,22 @@ function findingRows() {
     const width = tl.bucketMs || 250;
     return tl.buckets.reduce((sum, b) => (b[0] + width >= t && b[0] <= end ? sum + (b[6] || 0) : sum), 0);
   };
+  // Only the hitch classification is measured. A texture upload in the same bucket happened at the
+  // same time; it is reported that way, not as the cause.
   const stallFix = (worst) => {
     const upload = uploadMbAt(worst.t, worst.value);
     const file = worst.urls && worst.urls.length ? fileOf(worst.urls[0]) : "";
     const cpu = worst.cpu;
     const waiting = worst.id === "hitch-network" || (cpu != null && worst.value && cpu < worst.value * 0.2 && file);
+    const panel = /^(menu|history|rules)/.test(worst.stage || "");
     if (waiting) {
       const cpuBit = cpu != null ? `，主執行緒只花了 ${cpu} ms` : "";
       return `最長的這次是在等下載${file ? `（${file}）` : ""}${cpuBit}。先看這個請求有沒有被同網域的其他請求堵住，大檔改到進遊戲前載完。`;
     }
-    if (upload >= 1) return `這一幀附近上傳了 ${round(upload, 1)} MB 貼圖。不要在開面板的那一幀同步上傳，拆成幾幀做。`;
     if (worst.id === "hitch-main-thread") return "主執行緒一次做太多；把初始化拆成幾幀做，不要一次建完。";
-    return "在這一刻錄一次 DevTools Performance，看這段時間在做什麼；常見是一次建好整頁節點或同步上傳貼圖。";
+    const cpuBit = cpu != null ? `主執行緒只花了 ${cpu} ms，` : "";
+    if (upload >= 1) return `${cpuBit}同一時段上傳了 ${round(upload, 1)} MB 貼圖，時間吻合但還不能確定是原因。可以在這一刻錄一次 DevTools Performance 看 GPU 列；若是上傳造成，${panel ? "開面板時" : "這段"}的大圖可以拆成幾幀或提前上傳。`;
+    return `${cpuBit}可以在這一刻錄一次 DevTools Performance，看這段時間在做什麼；常見是一次建好整頁節點或同步上傳貼圖。`;
   };
 
   const hitches = found.filter((f) => /^hitch-/.test(f.id) && f.value >= thresholds.hitchMs);
@@ -742,19 +746,64 @@ function findingRows() {
   return rows;
 }
 
+// Which score a row belongs to, so the report can list it under that gauge.
+// todo() runs before module-level consts below it exist, so this is a function.
+function isLoadStage(name) {
+  return ["boot", "loading", "splash", "enter"].includes(String(name || "").replace(/-spike$/, ""));
+}
+function dimOf(r) {
+  if (r.note) return "other";
+  if (r.area === "記憶體" || r.rule === "memory-budget" || r.rule === "leak-suspected") return "memory";
+  if (r.area === "穩定性") return "other";
+  if (/^network-|^shader-stall$/.test(r.rule || "") || isLoadStage(r.stage)) return "loading";
+  return "smooth";
+}
+
 // One list for the report: the agent's issues, finding rows, then Cocos advice, worst first.
-// An issue whose `rule` names a finding row or Cocos rule replaces that generic row.
+// An issue whose `rule` names a finding row or Cocos rule replaces that generic row; an issue with
+// no rule is a note about the measurement itself. Rows that share one measured cause become one
+// row: the first keeps its rule and the others go to `parts`.
 function todo() {
   const rank = { red: 0, orange: 1, yellow: 2, green: 3 };
   const issues = ev.issues || [];
   const covered = new Set(issues.map((i) => i.rule).filter(Boolean));
   const rows = issues
-    .map((i) => ({ level: i.level || "red", title: i.title, area: i.area || stageName(i.stage) || "", fix: i.next, stage: i.stage || null, t: i.t == null ? null : i.t }))
+    .map((i) => Object.assign({ level: i.level || "red", title: i.title, area: i.area || stageName(i.stage) || "", fix: i.next, stage: i.stage || null, t: i.t == null ? null : i.t }, i.rule ? { rule: i.rule } : { note: true }))
     .concat(ev.findingRows.filter((r) => !covered.has(r.rule)))
     .concat(ev.cocosAdvice.items.filter((c) => !covered.has(c.id)).map((c) => ({ level: c.level, title: c.title, area: c.area, fix: c.fix, stage: null, t: null, rule: c.id })));
   // A panel row already names the uncached labels on that page, so the global label row would repeat it.
   const toldLabels = rows.some((r) => r.fix && r.fix.includes("沒開快取"));
-  const shown = toldLabels ? rows.filter((r) => r.rule !== "cocos-label-no-cache") : rows;
+  let shown = toldLabels ? rows.filter((r) => r.rule !== "cocos-label-no-cache") : rows;
+  shown.forEach((r) => {
+    r.dim = dimOf(r);
+  });
+  const timing = (r) => /^(stall|fps)-/.test(r.rule || "");
+  const { SOFTWARE_GPU } = require("./findings");
+  if (SOFTWARE_GPU.test((ev.conditions && ev.conditions.gpu) || "")) {
+    // Software rendering: every stall and FPS row reads this machine, so they become one row.
+    const xs = shown.filter(timing);
+    if (xs.length > 1) {
+      const head = xs.slice().sort((a, b) => rank[a.level] - rank[b.level])[0];
+      const stalls = xs.filter((r) => /^stall-/.test(r.rule)).length;
+      const merged = Object.assign({}, head, {
+        title: `${stalls} 個階段有停頓${xs.some((r) => r.rule === "fps-low") ? "，FPS 也低" : xs.some((r) => /^fps-/.test(r.rule)) ? "，也有掉幀" : ""}（這台是軟體繪製）`,
+        area: "卡頓",
+        fix: "這台電腦用軟體繪製，停頓和 FPS 反映的是這台電腦，不是玩家裝置。建議先在有 GPU 的機器重跑，再看哪些停頓還在。",
+        dim: "smooth",
+        env: "software",
+        parts: xs.map((r) => ({ rule: r.rule, title: r.title, stage: r.stage, t: r.t })),
+      });
+      shown = shown.filter((r) => !timing(r) || r === head).map((r) => (r === head ? merged : r));
+    }
+  } else {
+    // Loading and entry FPS rows reuse the stall advice of the same stage, so they sit under it.
+    shown.filter((r) => /^fps-/.test(r.rule || "") && isLoadStage(r.stage)).forEach((f) => {
+      const host = shown.find((r) => r.rule === `stall-${f.stage}`);
+      if (!host) return;
+      host.parts = (host.parts || []).concat({ rule: f.rule, title: f.title, stage: f.stage, t: f.t });
+      shown = shown.filter((r) => r !== f);
+    });
+  }
   return shown.map((r, i) => Object.assign(r, { order: i })).sort((a, b) => rank[a.level] - rank[b.level] || a.order - b.order).map(({ order, ...r }, i) => Object.assign({ n: i + 1 }, r));
 }
 

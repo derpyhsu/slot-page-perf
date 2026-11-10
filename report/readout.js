@@ -4,7 +4,9 @@
 
 const { groups, groupOf, SOFTWARE_GPU } = require("./findings");
 
-const CELLS = require("../protocol/thresholds.json").cells;
+const THRESHOLDS = require("../protocol/thresholds.json");
+const CELLS = THRESHOLDS.cells;
+const FATAL_CAP = (THRESHOLDS.scoring && THRESHOLDS.scoring.fatal && THRESHOLDS.scoring.fatal.cap) || 49;
 
 const NAMES = { loading: "載入階段", smooth: "幀率穩定度", memory: "資源占用" };
 const COLOR = { red: "#e5484d", orange: "#f76b15", yellow: "#e2a336", green: "#30a46c" };
@@ -263,80 +265,202 @@ function readoutMarkdown(ev) {
   return lines.join("\n");
 }
 
-function gauge(part, name, hint) {
-  const score = part.score;
-  const color = COLOR[levelOf(score)];
-  const r = 52;
-  const c = 2 * Math.PI * r;
-  const shown = score == null ? 0 : score / 100;
-  // Only the three items that cost the most points; the rest sit in the collapsed 全部依據 table.
-  const lost = (i) => (i.score == null ? 0 : i.weight * (100 - i.score));
-  const losers = (part.items || []).filter((i) => i.value != null && lost(i) > 0).sort((a, b) => lost(b) - lost(a)).slice(0, 3);
-  const bits = (losers.length ? losers : [])
-    .map((i) => {
-      const shownValue = i.unit === "%" ? `${i.value}%` : `${i.value} ${i.unit}`;
-      const where = spinWhere(i.stage);
-      return `<li><span>${esc(i.label)}</span><b style="color:${COLOR[levelOf(i.score)]}">${esc(shownValue)}${where ? ` · ${esc(where)}` : ""}</b></li>`;
-    })
-    .join("");
-  return `<div class="gauge">
-    <svg width="148" height="148" viewBox="0 0 148 148" aria-hidden="true">
-      <circle cx="74" cy="74" r="${r}" fill="none" stroke="#e6e8eb" stroke-width="8"/>
-      ${shown > 0 ? `<circle cx="74" cy="74" r="${r}" fill="none" stroke="${color}" stroke-width="8" stroke-linecap="round" stroke-dasharray="${(c * shown).toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 74 74)"/>` : ""}
-      <text x="74" y="74" text-anchor="middle" dominant-baseline="central" font-size="42" font-weight="500" fill="${color}">${score == null ? "—" : score}</text>
-    </svg>
-    <div class="gauge-name" style="color:${color}">${esc(name)}</div>
-    <div class="gauge-hint">${esc(hint)}${part.provisional ? ` · 暫定 ${part.coverage}%` : ""}</div>
-    <ul class="gauge-bits">${bits || "<li><span>每一項都滿分</span></li>"}</ul>
-  </div>`;
+function scoreMark(score) {
+  if (score == null) return '<span class="lm dash"></span>';
+  const level = levelOf(score);
+  const shape = level === "red" ? "tri" : level === "green" ? "circ" : "sq";
+  return `<span class="lm ${shape}" style="color:${COLOR[level]}"></span>`;
 }
 
-function heroMetrics(ev, m) {
-  const spin = m.cols.find((c) => c.label === "spin" || c.label.startsWith("spin ")) || m.cols[m.cols.length - 1];
-  const est = ev.score.memory.estimateMb;
-  const budget = (ev.score.memory && ev.score.memory.budgetMb) || 300;
-  const cards = [];
-  if (spin && spin.fps != null) cards.push({ k: "spin FPS", v: String(spin.fps), level: cellLevel("fps", spin.fps, true) || "green" });
-  if (spin) cards.push({ k: "掉幀", v: pct(spin.drop), level: cellLevel("drop", spin.drop) || "green" });
-  if (spin && spin.cpuMed != null) cards.push({ k: "CPU p95 中位", v: `${round(spin.cpuMed, 1)} ms`, sub: spin.cpuMax != null && spin.cpuMax - spin.cpuMed >= 1.5 ? `最高 ${round(spin.cpuMax, 1)} ms${spinWhere(spin.cpuStage) ? ` · ${spinWhere(spin.cpuStage)}` : ""}` : "", level: cellLevel("cpuP95Ms", spin.cpuMed) || "green" });
-  else if (spin && spin.cpuMax != null) cards.push({ k: "CPU p95", v: `${round(spin.cpuMax, 1)} ms`, level: cellLevel("cpuP95Ms", spin.cpuMax) || "green" });
-  if (est) cards.push({ k: "GPU", v: mb(est.texture), sub: `預算 ${budget} MB`, level: cellLevel("gpuMb", est.texture) || "green" });
-  if (est) cards.push({ k: "推估", v: mb(est.total), sub: `JS ${Math.round(est.heap)} + 畫面 ${Math.round(est.framebuffer)}`, level: est.total > budget * 2 ? "red" : est.total > budget ? "orange" : "green" });
-  const worst = m.cols.reduce((a, c) => (c.worst > (a ? a.worst : 0) ? c : a), null);
-  if (worst && worst.worst >= 50) cards.push({ k: "最長停頓", v: `${Math.round(worst.worst)} ms`, sub: worst.label, level: cellLevel("stallMs", worst.worst) || "yellow" });
-  return `<div class="metrics">${cards
-    .map((c) => `<div class="metric" style="border-top-color:${COLOR[c.level] || COLOR.yellow}"><div class="mv" style="color:${COLOR[c.level] || COLOR.yellow}">${esc(c.v)}</div><div class="mk">${esc(c.k)}</div>${c.sub ? `<div class="ms">${esc(c.sub)}</div>` : ""}</div>`)
-    .join("")}</div>`;
+function itemText(i) {
+  if (i.value == null) return "沒量到";
+  const shown = i.unit === "%" ? `${i.value}%` : `${i.value} ${i.unit}`;
+  return `${i.approx ? "約 " : ""}${shown}`;
+}
+
+// The cap only changes the number when the weighted score would have been higher.
+function fatalNote(part) {
+  const list = part.fatal || [];
+  if (!list.length || part.score == null || part.score < FATAL_CAP) return "";
+  const bits = [];
+  const stall = list.filter((f) => f.id === "stall" && f.value != null).sort((a, b) => b.value - a.value)[0];
+  if (stall) bits.push(`最長停頓 ${Math.round(stall.value)} ms`);
+  const lows = list.filter((f) => f.id === "low-fps" && f.value != null);
+  if (lows.length) bits.push(`平均 FPS 最低 ${lows.reduce((a, b) => (b.value < a.value ? b : a)).value}`);
+  const over = list.find((f) => f.id === "over-budget");
+  if (over && over.value != null) bits.push(`推估 ${Math.round(over.value)} MB，超過預算兩倍`);
+  if (list.some((f) => f.id === "leak-suspected")) bits.push("JS heap 轉完沒回到轉前");
+  return `<p class="gauge-fatal">分數最高 ${FATAL_CAP}：${esc(bits.join("，"))}。</p>`;
+}
+
+function legend() {
+  return `<div class="legend">${[
+    ["red", "0–49"],
+    ["orange", "50–69"],
+    ["yellow", "70–89"],
+    ["green", "90–100"],
+  ].map(([level, text]) => `<span>${scoreMark(level === "red" ? 0 : level === "orange" ? 50 : level === "yellow" ? 70 : 90)} ${text}</span>`).join("")}</div>`;
+}
+
+const DIMS = [
+  ["loading", NAMES.loading],
+  ["smooth", NAMES.smooth],
+  ["memory", NAMES.memory],
+];
+const PRIORITY = { red: "P0", orange: "P1", yellow: "P2" };
+const FATAL_TEXT = { stall: "停頓超過門檻", "low-fps": "FPS 低於門檻", "over-budget": "超過記憶體預算兩倍", "leak-suspected": "JS heap 轉完沒回到轉前" };
+
+function loss(i) {
+  return i.score == null ? 0 : (i.weight * (100 - i.score)) / 100;
+}
+function worstItem(part) {
+  return (part.items || []).filter((i) => i.score != null && i.score < 100).sort((a, b) => loss(b) - loss(a))[0] || null;
+}
+// What the line under a gauge says: the cap reason, else the item that cost the most.
+function gaugeNote(part) {
+  const fatal = fatalNote(part);
+  if (fatal) return fatal;
+  const w = worstItem(part);
+  if (!w) return '<p class="gauge-hint">每一項都滿分</p>';
+  return `<p class="gauge-hint">扣分最多：${esc(w.label)} ${esc(itemText(w))}</p>`;
+}
+
+function ring(part) {
+  const score = part.score;
+  const color = COLOR[levelOf(score)];
+  const r = 46;
+  const c = 2 * Math.PI * r;
+  const shown = score == null ? 0 : Math.max(score, 1) / 100;
+  const dash = part.provisional ? ' stroke-dasharray="5 4"' : "";
+  return `<svg width="112" height="112" viewBox="0 0 112 112" aria-hidden="true">
+      <circle cx="56" cy="56" r="${r}" fill="none" stroke="#e6e8eb" stroke-width="7"/>
+      ${shown > 0 ? `<circle cx="56" cy="56" r="${r}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${(c * shown).toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 56 56)"/>` : ""}
+      ${part.provisional && shown > 0 ? `<circle cx="56" cy="56" r="${r + 6}" fill="none" stroke="${color}" stroke-width="1"${dash} opacity="0.5"/>` : ""}
+      <text x="56" y="57" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="500" fill="${color}">${score == null ? "—" : score}</text>
+    </svg>`;
+}
+
+function gaugeTab(key, part, name, selected) {
+  const color = COLOR[levelOf(part.score)];
+  return `<button type="button" class="gtab" role="tab" id="tab-${key}" data-k="${key}" aria-controls="panel-${key}" aria-selected="${selected}" tabindex="${selected ? 0 : -1}">
+    ${ring(part)}
+    <span class="gauge-name" style="color:${color}">${esc(name)}${part.provisional ? `<span class="prov">暫定 · 量到 ${part.coverage}%</span>` : ""}</span>
+    ${gaugeNote(part)}
+  </button>`;
+}
+
+function itemRow(i) {
+  if (i.value == null) return `<li class="off"><span class="il">${esc(i.label)}</span><span class="iv">沒量到，不計分</span></li>`;
+  const level = levelOf(i.score);
+  const where = spinWhere(i.stage);
+  const lost = loss(i);
+  const pos = i.score == null ? null : Math.min(100, Math.max(0, 100 - i.score));
+  return `<li><span class="il">${scoreMark(i.score)}${esc(i.label)}${where ? `<small>${esc(where)}</small>` : ""}</span><span class="iv"${level !== "green" ? ` style="color:${COLOR[level]}"` : ""}>${esc(itemText(i))}</span>` +
+    (pos == null ? "" : `<span class="scale" aria-hidden="true"><i style="left:calc(${pos}% - 1px)"></i></span><span class="scap"><span>滿分 ${esc(i.full)}</span><span>${lost >= 0.05 ? `扣 ${round(lost, 1)} 分 · ` : ""}零分 ${esc(i.zero)}</span></span>`) +
+    "</li>";
+}
+
+function itemList(part) {
+  const items = part.items || [];
+  const lost = items.filter((i) => i.value != null && i.score != null && i.score < 100).sort((a, b) => loss(b) - loss(a));
+  const full = items.filter((i) => i.value != null && (i.score == null || i.score >= 100));
+  const off = items.filter((i) => i.value == null);
+  let html = `<h3>計分子項 · 扣分多的在前</h3><ul class="items">${lost.map(itemRow).join("")}${off.map(itemRow).join("")}</ul>`;
+  if (!lost.length && !off.length) html = `<h3>計分子項</h3><p class="small">${items.length} 項都滿分。</p><ul class="items">${full.map(itemRow).join("")}</ul>`;
+  else if (full.length) html += `<details class="more"><summary>另外 ${full.length} 項滿分</summary><ul class="items">${full.map(itemRow).join("")}</ul></details>`;
+  return html;
+}
+
+function ctxList(rows) {
+  const xs = rows.filter(([, v]) => v != null && v !== "");
+  return xs.length ? `<ul class="ctx">${xs.map(([k, v]) => `<li><span>${esc(k)}</span><span>${esc(v)}</span></li>`).join("")}</ul>` : "";
+}
+
+// Numbers that explain a score without being part of it.
+function loadingContext(ev) {
+  const st = ev.stages || [];
+  const wall = (n) => st.filter((s) => s.name === n).reduce((a, s) => a + (s.wallMs || 0), 0);
+  const sec = (ms) => (ms ? `${round(ms / 1000, 1)} 秒` : null);
+  const total = ["boot", "loading", "splash", "enter"].reduce((a, n) => a + wall(n), 0);
+  const res = ev.resources && ev.resources.status === "ok" ? ev.resources : null;
+  const sh = ev.shaders && ev.shaders.status === "ok" ? ev.shaders : null;
+  const entry = ev.entry && ev.entry.result ? { direct: "載入完直接能轉", pressed: `按了 ${(ev.entry.steps || []).length} 次才能轉`, stuck: "卡住，沒進到能轉的畫面" }[ev.entry.result] : null;
+  return `<h3>背景數字 · 不計分</h3>` + ctxList([
+    ["打開到能轉", sec(total)],
+    ["其中載入", sec(wall("loading"))],
+    ["其中進遊戲", sec(wall("enter"))],
+    ["進遊戲", entry],
+    ["資源請求", res ? `${res.count} 個${res.decodedMb != null ? ` · 解碼後 ${round(res.decodedMb, 1)} MB` : ""}` : null],
+    ["shader", sh ? `${sh.count} 個 · 共 ${round(sh.ms, 1)} ms${sh.maxMs != null ? ` · 最長 ${round(sh.maxMs, 1)} ms` : ""}` : null],
+  ]);
+}
+
+function stageTable(m) {
+  if (!m.cols.length) return "";
+  const cell = (text, level, raw) => `<td class="num"${level ? ` style="color:${COLOR[level]};font-weight:600"` : ""}>${raw ? text : esc(text)}</td>`;
+  const tr = (name, pick, level, raw) => '<tr><td class="lab">' + esc(name) + "</td>" + m.cols.map((c) => cell(pick(c), level && level(c), raw)).join("") + "</tr>";
+  const L = cellLevels(m);
+  let html = `<h3>各階段</h3><div class="scroll"><table><tr><th>讀數</th>${m.cols.map((c) => `<th class="num">${esc(c.label)}</th>`).join("")}</tr>`;
+  html += tr("平均 FPS", (c) => (c.fps == null ? "—" : String(c.fps)), L.fps);
+  html += tr("掉幀", (c) => pct(c.drop), L.drop);
+  html += tr("壞幀", (c) => pct(c.bad), L.bad);
+  if (m.cols.some((c) => c.pace != null)) html += tr("節奏不齊", (c) => pct(c.pace), L.pace);
+  html += tr("1% low", (c) => (c.low == null ? "—" : String(c.low)), L.low);
+  if (m.cpuOn) html += tr("CPU p95", cpuHtml, L.cpu, true);
+  html += tr("每幀 draw", (c) => (c.draws == null ? "—" : String(c.draws)), L.draws);
+  html += tr("GPU 峰值", (c) => mb(c.gpu), L.gpu);
+  if (m.cols.some((c) => c.worst >= 50)) html += tr("最長停頓", (c) => (c.worst >= 50 ? `${Math.round(c.worst)} ms` : ""), L.stall);
+  html += "</table></div>";
+  html += '<p class="small">FPS、壞幀、節奏看的是實際上螢幕的幀。壞幀是超過應有幀長 1.5 倍的幀，節奏不齊是離應有幀長超過 25% 的幀。CPU p95 是引擎主迴圈在該階段 95% 的幀裡花的時間，不是作業系統的 CPU。</p>';
+  return html;
+}
+
+function memoryContext(ev, m) {
+  const S = ev.score;
+  const est = S.memory.estimateMb;
+  const budget = S.memory.budgetMb || 300;
+  let html = "<h3>推估組成</h3>";
+  if (est) {
+    const max = Math.max(budget, est.total) * 1.05;
+    const w = (v) => `${Math.min(100, (100 * v) / max).toFixed(1)}%`;
+    html += `<div class="stack"><span style="width:${w(est.heap)};background:#0090ff"></span><span style="width:${w(est.texture)};background:#8e4ec6"></span><span style="width:${w(est.framebuffer)};background:#80868b"></span><i style="left:${w(budget)}"></i></div>`;
+    html += `<p class="small">JS ${mb(est.heap)} · ${est.gpuSource === "gpu" ? "GPU" : "貼圖"} ${mb(est.texture)} · 畫面 ${mb(est.framebuffer)}，合計 ${mb(est.total)}。紅線是預算 ${budget} MB（${Math.round((est.total / budget) * 100)}%）。</p>`;
+  } else html += '<p class="small">這次沒量到。</p>';
+  return html;
+}
+
+function factTable(ev, m) {
+  const facts = factRows(ev, m).filter(([k]) => k !== "推估");
+  if (!facts.length) return "";
+  return `<h3>貼圖與場景</h3><div class="scroll"><table class="facts">${facts.map(([k, a, b]) => `<tr><td class="lab">${esc(k)}</td><td>${esc(a)}${b ? `<div class="sub">${esc(b)}</div>` : ""}</td></tr>`).join("")}</table></div>`;
+}
+
+function panel(ev, m, key, selected) {
+  const part = ev.score[key];
+  let side = "";
+  let wide = "";
+  if (key === "loading") side = loadingContext(ev);
+  if (key === "smooth") wide = stageTable(m);
+  if (key === "memory") {
+    side = memoryContext(ev, m);
+    wide = factTable(ev, m);
+  }
+  return `<div class="panel" role="tabpanel" id="panel-${key}" aria-labelledby="tab-${key}"${selected ? "" : " hidden"}>
+    ${side ? `<div class="panel-cols"><div>${itemList(part)}</div><div>${side}</div></div>` : `<div class="panel-one">${itemList(part)}</div>`}${wide}
+  </div>`;
 }
 
 function readoutHtml(ev) {
   const m = model(ev);
   const S = ev.score;
-  const cell = (text, level, raw) => `<td class="num"${level ? ` style="color:${COLOR[level]};font-weight:600"` : ""}>${raw ? text : esc(text)}</td>`;
-  let html = `<section class="card hero"><div class="gauges">${S.loading ? gauge(S.loading, NAMES.loading, "幀穩定度、卡頓、主執行緒、shader、1% low") : ""}${gauge(S.smooth, NAMES.smooth, "60 FPS 穩定度、1% low、節奏、卡頓、CPU、GPU")}${gauge(S.memory, NAMES.memory, "GPU、JS heap、增長、大貼圖、音效、面板殘留")}</div>${heroMetrics(ev, m)}</section>`;
-  html += '<section class="card"><h2>各階段</h2><div class="scroll">';
-  if (m.cols.length) {
-    html += "<table><tr><th>讀數</th>" + m.cols.map((c) => `<th class="num">${esc(c.label)}</th>`).join("") + "</tr>";
-    const tr = (name, pick, level, raw) =>
-      '<tr><td class="lab">' + esc(name) + "</td>" + m.cols.map((c) => cell(pick(c), level && level(c), raw)).join("") + "</tr>";
-    const L = cellLevels(m);
-    html += tr("平均 FPS", (c) => (c.fps == null ? "—" : String(c.fps)), L.fps);
-    html += tr("掉幀", (c) => pct(c.drop), L.drop);
-    html += tr("壞幀", (c) => pct(c.bad), L.bad);
-    if (m.cols.some((c) => c.pace != null)) html += tr("節奏不齊", (c) => pct(c.pace), L.pace);
-    html += tr("1% low", (c) => (c.low == null ? "—" : String(c.low)), L.low);
-    if (m.cpuOn) html += tr("CPU p95", cpuHtml, L.cpu, true);
-    html += tr("每幀 draw", (c) => (c.draws == null ? "—" : String(c.draws)), L.draws);
-    html += tr("GPU 峰值", (c) => mb(c.gpu), L.gpu);
-    if (m.cols.some((c) => c.worst >= 50)) html += tr("最長停頓", (c) => (c.worst >= 50 ? `${Math.round(c.worst)} ms` : ""), L.stall);
-    html += "</table>";
-    html += '<p class="small">FPS、壞幀、節奏看的是實際上螢幕的幀。應有幀長取螢幕更新間隔與 1000 / 幀率上限較長者；壞幀是超過應有幀長 1.5 倍的幀，節奏不齊是離應有幀長超過 25% 的幀。FPS 與 1% low 以 60 為目標上色；壞幀與節奏依幀率上限判。CPU p95 是引擎主迴圈在該階段 95% 的幀裡花的時間，不是作業系統的 CPU。</p>';
-  }
-  html += "</div></section>";
-  const facts = factRows(ev, m);
-  if (facts.length) {
-    html += '<section class="card"><h2>貼圖與場景</h2><table><tr><th></th><th>這次</th><th></th></tr>' + facts.map(([k, a, b]) => `<tr><td class="lab">${esc(k)}</td><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("") + "</table></section>";
-  }
+  const dims = DIMS.filter(([k]) => S[k]);
+  const rank = (p) => (p.score == null ? 999 : p.score);
+  const pick = dims.slice().sort((a, b) => rank(S[a[0]]) - rank(S[b[0]]))[0][0];
+  const sum = ev.summary || {};
+  const said = [sum.smooth, sum.memory].filter(Boolean).map(esc).join(" · ");
+  let html = `<section class="hero">${said ? `<p class="verdict">${said}</p>` : ""}`;
+  html += `<div class="gauges" role="tablist" aria-label="三個分數">${dims.map(([k, name]) => gaugeTab(k, S[k], name, k === pick)).join("")}</div>${legend()}</section>`;
+  html += `<section class="sec" id="detail"><div class="sec-h"><h2 id="detail-h">${esc(NAMES[pick])}細項</h2><span class="small">點上面的分數切換</span></div>${dims.map(([k]) => panel(ev, m, k, k === pick)).join("")}</section>`;
   return html;
 }
 

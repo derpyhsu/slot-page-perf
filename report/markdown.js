@@ -38,7 +38,7 @@ if (svg) {
   lines.push("");
   lines.push(`![全程時間軸](${svgName})`);
   lines.push("");
-  lines.push("上到下：階段、每 0.25 秒的 FPS（虛線是 60）、主執行緒忙碌比例、超過 50 ms 的卡頓（黑圈數字對應下面表格）、記憶體。");
+  lines.push("上到下：階段、建議發生的位置（黑圈數字對應下面表格）、FPS（55 以上是淺灰，越慢越紅）、主執行緒忙碌比例與 long task、記憶體。等 agent 的時間已從橫軸剪掉，虛線標出略過幾秒。");
 }
 
 const cell = (s) => String(s == null ? "" : s).replace(/\|/g, "\\|").replace(/\n/g, " ");
@@ -49,7 +49,7 @@ if (todo.length) {
   lines.push("");
   lines.push("| # | 問題 | 類別 | 怎麼改 |");
   lines.push("| --- | --- | --- | --- |");
-  todo.forEach((r) => lines.push(`| ${dot[r.level] || dot.red} ${r.n} | ${cell(r.title)} | ${cell(r.area)} | ${cell(r.fix)} |`));
+  todo.forEach((r) => lines.push(`| ${dot[r.level] || dot.red} ${r.n} | ${cell(r.title)}${r.parts && r.parts.length ? `（含：${cell(r.parts.map((x) => x.title).join("；"))}）` : ""} | ${cell(r.area)} | ${cell(r.fix)} |`));
 }
 
 lines.push("");
