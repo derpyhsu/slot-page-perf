@@ -26,8 +26,14 @@ Use the `chrome-devtools` MCP. If it is not connected, stop and point at the REA
 4. `navigate_page` to the game URL with `initScript` = the loader. Then `evaluate_script` `() => typeof __slotPerf`. If it is not `"object"`, the game moved to another origin: navigate again with `initScript` = the contents of `probe/dist/bundle.js`.
 5. `evaluate_script` `() => __slotPerf.auto.start()`.
 6. Loop on `evaluate_script` `async () => __slotPerf.auto.wait(100000)`. It returns a short status as soon as the driver needs you, finishes, or 100 seconds pass:
-   - `needs: "bet"`: show the user `bet` (and a screenshot if `bet` is empty or unclear). Do not spin, and do not change the bet, until they confirm. Then `__slotPerf.auto.go()`.
-   - `needs: "screen"`: take a screenshot, decide what to press using the 進遊戲 rules in scenarios.md, then `__slotPerf.auto.click(x, y, "label")`. If nothing is safe to press, stop and show the user the screenshot.
+   - `needs: "bet"`: take one screenshot. Show the user `bet`. Check that `spin.chosen` sits on the plain spin button, not a buy, super, or feature button; `spin.others` lists the other candidates. Do not spin, and do not change the bet, until they confirm. Then `__slotPerf.auto.go()`, or `__slotPerf.auto.go(null, "<node name>")` to press another candidate.
+   - `needs: "screen"`: take a screenshot and read `note`.
+     - Entry or a blocked spin: decide what to press using the 進遊戲 rules in scenarios.md, then `__slotPerf.auto.click(x, y, "label")`.
+     - "no history/rules button found by name": if you see it, `__slotPerf.auto.click(x, y, "label")` on it, or on the menu that holds it; otherwise `__slotPerf.auto.resume()`.
+     - "could not close": find the ✕ or back button on the screenshot and `__slotPerf.auto.click()` it. Clicks reach HTML panels in same-origin iframes.
+     - "saw no change" after a panel button: `__slotPerf.auto.opened()` if the panel is on screen (HTML panels count), otherwise `__slotPerf.auto.resume()`.
+     - "has run Ns": `__slotPerf.auto.resume()` if a free game or win is playing; if the screen is a store or anything other than a spin, `__slotPerf.auto.click(x, y, "close")` and tell the user.
+     - If nothing is safe to press, stop and show the user the screenshot.
    - `needs: "error"` or `phase: "stuck"`: stop and report `note`.
    - After `phase: "idle"`, check that `channels.engineCpu` is true. If `frameLoop` is `raf`, CPU is unavailable for the run.
 7. When `phase` is `done`, `evaluate_script` `() => __slotPerf.auto.result()` with `filePath` = `runs/<utc>-<slug>/raw.json`. Do not return it inline.
