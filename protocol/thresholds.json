@@ -64,8 +64,17 @@
     "uncompressedShare": 0.5,
     "uncompressedMinMb": 64,
     "npotShare": 0.5,
-    "consoleRepeat": 10
+    "consoleRepeat": 10,
+    "spineBonesRetained": 100,
+    "spineCopiesRetained": 3,
+    "imageStencil": 1,
+    "camerasActive": 1,
+    "renderTextureMb": 8
   },
+  "network": { "hostRequests": 30, "queuedToFire": 8, "duplicate": 3 },
+  "canvasPixels": 2073600,
+  "audioMb": 16,
+  "renderbufferMb": 8,
   "scoring": {
     "memoryBudgetMb": 300,
     "smooth": {

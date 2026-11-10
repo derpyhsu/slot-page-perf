@@ -244,6 +244,52 @@ function findings(ev, T) {
     });
   });
 
+  // One row for a steady stage whose GPU time fills the frame while the CPU stays light.
+  // A later stage that covers the reels and drops GPU time is the contrast, not a second problem.
+  const gpuOf = (name) => {
+    const st = stages.filter((s) => groupOf(s.name) === name && !String(s.name).endsWith("-spike") && s.gpuMs && s.frames >= 30);
+    return st.length ? Math.max(...st.map((s) => s.gpuMs.p95)) : null;
+  };
+  let fill = null;
+  gs.filter((x) => x.group === "idle" || x.group === "spin").forEach((x) => {
+    const gpuP95 = gpuOf(x.group);
+    if (gpuP95 == null || x.cpuP95 == null || gpuP95 <= T.gpuHeavyP95Ms || x.cpuP95 >= T.gpuLightP95Ms) return;
+    if (!fill || gpuP95 > fill.gpuP95) fill = { stage: x.group, gpuP95, cpuP95: x.cpuP95, draws: x.draws };
+  });
+  if (fill) {
+    let contrast = null;
+    ["rules", "history-before", "history-after"].forEach((name) => {
+      const x = g(name);
+      const gpuP95 = gpuOf(name);
+      if (!x || gpuP95 == null || !fill.draws || x.draws < fill.draws * 1.5 || gpuP95 > fill.gpuP95 * 0.5) return;
+      if (!contrast || x.draws > contrast.draws) contrast = { stage: name, gpuP95, draws: x.draws };
+    });
+    out.push({ id: "gpu-fill", stage: fill.stage, gpuP95: fill.gpuP95, cpuP95: fill.cpuP95, draws: fill.draws, contrast });
+  }
+
+  const net = ev.resources;
+  const N = T.network || {};
+  if (net && net.status === "ok") {
+    const blocked = (net.hosts || []).filter((h) => h.count >= (N.hostRequests || 30) && h.queued >= (N.queuedToFire || 8));
+    if (blocked.length) out.push({ id: "network-blocked", hosts: blocked.slice(0, 2) });
+    const dups = (net.duplicates || []).filter((d) => d.count >= (N.duplicate || 3));
+    if (dups.length) out.push({ id: "network-duplicate", files: dups.slice(0, 3) });
+  }
+
+  const ctx = ev.conditions && ev.conditions.context;
+  if (ctx && (ctx.preserveDrawingBuffer || ctx.antialias)) out.push({ id: "context-flags", antialias: !!ctx.antialias, preserveDrawingBuffer: !!ctx.preserveDrawingBuffer, alpha: !!ctx.alpha, bufferW: ctx.bufferW, bufferH: ctx.bufferH });
+  const canvas = ev.conditions && ev.conditions.canvas;
+  if (canvas && canvas.w * canvas.h > (T.canvasPixels || 1920 * 1080)) out.push({ id: "canvas-large", w: canvas.w, h: canvas.h, dpr: ev.conditions.viewport && ev.conditions.viewport.dpr });
+
+  const sh = ev.shaders;
+  if (sh && sh.stalls && sh.stalls.length) {
+    const worst = sh.stalls.reduce((a, b) => (b.ms > a.ms ? b : a));
+    out.push({ id: "shader-stall", value: worst.ms, count: sh.stalls.length, t: worst.t, kind: worst.kind });
+  }
+  const au = ev.audio;
+  if (au && au.status === "ok" && (au.pcmMb >= (T.audioMb || 16) || (au.maxMs != null && au.maxMs >= T.hitchMs && au.pcmMb >= 4))) out.push({ id: "audio-decode", pcmMb: au.pcmMb, count: au.count, maxMs: au.maxMs });
+  if (gpu && gpu.status === "ok" && gpu.renderbufferMb > (T.renderbufferMb || 8)) out.push({ id: "render-target", mb: gpu.renderbufferMb });
+
   return { findings: out, groups: gs, softwareGpu: soft };
 }
 

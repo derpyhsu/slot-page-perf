@@ -30,6 +30,15 @@
     drawTotal: 0,
     texUploads: 0,
     texBytes: 0,
+    shaderMs: 0,
+    shaderN: 0,
+    shaderStalls: [],
+    audioBytes: 0,
+    audioPcm: 0,
+    audioN: 0,
+    audioMs: 0,
+    audioMaxMs: 0,
+    gameReadyAt: null,
     active: new Set(),
     gpuExt: null,
     pendingGpu: [],
@@ -364,6 +373,19 @@
         return orig.apply(this, arguments);
       };
     });
+    ["compileShader", "linkProgram"].forEach(function (name) {
+      if (typeof proto[name] !== "function") return;
+      var orig = proto[name];
+      proto[name] = function () {
+        var t0 = performance.now();
+        var ret = orig.apply(this, arguments);
+        var ms = performance.now() - t0;
+        state.shaderMs += ms;
+        state.shaderN += 1;
+        if (ms >= HITCH_MS && state.shaderStalls.length < 8) state.shaderStalls.push({ t: rel(t0), ms: round(ms), kind: name });
+        return ret;
+      };
+    });
     ["texImage2D", "texSubImage2D", "compressedTexImage2D"].forEach(function (name) {
       if (typeof proto[name] !== "function") return;
       var orig = proto[name];
@@ -505,6 +527,88 @@
         if (url) track(url, false);
         throw err;
       });
+    };
+  }
+
+  function hookAudio(Ctx) {
+    if (!Ctx || !Ctx.prototype || Ctx.prototype.__slotAudio || typeof Ctx.prototype.decodeAudioData !== "function") return;
+    Ctx.prototype.__slotAudio = true;
+    var orig = Ctx.prototype.decodeAudioData;
+    Ctx.prototype.decodeAudioData = function (data) {
+      var bytes = data && data.byteLength ? data.byteLength : 0;
+      var t0 = performance.now();
+      state.audioBytes += bytes;
+      state.audioN += 1;
+      var ret = orig.apply(this, arguments);
+      var done = function (buf) {
+        var ms = performance.now() - t0;
+        state.audioMs += ms;
+        if (ms > state.audioMaxMs) state.audioMaxMs = ms;
+        if (buf && buf.length && buf.numberOfChannels) state.audioPcm += buf.length * buf.numberOfChannels * 4;
+      };
+      if (ret && typeof ret.then === "function") ret.then(done, function () {});
+      else done(ret);
+      return ret;
+    };
+  }
+  hookAudio(window.AudioContext);
+  hookAudio(window.webkitAudioContext);
+
+  // Compact resource timing. Paths drop the query string so a session token never lands in the report.
+  function resourceSummary() {
+    var entries;
+    try { entries = performance.getEntriesByType && performance.getEntriesByType("resource"); } catch (e) { entries = null; }
+    if (!entries) return { status: "unavailable" };
+    if (!entries.length) return { status: "empty", count: 0 };
+    var hosts = {};
+    var paths = {};
+    var slow = [];
+    var transfer = 0;
+    var decoded = 0;
+    var cached = 0;
+    var duringPlay = state.gameReadyAt == null ? null : 0;
+    function shortPath(name) {
+      var clean = String(name || "").split("?")[0].split("#")[0];
+      var parts = clean.split("/").filter(Boolean);
+      return parts.slice(-2).join("/") || clean;
+    }
+    function hostOf(name) {
+      try { return new URL(name, location.href).host; } catch (e) { return ""; }
+    }
+    entries.forEach(function (e) {
+      var path = shortPath(e.name);
+      var host = hostOf(e.name) || "(page)";
+      var ready = e.connectEnd || e.domainLookupEnd || e.fetchStart || e.startTime || 0;
+      var queue = e.requestStart ? Math.max(0, e.requestStart - ready) : 0;
+      var row = hosts[host] || (hosts[host] = { host: host, count: 0, queued: 0, queues: [], protocol: e.nextHopProtocol || "" });
+      row.count += 1;
+      if (queue >= 80) row.queued += 1;
+      if (row.queues.length < 400) row.queues.push(queue);
+      if (e.nextHopProtocol) row.protocol = e.nextHopProtocol;
+      paths[path] = (paths[path] || 0) + 1;
+      if (e.transferSize > 0) transfer += e.transferSize;
+      if (e.decodedBodySize > 0) decoded += e.decodedBodySize;
+      if (e.transferSize === 0 && e.decodedBodySize > 0) cached += 1;
+      if (duringPlay != null && e.startTime >= state.gameReadyAt) duringPlay += 1;
+      slow.push({ path: path, ms: round(e.duration || 0), queueMs: round(queue), kb: e.transferSize ? Math.round(e.transferSize / 1024) : 0 });
+    });
+    var hostRows = Object.keys(hosts).map(function (k) {
+      var h = hosts[k];
+      var qs = h.queues.slice().sort(function (a, b) { return a - b; });
+      return { host: h.host, count: h.count, queued: h.queued, protocol: h.protocol, queueP95: qs.length ? round(qs[Math.min(qs.length - 1, Math.floor(qs.length * 0.95))]) : 0 };
+    }).sort(function (a, b) { return b.queued - a.queued || b.count - a.count; }).slice(0, 4);
+    var duplicates = Object.keys(paths).map(function (p) { return { path: p, count: paths[p] }; }).filter(function (d) { return d.count >= 2; }).sort(function (a, b) { return b.count - a.count; }).slice(0, 5);
+    slow.sort(function (a, b) { return b.ms - a.ms; });
+    return {
+      status: "ok",
+      count: entries.length,
+      transferMb: round(transfer / 1048576),
+      decodedMb: round(decoded / 1048576),
+      cached: cached,
+      duringPlay: duringPlay,
+      hosts: hostRows,
+      duplicates: duplicates,
+      slowest: slow.slice(0, 5)
     };
   }
 
@@ -782,11 +886,13 @@
       nodes: { total: 0, active: 0, maxDepth: 0 },
       components: {},
       spine: { total: 0, active: 0, realtime: 0, sharedCache: 0, privateCache: 0, batched: 0, activeRealtimeBones: 0, realtimeBy: {} },
+      cameras: { total: 0, active: 0 },
+      renderTextures: { count: 0, mb: 0, largest: null },
       dragonBones: { total: 0, active: 0 },
       // noCacheTtf: TTF or system-font labels with cacheMode NONE. BMFont labels batch with their atlas,
       // so cacheMode does not apply to them and they are not counted there.
       labels: { total: 0, active: 0, noCache: 0, noCacheTtf: 0, bmfont: 0, bitmap: 0, char: 0, systemFont: 0, samples: [] },
-      masks: { total: 0, active: 0, byType: {}, samples: [] },
+      masks: { total: 0, active: 0, byType: {}, samples: [], stencilSamples: [] },
       particles: { total: 0, active: 0, maxParticles: 0 },
       graphics: { active: 0 },
       settings: {},
@@ -849,6 +955,7 @@
             var tname = Object.keys(types).filter(function (k) { return types[k] === c.type; })[0] || String(c.type);
             out.masks.byType[tname] = (out.masks.byType[tname] || 0) + 1;
             pushSample(out.masks.samples, nodePath(node));
+            if (tname === "IMAGE_STENCIL") pushSample(out.masks.stencilSamples, nodePath(node));
           }
         } else if (name === "cc.ParticleSystem" || name === "cc.ParticleSystem2D") {
           out.particles.total += 1;
@@ -891,7 +998,25 @@
       seen.add(a);
       var k = className(a);
       kinds[k] = (kinds[k] || 0) + 1;
+      if (k === "cc.RenderTexture") {
+        var rw = a.width || 0;
+        var rh = a.height || 0;
+        var rmb = (rw * rh * 4) / 1048576;
+        out.renderTextures.count += 1;
+        out.renderTextures.mb += rmb;
+        if (!out.renderTextures.largest || rmb > out.renderTextures.largest.mb) out.renderTextures.largest = { w: rw, h: rh, mb: round(rmb) };
+      }
     });
+    out.renderTextures.mb = round(out.renderTextures.mb);
+    try {
+      var scene = cc.director && cc.director.getScene && cc.director.getScene();
+      var cams = scene && scene.getComponentsInChildren && cc.Camera ? scene.getComponentsInChildren(cc.Camera) : [];
+      out.cameras.total = cams.length;
+      out.cameras.active = cams.filter(function (c) {
+        var node = c.node;
+        return c.enabled !== false && (!node || node.activeInHierarchy !== false);
+      }).length;
+    } catch (e2) {}
     Object.keys(kinds).sort(function (a, b) { return kinds[b] - kinds[a]; }).slice(0, 12).forEach(function (k) { out.assets[k] = kinds[k]; });
     out.textures = textureInfo();
     out.console = consoleSummary();
@@ -1097,6 +1222,21 @@
       canvas: canvas ? { w: canvas.width, h: canvas.height } : null,
       gpu: gpu,
       webgl: webgl,
+      context: (function () {
+        try {
+          var g = state.gl;
+          if (!g || !g.getContextAttributes) return null;
+          var a = g.getContextAttributes() || {};
+          return {
+            alpha: !!a.alpha,
+            antialias: !!a.antialias,
+            preserveDrawingBuffer: !!a.preserveDrawingBuffer,
+            desynchronized: !!a.desynchronized,
+            bufferW: g.drawingBufferWidth || null,
+            bufferH: g.drawingBufferHeight || null
+          };
+        } catch (e) { return null; }
+      })(),
       engine: window.cc && (window.cc.ENGINE_VERSION || window.cc.version) || null,
       webdriver: navigator.webdriver === true,
       hidden: document.hidden,
@@ -1111,7 +1251,10 @@
   window.__slotPerf = {
     version: 1,
     mark: function (name) {
-      if (name === "game-ready") state.gameReady = true;
+      if (name === "game-ready") {
+        state.gameReady = true;
+        if (state.gameReadyAt == null) state.gameReadyAt = performance.now();
+      }
       openStage(String(name || "mark"));
       return name;
     },
@@ -1188,7 +1331,10 @@
           texUploadMb: round(state.texBytes / 1048576),
           texUploads: state.texUploads,
           textures: textureInfo()
-        }
+        },
+        resources: resourceSummary(),
+        shaders: state.shaderN ? { status: "ok", ms: round(state.shaderMs), count: state.shaderN, stalls: state.shaderStalls } : { status: "none", ms: 0, count: 0, stalls: [] },
+        audio: state.audioN ? { status: "ok", pcmMb: round(state.audioPcm / 1048576), count: state.audioN, maxMs: round(state.audioMaxMs) } : { status: "none", pcmMb: 0, count: 0, maxMs: 0 }
       };
     }
   };

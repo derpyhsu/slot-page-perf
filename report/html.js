@@ -55,6 +55,18 @@ h2 { font-size: 16px; font-weight: 500; margin: 0 0 14px; }
 #timeline { margin: 0 -6px; }
 #timeline svg { width: 100%; height: auto; display: block; }
 #timeline .stage { cursor: zoom-in; }
+@keyframes pin-blink {
+  0% { opacity: 0; }
+  16% { opacity: 1; }
+  34% { opacity: 0.12; }
+  52% { opacity: 1; }
+  70% { opacity: 0.12; }
+  86%, 100% { opacity: 1; }
+}
+#timeline .pin { animation: pin-blink .9s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  #timeline .pin { animation: none; }
+}
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -92,9 +104,10 @@ const S = ev.score;
 // Timeline with per-stage zoom.
 const groups = timelineGroups(ev);
 let zoom = null;
+let pin = null;
 function drawTimeline() {
   const range = zoom == null ? null : [groups[zoom].start, groups[zoom].end];
-  $("timeline").innerHTML = timelineSvg(ev, range) || "";
+  $("timeline").innerHTML = timelineSvg(ev, range, pin) || "";
   [...document.querySelectorAll("#chips .chip")].forEach((b) => b.classList.toggle("on", String(zoom) === b.dataset.i || (zoom == null && b.dataset.i === "all")));
 }
 $("chips").innerHTML = '<button class="chip" data-i="all">全程</button>' + groups.map((g, i) => '<button class="chip" data-i="' + i + '">' + esc(g.name) + "</button>").join("");
@@ -127,6 +140,7 @@ function zoomTo(row) {
   const i = groups.findIndex((g) => at >= g.start && at <= g.end);
   if (i < 0) return;
   zoom = i;
+  pin = row.t != null ? { t: row.t } : { group: i };
   drawTimeline();
   $("timeline-h").scrollIntoView({ behavior: "smooth" });
 }
@@ -206,7 +220,7 @@ ${readoutHtml(ev)}
 <h2>時間軸</h2>
 <div class="chips" id="chips"></div>
 <div id="timeline"></div>
-<p class="small">點階段可以放大，再點一次回到全程。色塊上停一下會看到數字。</p>
+<p class="small">點階段可以放大，再點一次回到全程。色塊上停一下會看到數字。從要處理的地方點過來時，落點會閃兩下然後留著。</p>
 </section>
 
 <section class="card">

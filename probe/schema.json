@@ -71,6 +71,9 @@
     "stages": { "type": "array" },
     "spins": { "type": "array" },
     "memory": { "type": "object" },
+    "resources": { "type": "object", "description": "Compact resource timing. Paths have no query string. Missing on older runs." },
+    "shaders": { "type": "object", "description": "compileShader and linkProgram time. status none means no call was observed." },
+    "audio": { "type": "object", "description": "decodeAudioData PCM bytes. status none means no decode was observed." },
     "findings": { "type": "array" },
     "coverage": { "type": "object" }
   }

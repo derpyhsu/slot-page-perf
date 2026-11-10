@@ -352,16 +352,20 @@ loadingItems.concat(smoothItems, memoryItems).forEach((i) => {
 let frameRateLevel = "yellow";
 const COCOS_LEVEL = {
   "cocos-spine-realtime": "orange",
+  "cocos-spine-retained": "orange",
   "cocos-spine-cache-warning": "orange",
   "cocos-texture-uncompressed": memoryFatal.length ? "red" : "orange",
   "cocos-texture-npot": "yellow",
   "cocos-label-no-cache": "yellow",
   "cocos-mask-many": "yellow",
+  "cocos-mask-stencil": "yellow",
   "cocos-particles-many": "orange",
   "cocos-nodes-many": "yellow",
   "cocos-image-cache-kept": "orange",
   "cocos-dynamic-atlas-off": "yellow",
   "cocos-webgl1": "yellow",
+  "cocos-extra-camera": "yellow",
+  "cocos-render-texture": "orange",
   get "cocos-frame-rate"() {
     return frameRateLevel;
   },
@@ -417,7 +421,7 @@ function fpsTable() {
 }
 
 // Rows written from findings, so the table does not depend on the agent writing issues.
-// rule ids: stall-<group>, fps-<group>, memory-budget, leak-suspected, panel-<stage>, panel-left-open.
+// rule ids: stall-<group>, fps-*, memory-budget, leak-suspected, panel-history, panel-<stage>, panel-left-open, gpu-fill, network-*.
 function findingRows() {
   const { groups } = require("./findings");
   const found = ev.findings || [];
@@ -428,12 +432,29 @@ function findingRows() {
   const rows = [];
   const snaps = (ev.cocos && ev.cocos.snapshots) || [];
   const cap = ((snaps[snaps.length - 1] || {}).settings || {}).frameRate;
+  const fileOf = (url) => String(url || "").split("?")[0].split("/").filter(Boolean).slice(-1)[0] || "";
 
-  const isLoading = (g) => g === "loading" || g === "enter";
-  const loadingFix = (net) =>
-    net
-      ? "停頓時還有資源在下載；把大檔移到前段預載，下載完的初始化拆成幾幀做。"
-      : "主執行緒一次做太多；把初始化拆成幾幀做，不要一次建完。";
+  // texUploadMb is bucket field 6. Sum the buckets that overlap the hitch.
+  const uploadMbAt = (t, dt) => {
+    const tl = ev.timeline;
+    if (!tl || !tl.buckets || t == null) return 0;
+    const end = t + (dt || 0);
+    const width = tl.bucketMs || 250;
+    return tl.buckets.reduce((sum, b) => (b[0] + width >= t && b[0] <= end ? sum + (b[6] || 0) : sum), 0);
+  };
+  const stallFix = (worst) => {
+    const upload = uploadMbAt(worst.t, worst.value);
+    const file = worst.urls && worst.urls.length ? fileOf(worst.urls[0]) : "";
+    const cpu = worst.cpu;
+    const waiting = worst.id === "hitch-network" || (cpu != null && worst.value && cpu < worst.value * 0.2 && file);
+    if (waiting) {
+      const cpuBit = cpu != null ? `，主執行緒只花了 ${cpu} ms` : "";
+      return `最長的這次是在等下載${file ? `（${file}）` : ""}${cpuBit}。先看這個請求有沒有被同網域的其他請求堵住，大檔改到進遊戲前載完。`;
+    }
+    if (upload >= 1) return `這一幀附近上傳了 ${round(upload, 1)} MB 貼圖。不要在開面板的那一幀同步上傳，拆成幾幀做。`;
+    if (worst.id === "hitch-main-thread") return "主執行緒一次做太多；把初始化拆成幾幀做，不要一次建完。";
+    return "在這一刻錄一次 DevTools Performance，看這段時間在做什麼；常見是一次建好整頁節點或同步上傳貼圖。";
+  };
 
   const hitches = found.filter((f) => /^hitch-/.test(f.id) && f.value >= thresholds.hitchMs);
   const byGroup = new Map();
@@ -443,17 +464,13 @@ function findingRows() {
   });
   byGroup.forEach((hs, g) => {
     const worst = hs.reduce((a, b) => (b.value > a.value ? b : a));
-    const net = hs.filter((h) => h.id === "hitch-network").length;
-    const loading = isLoading(g);
     const name = stageName(g);
+    const loading = g === "loading" || g === "enter";
     const title = loading
       ? `${name}時頓了 ${hs.length} 次，最長 ${sec(worst.value)}`
       : hs.length > 1 ? `${name}時畫面停了 ${hs.length} 次，最長 ${sec(worst.value)}` : `${name}時畫面停 ${sec(worst.value)}`;
     const level = worst.value >= 250 ? "red" : worst.value >= 100 ? "orange" : "yellow";
-    const fix = loading
-      ? loadingFix(net >= hs.length / 2)
-      : "在這一刻錄一次 DevTools Performance，看這段時間在做什麼；常見是一次建好整頁節點或同步上傳貼圖。";
-    rows.push({ rule: `stall-${g}`, level, title, area: "卡頓", fix, stage: worst.stage, t: worst.t });
+    rows.push({ rule: `stall-${g}`, level, title, area: "卡頓", fix: stallFix(worst), stage: worst.stage, t: worst.t });
   });
 
   // Low FPS that just follows a frame cap under 60 is the cocos-frame-rate row. Stages with the
@@ -469,9 +486,10 @@ function findingRows() {
   const names = (xs) => xs.map((f) => stageName(f.stage)).join("、");
   const worstOf = (xs, k, dir) => xs.reduce((a, b) => ((dir < 0 ? b[k] < a[k] : b[k] > a[k]) ? b : a));
   const fpsHint = (f) => {
-    if (isLoading(f.stage)) {
+    if (f.stage === "loading" || f.stage === "enter") {
       const hs = byGroup.get(f.stage) || [];
-      return loadingFix(hs.length > 0 && hs.filter((h) => h.id === "hitch-network").length >= hs.length / 2);
+      const worst = hs.reduce((a, b) => (a && a.value >= b.value ? a : b), null);
+      return worst ? stallFix(worst) : "主執行緒一次做太多；把初始化拆成幾幀做，不要一次建完。";
     }
     const g = grp(f.stage);
     return g && g.cpuP95 != null && g.cpuP95 > 12 ? `${stageName(f.stage)}每幀 CPU 到 ${g.cpuP95} ms，先看腳本和動畫。` : `${stageName(f.stage)}每幀畫 ${g ? Math.round(g.draws) : "?"} 次，先減少 draw call 和疊圖。`;
@@ -508,12 +526,95 @@ function findingRows() {
   else if (leak) rows.push({ rule: "leak-suspected", level: "orange", title: `JS 記憶體地板每轉多 ${leak.slopeMb} MB，這輪沒看到大 GC`, area: "記憶體", fix: "還不能確定是洩漏：大 GC 可能會收回。多轉幾十轉看地板會不會掉回來，或轉前、轉後各拍一次 heap snapshot 比對。", stage: null, t: null });
 
   const idle = grp("idle");
-  found.filter((f) => f.id === "panel-heavier").forEach((f) => {
+  const labelCount = (snap) => (snap && snap.labels ? (snap.labels.noCacheTtf != null ? snap.labels.noCacheTtf : snap.labels.noCache) : null);
+  const panelFix = (stage) => {
+    const snap = snaps.find((s) => s.at === stage);
+    const n = labelCount(snap);
+    if (n != null && n > thresholds.cocos.labelNoCacheActive) {
+      const samples = ((snap.labels && snap.labels.samples) || []).slice(0, 3).join("、");
+      return `這一頁有 ${n} 個沒開快取的系統字，每個自己一張貼圖，不能跟圖集合批。固定文字改 BitmapFont 或 BITMAP，常變的數字用 CHAR。${samples ? `例如 ${samples}。` : ""}`;
+    }
+    return "這頁的圖合成圖集，被面板蓋住的層關掉。";
+  };
+  const heavy = found.filter((f) => f.id === "panel-heavier" && f.drawRatio != null && f.drawRatio > 0.3 && grp(f.stage) && idle);
+  const hist = heavy.filter((f) => f.stage === "history-before" || f.stage === "history-after");
+  const rest = heavy.filter((f) => f.stage !== "history-before" && f.stage !== "history-after");
+  if (hist.length) {
+    const ranked = hist.map((f) => ({ f, g: grp(f.stage) })).sort((a, b) => b.g.draws - a.g.draws);
+    const top = ranked[0];
+    const other = ranked[1];
+    const ratio = top.g.draws / idle.draws;
+    const title = other
+      ? `下注紀錄開了 ${ranked.length} 次，較重的一次每幀畫 ${Math.round(top.g.draws)} 次，是待機的 ${round(ratio, 1)} 倍（另一次 ${Math.round(other.g.draws)} 次）`
+      : `下注紀錄每一幀畫 ${Math.round(top.g.draws)} 次，是待機的 ${round(ratio, 1)} 倍`;
+    rows.push({ rule: "panel-history", level: ratio >= 2 ? "orange" : "yellow", title, area: "draw call", fix: panelFix(top.f.stage), stage: top.f.stage, t: null });
+  }
+  rest.forEach((f) => {
     const x = grp(f.stage);
-    if (!x || !idle || f.drawRatio == null || f.drawRatio <= 0.3) return;
-    rows.push({ rule: `panel-${f.stage}`, level: f.drawRatio >= 2 ? "orange" : "yellow", title: `${stageName(f.stage)}每一幀畫 ${Math.round(x.draws)} 次，是待機的 ${round(x.draws / idle.draws, 1)} 倍`, area: "draw call", fix: "這頁的圖合成圖集，被面板蓋住的層關掉。", stage: f.stage, t: null });
+    const ratio = x.draws / idle.draws;
+    rows.push({ rule: `panel-${f.stage}`, level: ratio >= 2 ? "orange" : "yellow", title: `${stageName(f.stage)}每一幀畫 ${Math.round(x.draws)} 次，是待機的 ${round(ratio, 1)} 倍`, area: "draw call", fix: panelFix(f.stage), stage: f.stage, t: null });
   });
   if (found.some((f) => f.id === "panel-left-open")) rows.push({ rule: "panel-left-open", level: "orange", title: "關掉面板後，畫面工作量沒回到待機", area: "draw call", fix: "關面板時把節點設成不啟用或銷毀，不要只是移出畫面。", stage: "idle-after-rules", t: null });
+
+  const fill = found.find((f) => f.id === "gpu-fill");
+  if (fill) {
+    const budget = thresholds.frameBudgetMs || 16.7;
+    const cover = fill.contrast;
+    rows.push({
+      rule: "gpu-fill",
+      level: fill.gpuP95 >= budget * 0.8 ? "orange" : "yellow",
+      title: `${stageName(fill.stage)} 的 GPU p95 是 ${fill.gpuP95} ms，CPU ${fill.cpuP95} ms，大約 ${Math.round(fill.draws)} 次 draw call`,
+      area: "GPU",
+      fix: cover
+        ? `${stageName(cover.stage)}蓋住轉輪時 GPU 降到 ${cover.gpuP95} ms，draw call 升到 ${Math.round(cover.draws)}。時間花在轉輪和全螢幕大圖的填色，先縮小那幾張。`
+        : `一幀預算 ${budget} ms，GPU 佔掉大部分。先縮小畫面上最大的貼圖。`,
+      stage: fill.stage,
+      t: null,
+    });
+  }
+
+  const blocked = found.find((f) => f.id === "network-blocked");
+  if (blocked) {
+    const h = blocked.hosts[0];
+    const proto = h.protocol ? `，協定 ${h.protocol}` : "";
+    rows.push({
+      rule: "network-blocked",
+      level: "orange",
+      title: `${h.host} 有 ${h.count} 個請求，其中 ${h.queued} 個排隊超過 80 ms${proto}`,
+      area: "網路",
+      fix: "同一個網域同時太多連線，後面的請求會被堵住。合併小檔、改走 HTTP/2，不急的圖延後再載。",
+      stage: "loading",
+      t: null,
+    });
+  }
+  const dups = found.find((f) => f.id === "network-duplicate");
+  if (dups) {
+    const list = dups.files.map((d) => `${d.path} ×${d.count}`).join("、");
+    rows.push({ rule: "network-duplicate", level: "yellow", title: `有檔案重複下載：${list}`, area: "網路", fix: "同一個資源只請求一次。快取鍵不要帶每次都變的 query。", stage: "loading", t: null });
+  }
+
+  const flags = found.find((f) => f.id === "context-flags");
+  if (flags) {
+    const bits = [flags.antialias ? "antialias" : "", flags.preserveDrawingBuffer ? "preserveDrawingBuffer" : "", flags.alpha ? "alpha" : ""].filter(Boolean).join("、");
+    rows.push({
+      rule: "context-flags",
+      level: flags.preserveDrawingBuffer ? "orange" : "yellow",
+      title: `WebGL context 開了 ${bits}`,
+      area: "GPU",
+      fix: flags.preserveDrawingBuffer ? "preserveDrawingBuffer 會讓每一幀多拷一次畫面，關掉。2D 老虎機通常也不需要 antialias。" : "整張畫布的 antialias 是全畫面的多重採樣。2D 介面關掉它。",
+      stage: null,
+      t: null,
+    });
+  }
+  const bigCanvas = found.find((f) => f.id === "canvas-large");
+  if (bigCanvas) rows.push({ rule: "canvas-large", level: "yellow", title: `畫布是 ${bigCanvas.w}×${bigCanvas.h} 像素${bigCanvas.dpr ? `，裝置像素比 ${bigCanvas.dpr}` : ""}`, area: "GPU", fix: "填色跟像素數成正比。手機上把解析度上限壓到高 720 或 1280 寬。", stage: null, t: null });
+
+  const shader = found.find((f) => f.id === "shader-stall");
+  if (shader) rows.push({ rule: "shader-stall", level: shader.value >= 100 ? "orange" : "yellow", title: `shader ${shader.kind === "linkProgram" ? "連結" : "編譯"}停了 ${shader.count} 次，最長 ${Math.round(shader.value)} ms`, area: "卡頓", fix: "第一次編譯會卡主執行緒。進遊戲前先暖機常用的 shader，或把材質種類收斂。", stage: "loading", t: shader.t });
+  const audio = found.find((f) => f.id === "audio-decode");
+  if (audio) rows.push({ rule: "audio-decode", level: audio.pcmMb >= (thresholds.audioMb || 16) ? "orange" : "yellow", title: `音效解碼後約 ${audio.pcmMb} MB${audio.maxMs ? `，最長一次 ${Math.round(audio.maxMs)} ms` : ""}`, area: "記憶體", fix: "這塊不在 JS heap，也不在 GPU。進遊戲時不要一次 decode 整包，用到再解，或改串流。", stage: "loading", t: null });
+  const rt = found.find((f) => f.id === "render-target");
+  if (rt) rows.push({ rule: "render-target", level: "orange", title: `離屏 renderbuffer 約 ${Math.round(rt.mb)} MB`, area: "GPU", fix: "整屏的 RenderTexture 會讓填色再畫一次。能直接畫上畫布就不要先畫到另一張。", stage: null, t: null });
 
   return rows;
 }
@@ -528,7 +629,10 @@ function todo() {
     .map((i) => ({ level: i.level || "red", title: i.title, area: i.area || stageName(i.stage) || "", fix: i.next, stage: i.stage || null, t: i.t == null ? null : i.t }))
     .concat(ev.findingRows.filter((r) => !covered.has(r.rule)))
     .concat(ev.cocosAdvice.items.filter((c) => !covered.has(c.id)).map((c) => ({ level: c.level, title: c.title, area: c.area, fix: c.fix, stage: null, t: null, rule: c.id })));
-  return rows.map((r, i) => Object.assign(r, { order: i })).sort((a, b) => rank[a.level] - rank[b.level] || a.order - b.order).map(({ order, ...r }, i) => Object.assign({ n: i + 1 }, r));
+  // A panel row already names the uncached labels on that page, so the global label row would repeat it.
+  const toldLabels = rows.some((r) => r.fix && r.fix.includes("沒開快取"));
+  const shown = toldLabels ? rows.filter((r) => r.rule !== "cocos-label-no-cache") : rows;
+  return shown.map((r, i) => Object.assign(r, { order: i })).sort((a, b) => rank[a.level] - rank[b.level] || a.order - b.order).map(({ order, ...r }, i) => Object.assign({ n: i + 1 }, r));
 }
 
 function cocosAdvice() {
@@ -576,10 +680,32 @@ function cocosAdvice() {
   const realtime = max((s) => s.spine.realtime);
   const spineActive = max((s) => s.spine.active);
   const bones = max((s) => s.spine.activeRealtimeBones);
-  if (realtime != null && realtime > C.spineRealtimeActive) {
+  const snapAt = (name) => snaps.find((s) => s.at === name);
+  const idleSnap = snapAt("idle");
+  const endSnap = snaps.length ? snaps[snaps.length - 1] : null;
+  const spineGroups = (s) => {
+    const by = (s && s.spine && s.spine.realtimeBy) || {};
+    return Object.keys(by).map((k) => `${k} ×${by[k]}`);
+  };
+  let spineRetained = false;
+  if (idleSnap && endSnap && idleSnap !== endSnap && idleSnap.spine && endSnap.spine) {
+    const grewBones = (endSnap.spine.activeRealtimeBones || 0) >= (idleSnap.spine.activeRealtimeBones || 0) + (C.spineBonesRetained || 100);
+    const grewCopies = (endSnap.spine.realtime || 0) >= (idleSnap.spine.realtime || 0) + (C.spineCopiesRetained || 3);
+    if (grewBones || grewCopies) {
+      spineRetained = true;
+      const groups = spineGroups(endSnap);
+      const batched = endSnap.spine.batched != null ? endSnap.spine.batched : 0;
+      add(
+        "cocos-spine-retained",
+        "CPU",
+        `關下面板後，即時 Spine 從 ${idleSnap.spine.realtime || 0} 個、${idleSnap.spine.activeRealtimeBones || 0} 根留在 ${endSnap.spine.realtime || 0} 個、${endSnap.spine.activeRealtimeBones || 0} 根`,
+        `同一份 skeleton 不要每顆符號各算一次。不需要即時混合的改 SHARED_CACHE，同圖集開 enableBatch（目前 ${batched}）。${groups.length ? `留下最多的是 ${groups.slice(0, 3).join("、")}。` : ""}`
+      );
+    }
+  }
+  if (!spineRetained && realtime != null && realtime > C.spineRealtimeActive) {
     const peak = peakOf((s) => s.spine.realtime);
-    const by = (peak && peak.snap.spine && peak.snap.spine.realtimeBy) || {};
-    const groups = Object.keys(by).map((k) => `${k} ×${by[k]}`);
+    const groups = spineGroups(peak && peak.snap);
     add("cocos-spine-realtime", "CPU", `畫面上有 ${realtime} 個即時運算的 Spine${spineActive != null ? `（共 ${spineActive} 個在畫）` : ""}${bones ? `，合計 ${bones} 根骨頭` : ""}${peakAt((s) => s.spine.realtime)}`, `不需要即時混合的動畫改成 SHARED_CACHE，看不到的骨架關掉 active，同圖集的開 enableBatch。${groups.length ? `最多的是 ${groups.slice(0, 3).join("、")}。` : ""}`);
   }
 
@@ -594,16 +720,21 @@ function cocosAdvice() {
   if (texSource) {
     const uncompressed = texSource.count - (texSource.compressed || 0);
     const share = texSource.count ? uncompressed / texSource.count : 0;
+    let toldUncompressed = false;
     if (texSource.mb > C.uncompressedMinMb && share > C.uncompressedShare) {
+      toldUncompressed = true;
+      const canvas = ev.conditions && ev.conditions.canvas;
+      const over = canvas ? (texSource.largest || []).filter((t) => t.w > canvas.w * 1.05 || t.h > canvas.h * 1.05).slice(0, 3) : [];
+      const overText = over.length ? `其中 ${over.map((t) => `${t.w}×${t.h}${t.file ? " " + t.file : ""}`).join("、")} 比畫布 ${canvas.w}×${canvas.h} 還大，先縮到畫面尺寸。` : "先縮小最大的幾張。";
       const how = {
-        "2.0": `${engineName} 在貼圖的壓縮設定加 ETC1（Android）與 PVRTC（iOS），沒壓縮的格式留作備援。`,
-        "2.4": `${engineName} 在貼圖的壓縮設定加 ETC1（Android）與 PVRTC（iOS）；目標裝置支援 ASTC 時優先用 ASTC。`,
-        "3": `${engineName} 以 ASTC 為主，ETC2 備援，在貼圖的壓縮設定或壓縮預設集設定。`,
-      }[line] || "在貼圖的壓縮設定加上目標裝置支援的格式（ETC、PVRTC 或 ASTC）。";
-      const files = (texSource.largest || []).map((t) => t.file).filter(Boolean);
-      add("cocos-texture-uncompressed", "記憶體", `${texSource.count} 張貼圖裡 ${uncompressed} 張沒壓縮，約 ${Math.round(texSource.mb)} MB`, `${how}先從最大的開始。${list(files)}`);
+        "2.0": `${overText}網頁上 JPG、PNG 進 WebGL 仍是每像素 4 byte。原生包才加 ETC1（Android）與 PVRTC（iOS，要正方形而且邊長是 2 的冪），沒壓縮的留作備援。邊長不是 2 的冪不要為了壓縮去補齊。`,
+        "2.4": `${overText}網頁上仍會解成 RGBA8888。原生包加 ETC1（Android）或 ASTC，PVRTC 才需要正方形 2 的冪，其餘不要把圖墊成 POT。`,
+        "3": `${overText}${engineName} 以 ASTC 為主，ETC2 備援。ETC 和 ASTC 不需要把邊長補成 2 的冪。`,
+      }[line] || `${overText}壓縮格式用目標裝置支援的 ETC、ASTC 或 PVRTC，只有 PVRTC 和 mipmap 才需要 2 的冪。`;
+      const files = over.length ? [] : (texSource.largest || []).map((t) => t.file).filter(Boolean);
+      add("cocos-texture-uncompressed", "記憶體", `${texSource.count} 張貼圖裡 ${uncompressed} 張沒壓縮，約 ${Math.round(texSource.mb)} MB`, `${how}${list(files)}`);
     }
-    if (texSource.count && texSource.npot / texSource.count > C.npotShare) {
+    if (!toldUncompressed && texSource.count && texSource.npot / texSource.count > C.npotShare) {
       add("cocos-texture-npot", "記憶體", `${texSource.npot} 張貼圖的邊長不是 2 的冪`, "ETC 和 ASTC 不需要 POT，把圖墊成 POT 只會更佔記憶體；只有用 PVRTC（要正方形 POT）或要 mipmap 的圖才需要。");
     }
   }
@@ -619,6 +750,13 @@ function cocosAdvice() {
     add("cocos-label-no-cache", "draw call", `${noCache} 個 ${kind}${peakAt(labelPick)}`, `沒開快取的 TTF 與系統字每個都自己一張貼圖，不能跟圖集合批。固定文字改 BitmapFont 或 BITMAP 模式，常變的數字用 CHAR。${list(samples)}`);
   }
   const masks = max((s) => s.masks.active);
+  const stencilOf = (s) => (s.masks && s.masks.byType && s.masks.byType.IMAGE_STENCIL) || 0;
+  const stencil = max(stencilOf);
+  if (stencil != null && stencil >= (C.imageStencil || 1)) {
+    const peak = peakOf(stencilOf);
+    const samples = (peak && peak.snap.masks && peak.snap.masks.stencilSamples) || [];
+    add("cocos-mask-stencil", "draw call", `畫面上有 ${stencil} 個圖片遮罩${peakAt(stencilOf)}`, `IMAGE_STENCIL 比矩形遮罩多畫一次，而且會打斷合批。轉輪這種固定窗口改用預先裁好的圖。${list(samples)}`);
+  }
   if (masks != null && masks > C.masksActive) {
     const peak = peakOf((s) => s.masks.active);
     const samples = (peak && peak.snap.masks && peak.snap.masks.samples) || [];
@@ -633,20 +771,23 @@ function cocosAdvice() {
     const active = max((s) => s.nodes.active);
     add("cocos-nodes-many", "CPU", `場景有 ${nodes} 個節點${active != null ? `，${active} 個在顯示` : ""}${peakAt((s) => s.nodes.total)}`, "不在畫面的面板與特效改成用時再生，或放進物件池。");
   }
-  if (settings.cleanupImageCache === false) {
-    add(
-      "cocos-image-cache-kept",
-      "記憶體",
-      "貼圖上傳後，原圖還留在 JS 記憶體",
-      settings.dynamicAtlas ? "動態合圖是開的。CLEANUP_IMAGE_CACHE 設成 true 會讓合圖失效，兩件事不能同時開。" : "把 cc.macro.CLEANUP_IMAGE_CACHE 設成 true。"
-    );
+  if (settings.cleanupImageCache === false && settings.dynamicAtlas === false) {
+    add("cocos-image-cache-kept", "記憶體", "貼圖上傳後，原圖還留在 JS 記憶體", "動態合圖是關的，可以把 cc.macro.CLEANUP_IMAGE_CACHE 設成 true。");
   }
   if (settings.dynamicAtlas === false) {
     add("cocos-dynamic-atlas-off", "draw call", "動態合圖是關的", "小圖多的介面打開 cc.dynamicAtlasManager.enabled。");
   }
-  if (settings.webglVersion === 1 && settings.webgl2Available) {
-    const how = line === "3" ? `${engineName} 支援 WebGL 2，檢查專案設定或啟動參數是否把它關掉了。` : `${engineName} 只有 WebGL 1，沒有開關；WebGL 2 要升到 3.x。這次先降 draw call。`;
-    add("cocos-webgl1", "draw call", `用的是 WebGL 1${last.engine ? `（Cocos ${last.engine}）` : ""}，瀏覽器有 WebGL 2`, how);
+  const cams = max((s) => s.cameras && s.cameras.active);
+  if (cams != null && cams > (C.camerasActive || 1)) add("cocos-extra-camera", "GPU", `同時有 ${cams} 個相機在畫`, "多一台相機就多清一次畫面。老虎機通常一台相機就夠。");
+  const rtMb = max((s) => s.renderTextures && s.renderTextures.mb);
+  const rtCount = max((s) => s.renderTextures && s.renderTextures.count);
+  if (rtMb != null && rtMb >= (C.renderTextureMb || 8)) {
+    const peak = peakOf((s) => s.renderTextures && s.renderTextures.mb);
+    const big = peak && peak.snap.renderTextures && peak.snap.renderTextures.largest;
+    add("cocos-render-texture", "GPU", `RenderTexture ${rtCount} 張，約 ${Math.round(rtMb)} MB${big ? `，最大 ${big.w}×${big.h}` : ""}`, "整屏的 RenderTexture 會讓填色再畫一次。能直接畫上畫布就不要先畫到另一張。");
+  }
+  if (settings.webglVersion === 1 && settings.webgl2Available && line === "3") {
+    add("cocos-webgl1", "draw call", `用的是 WebGL 1${last.engine ? `（Cocos ${last.engine}）` : ""}，瀏覽器有 WebGL 2`, `${engineName} 支援 WebGL 2，檢查專案設定或啟動參數是否把它關掉了。`);
   }
   const cap = settings.frameRate;
   const hz = gf ? gf.hz : 60;

@@ -12,6 +12,8 @@
 - `inFlight` 為 0，而且 `cpu` 達到該幀 `dt` 的八成以上：`hitch-main-thread`。`source` 是 `longtask` 的項目也算，它的時間本來就是主執行緒。
 - 其餘：`hitch-other`。GPU 時間有讀到就一併寫上。
 
+要處理的地方每個階段只列一列，改法跟最長那一幀走：那一幀在等下載就寫下載和檔名，附近有貼圖上傳就寫上傳的 MB，主執行緒佔了那一幀才寫拆幀。不拿「網路卡頓是否過半」決定整句。
+
 `cpu` 是 `null` 表示那一幀沒有引擎計時，不是 0 毫秒。這時若同一段有時間相近的 long task，寫成同一次 `hitch-main-thread`；沒有就寫 `hitch-other`，證據註明 CPU 未讀到。
 
 `channels.engineCpu` 為 false 時，所有 CPU 平均、p95、CPU% 都是 `unavailable`，`cpu-heavy` 不觸發。
@@ -75,6 +77,40 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 
 `history-before`、`history-after` 或 `rules` 的穩態，相對 `idle`：FPS 下降超過 10，或 draw call 平均增加超過三成，或尖峰窗出現 `hitchMs` 以上的幀。證據寫明減掉待機之後的差。
 
+報告把 `history-before` 和 `history-after` 收成一列 `panel-history`，寫出較重的那一次和另一次的 draw call。那一頁的快照若有超過 `labelNoCacheActive` 個沒開快取的系統字，改法寫這個，不再另列 `cocos-label-no-cache`。
+
+## gpu-fill
+
+待機或 spin 的 GPU timer p95 大於 `gpuHeavyP95Ms`，而且 CPU p95 小於 `gpuLightP95Ms`。只列一列，用較忙的那個階段。若遊戲規則或下注紀錄的 draw call 比它高過五成、GPU p95 卻不到一半，改法寫出那個對照：時間在被蓋住的轉輪，不在面板。GPU timer 不可用時不觸發。各階段的 `gpu-heavy` 仍留在 findings，不各佔一列。
+
+## network-blocked
+
+`resources.status` 是 `ok` 時才看。同一個 host 的請求數達到 `network.hostRequests`，而且排隊（`requestStart` 減去連線完成）達到 80 ms 的請求數達到 `network.queuedToFire`。路徑不含 query。沒有 resource timing 時不觸發。
+
+## network-duplicate
+
+同一個路徑（不含 query）出現至少 `network.duplicate` 次。
+
+## context-flags
+
+`conditions.context.antialias` 或 `preserveDrawingBuffer` 為 true。`alpha` 單獨成立不觸發。
+
+## canvas-large
+
+畫布像素數 `canvas.w * canvas.h` 大於 `canvasPixels`（1920×1080）。
+
+## shader-stall
+
+單次 `compileShader` 或 `linkProgram` 達到 `hitchMs`。探針沒掛到呼叫時是 `none`，不觸發。
+
+## audio-decode
+
+`decodeAudioData` 解出來的 PCM 達到 `audioMb`，或單次解碼達到 `hitchMs` 而且 PCM 至少 4 MB。沒有解碼時是 `none`，不觸發。
+
+## render-target
+
+`memory.gpu.renderbufferMb` 大於 `renderbufferMb`。這是頁面自己建的 renderbuffer，不含預設畫面緩衝。
+
 ## panel-left-open
 
 `idle-after-rules` 的 draw call 平均比 `idle` 高過三成，或 heap 地板比打開面板前高過 `leakMb`。
@@ -87,17 +123,21 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 
 | id | 條件 | 影響 |
 | --- | --- | --- |
-| `cocos-spine-realtime` | 畫面上的 realtime Spine 多於 `spineRealtimeActive` | CPU：每幀都在算骨骼 |
+| `cocos-spine-realtime` | 畫面上的 realtime Spine 多於 `spineRealtimeActive`。若已觸發 `cocos-spine-retained` 就不再列這條 | CPU：每幀都在算骨骼 |
+| `cocos-spine-retained` | 最後一次快照比待機多出 `spineCopiesRetained` 個即時 Spine，或骨頭多出 `spineBonesRetained` | 面板關掉後符號骨架還留在場景裡 |
+| `cocos-mask-stencil` | 畫面上的 `IMAGE_STENCIL` 達到 `imageStencil`。個數沒超過 `masksActive` 也要列，因為類型本身比矩形遮罩貴 | draw call 與填色 |
+| `cocos-extra-camera` | 同時在畫的相機多於 `camerasActive`。快照沒有這個欄位時不觸發 | 每台相機多清一次畫面 |
+| `cocos-render-texture` | RenderTexture 合計達到 `renderTextureMb`。快照沒有這個欄位時不觸發 | GPU 記憶體與填色 |
 | `cocos-spine-cache-warning` | 主控台有 Spine 快取模式不支援的呼叫（例如 `clearTrack`） | 動畫狀態會錯，也是無效呼叫 |
 | `cocos-texture-uncompressed` | 貼圖超過 `uncompressedMinMb`，而且未壓縮的比例超過 `uncompressedShare` | 記憶體 |
-| `cocos-texture-npot` | 邊長不是 2 的冪的比例超過 `npotShare` | 只有 PVRTC 和 mipmap 才需要 POT。ETC、ASTC 不用，把圖墊成 POT 會更佔記憶體 |
+| `cocos-texture-npot` | 邊長不是 2 的冪的比例超過 `npotShare`。同一輪已經列了未壓縮貼圖時，這句併進那一列，不單獨佔一列 | 只有 PVRTC 和 mipmap 才需要 POT。ETC、ASTC 不用，把圖墊成 POT 會更佔記憶體 |
 | `cocos-label-no-cache` | 畫面上 cacheMode 為 NONE 的 TTF 或系統字 Label 多於 `labelNoCacheActive`。BMFont 本來就跟圖集合批，cacheMode 對它無效，不算。舊探針分不出 BMFont 時算全部，標題註明可能高估 | draw call 與 CPU：每個 Label 自己一張貼圖 |
 | `cocos-mask-many` | 畫面上的 Mask 多於 `masksActive` | draw call：每個 Mask 要寫 stencil，前後打斷合批，矩形 Mask 也一樣 |
 | `cocos-particles-many` | 畫面上粒子上限加總超過 `particlesMax` | CPU 與填色 |
 | `cocos-nodes-many` | 場景節點多於 `nodesTotal` | CPU 與記憶體：隱藏的節點也還在 |
-| `cocos-image-cache-kept` | `CLEANUP_IMAGE_CACHE` 為 false | 上傳後原圖還留在 JS。動態合圖開著時不能同時把 CLEANUP_IMAGE_CACHE 設成 true，合圖會失效 |
+| `cocos-image-cache-kept` | `CLEANUP_IMAGE_CACHE` 為 false，而且動態合圖也是關的。動態合圖開著時這不是一個該撥的開關，不列 | 上傳後原圖還留在 JS。動態合圖開著時不能同時把 CLEANUP_IMAGE_CACHE 設成 true |
 | `cocos-dynamic-atlas-off` | 動態合圖關閉 | draw call |
-| `cocos-webgl1` | 瀏覽器有 WebGL 2，遊戲卻用 WebGL 1 | 2.x 只有 WebGL 1，沒有開關，WebGL 2 要換 3.x；3.x 用 WebGL 1 時檢查設定是否被關掉 |
+| `cocos-webgl1` | 瀏覽器有 WebGL 2，遊戲卻用 WebGL 1，而且引擎是 3.x。2.x 沒有這個開關，不列 | 3.x 用 WebGL 1 時檢查設定是否被關掉 |
 | `cocos-frame-rate` | 上限不能整除螢幕更新率（橘）、高於螢幕更新率（黃）、或低於 60 但能整除（黃） | 說明 FPS 為什麼到不了 60 或節奏不齊；本身不計分 |
 | `cocos-console-errors` | 主控台有引擎 error，或同一句 warning 超過 `consoleRepeat` 次 | 穩定性：資源或流程有錯 |
 

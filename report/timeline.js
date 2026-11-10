@@ -70,7 +70,8 @@ function timelineGroups(ev) {
   return groups;
 }
 
-function timelineSvg(ev, range) {
+// mark pins a todo row after a click. { t } is one instant; { group } is a stage band with no single frame.
+function timelineSvg(ev, range, mark) {
   const st = placed(ev);
   if (!st.length) return null;
   const tl = ev.timeline && ev.timeline.buckets && ev.timeline.buckets.length ? ev.timeline : null;
@@ -91,7 +92,9 @@ function timelineSvg(ev, range) {
   groups.forEach((g, i) => {
     if (!inView(g.start, g.end)) return;
     const w = Math.max(1, X(g.end) - X(g.start));
-    out.push(`<rect class="stage" data-i="${i}" x="${X(g.start).toFixed(1)}" y="8" width="${w.toFixed(1)}" height="24" fill="${i % 2 ? C.band2 : C.band1}"><title>${esc(g.name)} ${clock(g.start)}–${clock(g.end)}</title></rect>`);
+    const x0 = X(g.start).toFixed(1);
+    out.push(`<rect class="stage" data-i="${i}" x="${x0}" y="8" width="${w.toFixed(1)}" height="24" fill="${i % 2 ? C.band2 : C.band1}"><title>${esc(g.name)} ${clock(g.start)}–${clock(g.end)}</title></rect>`);
+    if (mark && mark.group === i) out.push(`<g class="pin" pointer-events="none"><rect x="${x0}" y="8" width="${w.toFixed(1)}" height="24" fill="${C.blue}" fill-opacity="0.4" stroke="${C.blue}" stroke-width="2"/></g>`);
     if (w > g.name.length * 12 + 6) out.push(`<text x="${(X(g.start) + 4).toFixed(1)}" y="24" font-size="11" fill="${C.ink}" pointer-events="none">${esc(g.name)}</text>`);
   });
 
@@ -234,6 +237,14 @@ function timelineSvg(ev, range) {
     lx += w;
   });
   const H = ly + 18;
+
+  // One instant: a line through FPS, CPU, stalls, memory and the JS lane. Drawn last so lanes do not cover it.
+  if (mark && mark.t != null && inView(mark.t, mark.t)) {
+    const x = X(mark.t).toFixed(1);
+    const y1 = FY0 - FH;
+    const y2 = JY0;
+    out.push(`<g class="pin" pointer-events="none"><line x1="${x}" x2="${x}" y1="${y1}" y2="${y2}" stroke="${C.blue}" stroke-width="7" opacity="0.28"/><line x1="${x}" x2="${x}" y1="${y1}" y2="${y2}" stroke="${C.blue}" stroke-width="2"/></g>`);
+  }
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="${FONT}"><rect width="${W}" height="${H}" fill="${C.bg}"/>${out.join("")}</svg>\n`;
 }
