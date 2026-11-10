@@ -112,6 +112,26 @@ function spinWhere(name) {
   if (spin) return spin[1] === "turbo" ? `加速第 ${spin[2]} 轉` : `第 ${spin[2]} 轉`;
   return "";
 }
+const STAGE = {
+  menu: "功能列表",
+  "history-before": "下注紀錄",
+  "history-after": "轉後下注紀錄",
+  rules: "遊戲規則",
+  idle: "待機",
+  "idle-after-rules": "規則後待機",
+  "idle-end": "最後待機",
+  loading: "載入",
+  enter: "進遊戲",
+};
+function whereLabel(stage) {
+  const spin = spinWhere(stage);
+  if (spin) return spin;
+  if (!stage) return "";
+  const spike = String(stage).endsWith("-spike");
+  const name = STAGE[String(stage).replace(/-spike$/, "")];
+  if (!name) return "";
+  return spike ? `${name}剛打開` : name;
+}
 function cellLevels(m) {
   const idle = m.cols.find((c) => c.group === "idle");
   return {
@@ -293,6 +313,25 @@ function fatalNote(part) {
   return `<p class="gauge-fatal">分數最高 ${FATAL_CAP}：${esc(bits.join("，"))}。</p>`;
 }
 
+// Red scores already state what was measured. This is the player-facing problem that can follow.
+function riskText(key, part) {
+  if (levelOf(part.score) !== "red") return "";
+  const ids = new Set((part.fatal || []).map((f) => f.id));
+  if (key === "memory") {
+    if (ids.has("over-budget") && ids.has("leak-suspected")) return "在部分裝置有 OOM 閃退風險，玩越久更容易發生";
+    if (ids.has("over-budget")) return "在部分裝置有 OOM 閃退風險";
+    if (ids.has("leak-suspected")) return "玩越久越容易因記憶體不足閃退";
+  }
+  if (key === "smooth") {
+    if (ids.has("low-fps")) return "整段遊玩會覺得不順";
+  }
+  if (key === "loading") {
+    if (ids.has("stall")) return "進遊戲前會卡一下";
+    if (ids.has("low-fps")) return "載入過程畫面會一頓一頓";
+  }
+  return "";
+}
+
 function legend() {
   return `<div class="legend">${[
     ["red", "0–49"],
@@ -317,12 +356,15 @@ function worstItem(part) {
   return (part.items || []).filter((i) => i.score != null && i.score < 100).sort((a, b) => loss(b) - loss(a))[0] || null;
 }
 // What the line under a gauge says: the cap reason, else the item that cost the most.
-function gaugeNote(part) {
+function gaugeNote(part, key) {
+  const risk = riskText(key, part);
+  const riskHtml = risk ? `<p class="gauge-risk">${esc(risk)}</p>` : "";
   const fatal = fatalNote(part);
-  if (fatal) return fatal;
+  if (fatal) return fatal + riskHtml;
   const w = worstItem(part);
-  if (!w) return '<p class="gauge-hint">每一項都滿分</p>';
-  return `<p class="gauge-hint">扣分最多：${esc(w.label)} ${esc(itemText(w))}</p>`;
+  if (!w) return '<p class="gauge-hint">每一項都滿分</p>' + riskHtml;
+  const where = whereLabel(w.stage);
+  return `<p class="gauge-hint">扣分最多：${esc(w.label)} ${esc(itemText(w))}${where ? `，${esc(where)}` : ""}</p>` + riskHtml;
 }
 
 function ring(part) {
@@ -345,7 +387,7 @@ function gaugeTab(key, part, name, selected) {
   return `<button type="button" class="gtab" role="tab" id="tab-${key}" data-k="${key}" aria-controls="panel-${key}" aria-selected="${selected}" tabindex="${selected ? 0 : -1}">
     ${ring(part)}
     <span class="gauge-name" style="color:${color}">${esc(name)}${part.provisional ? `<span class="prov">暫定 · 量到 ${part.coverage}%</span>` : ""}</span>
-    ${gaugeNote(part)}
+    ${gaugeNote(part, key)}
   </button>`;
 }
 

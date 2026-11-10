@@ -140,7 +140,7 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 | `cocos-image-cache-kept` | `CLEANUP_IMAGE_CACHE` 為 false，而且動態合圖也是關的。動態合圖開著時這不是一個該撥的開關，不列 | 上傳後原圖還留在 JS。動態合圖開著時不能同時把 CLEANUP_IMAGE_CACHE 設成 true |
 | `cocos-dynamic-atlas-off` | 動態合圖關閉 | draw call |
 | `cocos-webgl1` | 瀏覽器有 WebGL 2，遊戲卻用 WebGL 1，而且引擎是 3.x。2.x 沒有這個開關，不列 | 3.x 用 WebGL 1 時檢查設定是否被關掉 |
-| `cocos-frame-rate` | 上限不能整除螢幕更新率（橘）、高於螢幕更新率（黃）、或低於 60 但能整除（黃） | 說明 FPS 為什麼到不了 60 或節奏不齊；本身不計分 |
+| `cocos-frame-rate` | 上限不能整除螢幕更新率（橘）、高出螢幕更新率 5% 以上（黃）、或低於 60 但能整除（黃）。高出 5% 以內（60 讀成 61、40 讀成 41）是計時浮動，不列 | 說明 FPS 為什麼到不了 60 或節奏不齊；本身不計分 |
 | `cocos-console-errors` | 主控台有引擎 error，或同一句 warning 超過 `consoleRepeat` 次 | 穩定性：資源或流程有錯 |
 
 讀不到的欄位是 `null`，該規則不觸發。

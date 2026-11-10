@@ -447,10 +447,22 @@ if (loadStall.dt > F.stallMs) loadingFatal.push({ id: "stall", stage: loadStall.
 loadStages.forEach((s) => {
   if (lowFps(s)) loadingFatal.push({ id: "low-fps", stage: s.name, value: lowFps(s) });
 });
-if (stall.dt > F.stallMs) smoothFatal.push({ id: "stall", stage: stall.stage, t: stall.t, value: round(stall.dt, 0) });
-gameStages.forEach((s) => {
-  if (lowFps(s)) smoothFatal.push({ id: "low-fps", stage: s.name, value: lowFps(s) });
-});
+// One menu open or one short panel under 30 FPS does not cap the whole session.
+// The hitch still scores in the 卡頓 item. Only the play-time average can cap it.
+function playFps() {
+  let acc = 0;
+  let wall = 0;
+  gameStages.forEach((s) => {
+    const f = stageFrames(s);
+    const fps = f && f.fps != null ? f.fps : s.fps;
+    if (fps == null || !(s.wallMs > 0)) return;
+    acc += fps * s.wallMs;
+    wall += s.wallMs;
+  });
+  return wall ? acc / wall : null;
+}
+const played = playFps();
+if (played != null && played < F.minFps) smoothFatal.push({ id: "low-fps", value: round(played, 1) });
 if (ratio != null && ratio > (F.memoryBudgetFactor || 2)) memoryFatal.push({ id: "over-budget", value: round(estimate, 0) });
 if ((ev.findings || []).some((f) => f.id === "leak-suspected" && f.status === "retained-after-gc")) memoryFatal.push({ id: "leak-suspected" });
 
@@ -963,10 +975,11 @@ function cocosAdvice() {
   }
   const cap = settings.frameRate;
   const hz = gf ? gf.hz : 60;
+  // A cap a little above the refresh (60 read as 61, 40 read as 41) is timer float.
   if (cap != null && cap < hz && Math.abs(hz / cap - Math.round(hz / cap)) > 0.05) {
     frameRateLevel = "orange";
     add("cocos-frame-rate", "節奏", `幀率上限 ${cap} 不能整除螢幕 ${hz} Hz，畫面一幀快一幀慢`, `cc.game.frameRate 設成 ${Math.round(hz / 2)} 或 ${hz}。`);
-  } else if (cap != null && cap > hz) {
+  } else if (cap != null && cap > hz * 1.05) {
     frameRateLevel = "yellow";
     add("cocos-frame-rate", "節奏", `幀率上限 ${cap} 高於螢幕 ${hz} Hz，多算的幀不會上螢幕`, `cc.game.frameRate 設成 ${hz}，省下多算的 CPU。`);
   } else if (cap != null && cap < 60 * 0.95) {

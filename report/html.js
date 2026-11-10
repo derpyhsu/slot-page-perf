@@ -102,8 +102,9 @@ h3 { font-size: 11.5px; font-weight: 600; color: var(--faint); letter-spacing: .
 .gtab svg { display: block; }
 .gauge-name { font-size: 16px; font-weight: 600; }
 .gauge-name .prov { display: block; font-size: 11px; font-weight: 400; color: var(--faint); }
-.gauge-hint, .gauge-fatal { margin: 0; font-size: 12px; color: var(--sub); text-align: center; }
+.gauge-hint, .gauge-fatal, .gauge-risk { margin: 0; font-size: 12px; color: var(--sub); text-align: center; }
 .gauge-fatal { color: var(--red); }
+.gauge-risk { margin-top: 2px; color: var(--ink); }
 .legend { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px 18px; color: var(--faint); font-size: 11.5px; margin: 8px 0 0; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .lm { display: inline-block; width: 9px; height: 9px; flex: none; }

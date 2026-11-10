@@ -78,13 +78,13 @@
   "scoring": {
     "memoryBudgetMb": 300,
     "smooth": {
-      "steady": { "weight": 30, "minFps": 55, "full": 0.99, "zero": 0.8 },
-      "low": { "weight": 10, "full": 50, "zero": 20 },
-      "pace": { "weight": 10, "full": 0.05, "zero": 0.5 },
-      "stall": { "weight": 15, "full": 50, "zero": 1000 },
-      "stallRate": { "weight": 10, "full": 0.5, "zero": 6 },
-      "cpu": { "weight": 15, "full": 4, "zero": 16.7 },
-      "gpu": { "weight": 10, "full": 4, "zero": 16.7, "minFrames": 120 }
+      "steady": { "weight": 60, "minFps": 55, "full": 0.99, "zero": 0.8 },
+      "low": { "weight": 5, "full": 50, "zero": 20 },
+      "pace": { "weight": 5, "full": 0.05, "zero": 0.5 },
+      "stall": { "weight": 10, "full": 50, "zero": 1000 },
+      "stallRate": { "weight": 5, "full": 0.5, "zero": 6 },
+      "cpu": { "weight": 10, "full": 4, "zero": 16.7 },
+      "gpu": { "weight": 5, "full": 4, "zero": 16.7, "minFrames": 120 }
     },
     "loading": {
       "steady": { "weight": 30, "minFps": 55, "full": 0.9, "zero": 0.5 },
