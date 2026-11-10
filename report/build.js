@@ -83,7 +83,7 @@ const ev = {
   findings: [],
   summary: notes.summary,
   issues: notes.issues,
-  missing: notes.missing,
+  missing: typeof notes.missing === "string" ? [notes.missing] : notes.missing,
 };
 Object.keys(ev).forEach((k) => ev[k] === undefined && delete ev[k]);
 Object.keys(ev.game).forEach((k) => ev.game[k] === undefined && delete ev.game[k]);
