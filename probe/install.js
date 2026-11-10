@@ -32,6 +32,7 @@
     texBytes: 0,
     shaderMs: 0,
     shaderN: 0,
+    shaderMax: 0,
     shaderStalls: [],
     audioBytes: 0,
     audioPcm: 0,
@@ -385,6 +386,7 @@
         var ms = performance.now() - t0;
         state.shaderMs += ms;
         if (counts) state.shaderN += 1;
+        if (ms > state.shaderMax) state.shaderMax = ms;
         if (ms >= HITCH_MS && state.shaderStalls.length < 8) state.shaderStalls.push({ t: rel(t0), ms: round(ms), kind: name });
         return ret;
       };
@@ -1344,7 +1346,7 @@
           textures: textureInfo()
         },
         resources: resourceSummary(),
-        shaders: state.shaderN ? { status: "ok", ms: round(state.shaderMs), count: state.shaderN, stalls: state.shaderStalls } : { status: "none", ms: 0, count: 0, stalls: [] },
+        shaders: state.shaderN ? { status: "ok", ms: round(state.shaderMs), maxMs: round(state.shaderMax), count: state.shaderN, stalls: state.shaderStalls } : { status: "none", ms: 0, count: 0, stalls: [] },
         audio: state.audioN ? { status: "ok", pcmMb: round(state.audioPcm / 1048576), count: state.audioN, maxMs: round(state.audioMaxMs) } : { status: "none", pcmMb: 0, count: 0, maxMs: 0 }
       };
     }

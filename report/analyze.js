@@ -256,6 +256,21 @@ function total(items, cap) {
 const S = cfg.smooth;
 const stable = stableShare();
 const stall = worstStall();
+const low1 = lowOnePercent(gameStages, S.gpu.minFrames);
+const pace = gf ? gf.offShare : null;
+// Stalls of 50 ms or more per minute of play.
+const playMs = gameStages.reduce((a, s) => a + s.wallMs, 0);
+const stallRate = playMs ? gameStages.reduce((a, s) => a + (s.hitches || []).length, 0) / (playMs / 60000) : null;
+// Worst GPU timer p95 among stages long enough to trust.
+function gpuP95() {
+  let best = null;
+  gameStages.forEach((s) => {
+    if (!s.gpuMs || s.gpuMs.p95 == null || s.frames < S.gpu.minFrames) return;
+    if (!best || s.gpuMs.p95 > best.value) best = { value: s.gpuMs.p95, stage: s.name };
+  });
+  return best;
+}
+const gpuStat = ev.channels && ev.channels.gpuTimer ? gpuP95() : null;
 const cpuStat = cpuP95();
 const cpu = cpuStat && cpuStat.value;
 const smoothItems = [
@@ -293,11 +308,62 @@ const smoothItems = [
     zero: `${S.cpu.zero} ms`,
     score: cpu == null ? null : cpu <= S.cpu.full ? 1 : curve(cpu, S.cpu.full, S.cpu.zero, { log: true }),
   },
+  { id: "low", label: "1% low", weight: S.low.weight, value: low1 == null ? null : round(low1, 1), unit: "FPS", full: `${S.low.full} FPS`, zero: `${S.low.zero} FPS`, score: low1 == null ? null : curve(low1, S.low.full, S.low.zero, { higherIsBetter: true }) },
+  { id: "pace", label: "節奏不齊", weight: S.pace.weight, value: pace == null ? null : round(pace * 100, 1), unit: "%", full: `${S.pace.full * 100}%`, zero: `${S.pace.zero * 100}%`, score: pace == null ? null : pace <= S.pace.full ? 1 : curve(pace, S.pace.full, S.pace.zero) },
+  { id: "stallRate", label: "卡頓頻率", weight: S.stallRate.weight, value: stallRate == null ? null : round(stallRate, 1), unit: "次/分", full: `${S.stallRate.full} 次/分`, zero: `${S.stallRate.zero} 次/分`, score: stallRate == null ? null : stallRate <= S.stallRate.full ? 1 : curve(stallRate, S.stallRate.full, S.stallRate.zero) },
+  { id: "gpu", label: "GPU 餘裕", weight: S.gpu.weight, value: gpuStat ? round(gpuStat.value, 1) : null, unit: "ms", stage: gpuStat && gpuStat.stage, full: `${S.gpu.full} ms`, zero: `${S.gpu.zero} ms`, score: gpuStat ? (gpuStat.value <= S.gpu.full ? 1 : curve(gpuStat.value, S.gpu.full, S.gpu.zero, { log: true })) : null },
 ];
 
 const L = cfg.loading;
 const loadStable = loadingStableShare();
 const loadStall = worstStall(loadStages);
+const inLoad = (t0, t1) => loadStages.reduce((a, s) => a + Math.max(0, Math.min(t1, s.startMs + s.wallMs) - Math.max(t0, s.startMs)), 0);
+const loadWall = loadStages.reduce((a, s) => a + s.wallMs, 0);
+// Every stall of 50 ms or more while loading, added up.
+const loadStallTotal = loadStages.length ? loadStages.reduce((a, s) => a + (s.hitches || []).reduce((b, h) => b + h.dt, 0), 0) : null;
+// Share of loading wall time inside long tasks: the main thread was blocked.
+const longTasks = (ev.timeline && ev.timeline.longTasks) || [];
+const loadLongShare = loadWall ? longTasks.reduce((a, l) => a + inLoad(l[0], l[0] + l[1]), 0) / loadWall : null;
+// Longest single shader wait. Older probes only kept waits of hitchMs or more, so below that the
+// whole-run total is an upper bound.
+function shaderWait() {
+  const sh = ev.shaders;
+  if (!sh || !sh.status) return null;
+  if (sh.status === "none") return { value: 0, approx: false };
+  if (sh.maxMs != null) return { value: sh.maxMs, approx: false };
+  const worst = Math.max(0, ...(sh.stalls || []).map((x) => x.ms));
+  return worst ? { value: worst, approx: false } : { value: Math.min(sh.ms || 0, (thresholds.hitchMs || 50) - 1), approx: true };
+}
+const shader = shaderWait();
+// 1% low over every presented frame of the given stages: the gap the slowest 1% reach.
+// Older probes have no presented histogram, so they use the stages' own 1% low, frame-weighted.
+function lowOnePercent(list, minFrames) {
+  const hist = [];
+  let vsync = null;
+  let total = 0;
+  list.forEach((s) => {
+    const p = s.presented;
+    if (!p || !p.hist) return;
+    vsync = vsync || p.vsyncMs;
+    p.hist.forEach((n, k) => {
+      hist[k] = (hist[k] || 0) + n;
+      total += n;
+    });
+  });
+  if (!total || !vsync) {
+    const xs = list.filter((s) => s.fpsLow != null && s.frames >= minFrames);
+    const n = xs.reduce((a, s) => a + s.frames, 0);
+    return n ? xs.reduce((a, s) => a + s.fpsLow * s.frames, 0) / n : null;
+  }
+  let acc = 0;
+  for (let k = hist.length - 1; k >= 1; k -= 1) {
+    acc += hist[k] || 0;
+    if (acc >= total * 0.01) return 1000 / (k * vsync);
+  }
+  return 1000 / vsync;
+}
+const loadLow = loadStages.length ? lowOnePercent(loadStages, 1) : null;
+const lower = (v, item, log) => (v == null ? null : v <= item.full ? 1 : curve(v, item.full, item.zero, { log }));
 const loadingItems = [
   {
     id: "steady",
@@ -322,6 +388,10 @@ const loadingItems = [
     zero: `${L.stall.zero} ms`,
     score: !loadStages.length ? null : loadStall.dt <= L.stall.full ? 1 : curve(loadStall.dt, L.stall.full, L.stall.zero, { log: true }),
   },
+  { id: "stallTotal", label: "卡頓總量", weight: L.stallTotal.weight, value: loadStallTotal == null ? null : round(loadStallTotal, 0), unit: "ms", full: `${L.stallTotal.full} ms`, zero: `${L.stallTotal.zero} ms`, score: lower(loadStallTotal, L.stallTotal, true) },
+  { id: "longTask", label: "主執行緒堵塞", weight: L.longTask.weight, value: loadLongShare == null ? null : round(loadLongShare * 100, 1), unit: "%", full: `${L.longTask.full * 100}%`, zero: `${L.longTask.zero * 100}%`, score: lower(loadLongShare, L.longTask) },
+  { id: "shader", label: "shader 編譯", weight: L.shader.weight, value: shader == null ? null : round(shader.value, 0), approx: shader ? shader.approx : false, unit: "ms", full: `${L.shader.full} ms`, zero: `${L.shader.zero} ms`, score: shader == null ? null : lower(shader.value, L.shader, true) },
+  { id: "low", label: "1% low", weight: L.low.weight, value: loadLow == null ? null : round(loadLow, 1), unit: "FPS", full: `${L.low.full} FPS`, zero: `${L.low.zero} FPS`, score: loadLow == null ? null : curve(loadLow, L.low.full, L.low.zero, { higherIsBetter: true }) },
 ];
 
 const M = cfg.memory;
@@ -385,7 +455,7 @@ if (ratio != null && ratio > (F.memoryBudgetFactor || 2)) memoryFatal.push({ id:
 if ((ev.findings || []).some((f) => f.id === "leak-suspected" && f.status === "retained-after-gc")) memoryFatal.push({ id: "leak-suspected" });
 
 ev.score = {
-  version: 4,
+  version: 5,
   // presented: bad frames and 節奏 from frames that reached the screen; engine-33ms: older probe.
   frameRule: gf ? "presented" : "engine-33ms",
   loading: Object.assign(total(loadingItems, loadingFatal.length ? F.cap : null), { items: loadingItems, fatal: loadingFatal }),

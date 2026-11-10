@@ -313,7 +313,7 @@ function readoutHtml(ev) {
   const m = model(ev);
   const S = ev.score;
   const cell = (text, level, raw) => `<td class="num"${level ? ` style="color:${COLOR[level]};font-weight:600"` : ""}>${raw ? text : esc(text)}</td>`;
-  let html = `<section class="card hero"><div class="gauges">${S.loading ? gauge(S.loading, NAMES.loading, "載入時的幀穩定度與最長停頓") : ""}${gauge(S.smooth, NAMES.smooth, "進遊戲後的 60 FPS 穩定度與卡頓")}${gauge(S.memory, NAMES.memory, "GPU、JS heap、增長、大貼圖、音效、面板殘留")}</div>${heroMetrics(ev, m)}</section>`;
+  let html = `<section class="card hero"><div class="gauges">${S.loading ? gauge(S.loading, NAMES.loading, "幀穩定度、卡頓、主執行緒、shader、1% low") : ""}${gauge(S.smooth, NAMES.smooth, "60 FPS 穩定度、1% low、節奏、卡頓、CPU、GPU")}${gauge(S.memory, NAMES.memory, "GPU、JS heap、增長、大貼圖、音效、面板殘留")}</div>${heroMetrics(ev, m)}</section>`;
   html += '<section class="card"><h2>各階段</h2><div class="scroll">';
   if (m.cols.length) {
     html += "<table><tr><th>讀數</th>" + m.cols.map((c) => `<th class="num">${esc(c.label)}</th>`).join("") + "</tr>";
