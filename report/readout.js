@@ -213,7 +213,7 @@ function factRows(ev, m) {
   if (sc) {
     const bits = [
       `節點 ${sc.nodes}（顯示中 ${sc.activeNodes}）`,
-      m.snap.spine ? `Spine ${m.snap.spine.total}，在畫 ${m.snap.spine.active}，即時 ${m.snap.spine.realtime}，骨頭 ${m.snap.spine.activeRealtimeBones}，batched ${m.snap.spine.batched}` : sc.spine != null ? `Spine ${sc.spine}，在畫 ${sc.spineActive}，即時 ${sc.spineRealtime}` : "",
+      m.snap.spine ? `Spine ${m.snap.spine.total}，在畫 ${m.snap.spine.active}，即時 ${m.snap.spine.realtime}，骨頭 ${m.snap.spine.activeRealtimeBones}，batched ${m.snap.spine.batched}${m.snap.spine.hiddenRealtime ? `，看不見還在算 ${m.snap.spine.hiddenRealtime}` : ""}${m.snap.spine.unused != null ? `，整輪沒顯示過 ${m.snap.spine.unused}` : ""}` : sc.spine != null ? `Spine ${sc.spine}，在畫 ${sc.spineActive}，即時 ${sc.spineRealtime}` : "",
       labels ? `Label ${labels.active}，未開快取 ${labels.noCacheTtf != null ? `${labels.noCacheTtf}（不含 BMFont ${labels.bmfont}）` : labels.noCache}` : sc.labels != null ? `Label ${sc.labels}` : "",
       sc.masks != null ? `Mask ${sc.masks}` : "",
       sc.particles != null ? `粒子 ${sc.particles}` : "",

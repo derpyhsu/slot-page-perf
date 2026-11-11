@@ -56,7 +56,10 @@ const ui = new UITransform();
 const cam = new Camera();
 const node = (name, components, children = [], extra = {}) => Object.assign({ name, active: true, activeInHierarchy: true, components, children }, extra);
 const startBtn = node("btn_start", [new Button(), ui], [node("txt", [new Label("开始")])], { layer: 1, getComponent: (k) => (k === UITransform ? ui : null) });
-const scene = node("scene", [], [startBtn, node("a", [new Skeleton(0), new Label()]), node("b", [new Skeleton(1)])], { getComponentsInChildren: () => [cam] });
+// Five realtime Spine under a transparent parent (hidden, still posing) and one never activated.
+const hiddenFx = node("fx_layer", [], [1, 2, 3, 4, 5].map((i) => node(`Symbol_${i}`, [new Skeleton(0)])), { opacity: 0 });
+hiddenFx.children.forEach((c) => { c.parent = hiddenFx; });
+const scene = node("scene", [], [startBtn, node("a", [new Skeleton(0), new Label()]), node("b", [new Skeleton(1)]), hiddenFx, node("off", [new Skeleton(0)], [], { active: false, activeInHierarchy: false })], { getComponentsInChildren: () => [cam] });
 const assets = [new Texture2D(2048, 2048, 35), new Texture2D(1024, 1024, 99)];
 let ticks = 0;
 global.cc = {
@@ -126,7 +129,13 @@ assert.strictEqual(idle.cpuMs.p95, 3, "per-frame CPU from director.tick");
 assert.ok(idle.fpsLow > 0 && idle.badShare === 0 && idle.dropShare === 0, "1% low, bad-frame and dropped-frame share per stage");
 assert.strictEqual(idle.gpuMemMb.peak, 5, "stage GPU memory peak");
 assert.strictEqual(s.memory.gpu.peakMb, 5);
-assert.strictEqual(snap.spine.realtime, 1);
+assert.strictEqual(snap.spine.realtime, 6);
+assert.strictEqual(snap.spine.hiddenRealtime, 5, "transparent parent hides realtime Spine");
+assert.strictEqual(snap.spine.hiddenBones, 150);
+assert.deepStrictEqual(snap.spine.hiddenBy, { "Symbol_* · ?": 5 }, "hidden Spine grouped by folded path");
+assert.strictEqual(snap.spine.unused, 6, "hidden and never-active Spine were never drawable");
+assert.strictEqual(snap.spine.unusedLive, 5);
+assert.ok(snap.spine.samples > 0, "Spine sampled on a timer");
 assert.strictEqual(snap.console[0].count, 2, "console grouped");
 assert.ok(!JSON.stringify(snap).includes("secret"), "no token in snapshot");
 
@@ -144,6 +153,7 @@ const digest = execFileSync(process.execPath, [path.join(root, "report", "build.
 const ev = JSON.parse(fs.readFileSync(path.join(runDir, "evidence.json"), "utf8"));
 const md = fs.readFileSync(path.join(runDir, "report.md"), "utf8");
 assert.ok(ev.fps.some((r) => r.group === "spin" && r.stages === 12), "spins grouped in the FPS table");
+assert.ok(ev.todo.some((t) => t.rule === "cocos-spine-hidden"), "hidden Spine listed for the team");
 assert.ok(md.includes("各階段 FPS") && md.includes("進遊戲"), "report shows FPS table and entry");
 assert.ok(!/secret|token=/.test(JSON.stringify(ev) + md), "no token in evidence or report");
 console.log(digest.trim());

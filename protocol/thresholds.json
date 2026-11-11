@@ -69,6 +69,8 @@
     "consoleRepeat": 10,
     "spineBonesRetained": 100,
     "spineCopiesRetained": 3,
+    "spineHiddenRealtime": 5,
+    "spineUnused": 20,
     "imageStencil": 1,
     "camerasActive": 1,
     "renderTextureMb": 8

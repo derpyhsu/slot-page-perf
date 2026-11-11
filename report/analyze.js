@@ -504,6 +504,8 @@ const COCOS_LEVEL = {
   "cocos-spine-realtime": "orange",
   "cocos-spine-retained": "orange",
   "cocos-spine-cache-warning": "orange",
+  "cocos-spine-hidden": "orange",
+  "cocos-spine-unused": "yellow",
   "cocos-texture-uncompressed": memoryFatal.length ? "red" : "orange",
   "cocos-texture-npot": "yellow",
   "cocos-label-no-cache": "yellow",
@@ -910,6 +912,31 @@ function cocosAdvice() {
     const peak = peakOf((s) => s.spine.realtime);
     const groups = spineGroups(peak && peak.snap);
     add("cocos-spine-realtime", "CPU", `畫面上有 ${realtime} 個即時運算的 Spine${spineActive != null ? `（共 ${spineActive} 個在畫）` : ""}${bones ? `，合計 ${bones} 根骨頭` : ""}${peakAt((s) => s.spine.realtime)}`, `不需要即時混合的動畫改成 SHARED_CACHE，看不到的骨架關掉 active，同圖集的開 enableBatch。${groups.length ? `最多的是 ${groups.slice(0, 3).join("、")}。` : ""}`);
+  }
+
+  // Both name groups as "folded node path · skeletonData" so whoever reads it can tell symbols
+  // from effects. Whether to change anything is left to the game team.
+  const pathGroups = (by) => Object.keys(by || {}).map((k) => `${k} ×${by[k]}`);
+  const hidden = max((s) => s.spine.hiddenRealtime);
+  if (hidden != null && hidden >= (C.spineHiddenRealtime || 5)) {
+    const peak = peakOf((s) => s.spine.hiddenRealtime);
+    const sp = peak.snap.spine;
+    add(
+      "cocos-spine-hidden",
+      "CPU",
+      `${hidden} 個 Spine 看不見但每幀還在算骨頭${sp.hiddenBones ? `，合計 ${sp.hiddenBones} 根` : ""}${peakAt((s) => s.spine.hiddenRealtime)}`,
+      `這些骨架 active 開著、沒有暫停，但透明度 0、顏色 alpha 0 或縮放 0（含父節點），畫不出東西，骨骼照樣每幀更新。是否不用時關 active 或設 paused，由工程師判斷。${list(pathGroups(sp.hiddenBy))}`
+    );
+  }
+  const lastSpine = last.spine || {};
+  if (lastSpine.unused != null && lastSpine.unused >= (C.spineUnused || 20)) {
+    const every = lastSpine.sampleMs ? `每 ${lastSpine.sampleMs / 1000} 秒看一次` : "定時取樣";
+    add(
+      "cocos-spine-unused",
+      "記憶體",
+      `場景裡 ${lastSpine.unused} 個 Spine（共 ${lastSpine.total}）這輪一次都沒顯示過${lastSpine.unusedLive ? `，其中 ${lastSpine.unusedLive} 個 active 開著` : ""}`,
+      `${every}，整輪沒有一次畫得出來（${lastSpine.samples || 0} 次取樣）。這輪沒觸發的情境（免費遊戲、大獎）可能會用到；建好卻沒用的骨架仍佔記憶體與載入時間，要不要改成用到再建，由工程師判斷。${list(pathGroups(lastSpine.unusedBy))}`
+    );
   }
 
   const consoleGroups = last.console || [];

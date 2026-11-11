@@ -6,6 +6,7 @@
   var BAD_FRAME_MS = 33;
   var HEAP_SAMPLE_MS = 1000;
   var TEXTURE_SAMPLE_MS = 5000;
+  var SPINE_SAMPLE_MS = 500;
   var SERIES_CAP = 8000;
   var state = {
     bucket: null,
@@ -43,7 +44,10 @@
     active: new Set(),
     gpuExt: null,
     pendingGpu: [],
-    lastDrawSample: 0
+    lastDrawSample: 0,
+    // Spine components seen drawable at least once (any sample or snapshot), and how many samples ran.
+    spineShown: typeof WeakSet !== "undefined" ? new WeakSet() : null,
+    spineSamples: 0
   };
 
   function round(n) {
@@ -712,6 +716,7 @@
     if (!state.gl && cc.game && cc.game._renderContext) attachContext(cc.game._renderContext);
   }
   setInterval(watch, 200);
+  setInterval(function () { try { sampleSpine(); } catch (e) {} }, SPINE_SAMPLE_MS);
 
   setInterval(function () {
     var mb = heapMb();
@@ -860,6 +865,56 @@
     return names.join("/");
   }
 
+  // Node path with digits folded, so Symbol_3/scatter and Symbol_17/scatter group together.
+  function groupPath(node) {
+    return nodePath(node).replace(/\d+/g, "*");
+  }
+
+  function topGroups(groups, n) {
+    var out = {};
+    Object.keys(groups).sort(function (a, b) { return groups[b] - groups[a]; }).slice(0, n).forEach(function (k) { out[k] = groups[k]; });
+    return out;
+  }
+
+  // Whether a live Spine can show anything: opacity, color alpha and scale up the parent chain.
+  // Being off screen is not checked; Spine nodes often have no content size to test against.
+  function spineDrawable(c, node) {
+    if (c.color && c.color.a === 0) return false;
+    var n = node;
+    while (n) {
+      var op = typeof n.opacity === "number" ? n.opacity : n._uiProps && typeof n._uiProps.localOpacity === "number" ? n._uiProps.localOpacity * 255 : 255;
+      if (op <= 0) return false;
+      var sx = typeof n.scaleX === "number" ? n.scaleX : n.scale && typeof n.scale.x === "number" ? n.scale.x : 1;
+      var sy = typeof n.scaleY === "number" ? n.scaleY : n.scale && typeof n.scale.y === "number" ? n.scale.y : 1;
+      if (sx === 0 || sy === 0) return false;
+      n = n.parent || n._parent;
+    }
+    return true;
+  }
+
+  function spineBones(c) {
+    try {
+      var sk = c._skeleton || (c.getSkeleton && c.getSkeleton());
+      return sk && sk.bones ? sk.bones.length : 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function sampleSpine() {
+    if (!state.spineShown || !window.cc) return;
+    var ok = walkScene(function (node) {
+      if (node.activeInHierarchy === false || node.active === false) return;
+      var comps = node._components || node.components || [];
+      for (var i = 0; i < comps.length; i += 1) {
+        var c = comps[i];
+        if (c.enabled === false || state.spineShown.has(c) || className(c) !== "sp.Skeleton") continue;
+        if (spineDrawable(c, node)) state.spineShown.add(c);
+      }
+    });
+    if (ok) state.spineSamples += 1;
+  }
+
   function pushSample(list, value) {
     if (list.length < 5 && list.indexOf(value) < 0) list.push(value);
   }
@@ -931,7 +986,9 @@
       engine: cc.ENGINE_VERSION || cc.version || null,
       nodes: { total: 0, active: 0, maxDepth: 0 },
       components: {},
-      spine: { total: 0, active: 0, realtime: 0, sharedCache: 0, privateCache: 0, batched: 0, activeRealtimeBones: 0, realtimeBy: {} },
+      // hidden*: live realtime Spine that cannot show anything yet still pose bones every frame.
+      // unused*: Spine in the scene never seen drawable in any sample this run (every SPINE_SAMPLE_MS).
+      spine: { total: 0, active: 0, realtime: 0, sharedCache: 0, privateCache: 0, batched: 0, activeRealtimeBones: 0, realtimeBy: {}, hiddenRealtime: 0, hiddenBones: 0, hiddenBy: {}, unused: state.spineShown ? 0 : null, unusedLive: state.spineShown ? 0 : null, unusedBones: state.spineShown ? 0 : null, unusedBy: {}, samples: state.spineSamples, sampleMs: SPINE_SAMPLE_MS },
       cameras: { total: 0, active: 0 },
       renderTextures: { count: 0, mb: 0, largest: null },
       dragonBones: { total: 0, active: 0 },
@@ -958,17 +1015,30 @@
         if (name === "sp.Skeleton") {
           out.spine.total += 1;
           var mode = c._cacheMode != null ? c._cacheMode : c.defaultCacheMode;
+          var data = c.skeletonData;
+          var key = (data && (data.name || data._name)) || assetFile(data || {}) || "?";
+          var drawable = live && spineDrawable(c, node);
+          if (drawable && state.spineShown) state.spineShown.add(c);
+          if (state.spineShown && !state.spineShown.has(c)) {
+            var ug = groupPath(node) + " · " + key;
+            out.spine.unusedBy[ug] = (out.spine.unusedBy[ug] || 0) + 1;
+            out.spine.unused += 1;
+            if (live) out.spine.unusedLive += 1;
+            out.spine.unusedBones += spineBones(c);
+          }
           if (live) {
             out.spine.active += 1;
             if (!mode) {
               out.spine.realtime += 1;
-              var data = c.skeletonData;
-              var key = (data && (data.name || data._name)) || assetFile(data || {}) || "?";
               out.spine.realtimeBy[key] = (out.spine.realtimeBy[key] || 0) + 1;
-              try {
-                var sk = c._skeleton || (c.getSkeleton && c.getSkeleton());
-                if (sk && sk.bones) out.spine.activeRealtimeBones += sk.bones.length;
-              } catch (e) {}
+              var nb = spineBones(c);
+              out.spine.activeRealtimeBones += nb;
+              if (!drawable && !c.paused) {
+                var hg = groupPath(node) + " · " + key;
+                out.spine.hiddenBy[hg] = (out.spine.hiddenBy[hg] || 0) + 1;
+                out.spine.hiddenRealtime += 1;
+                out.spine.hiddenBones += nb;
+              }
             } else if (mode === 1) out.spine.sharedCache += 1;
             else out.spine.privateCache += 1;
             if (c.enableBatch) out.spine.batched += 1;
@@ -1019,10 +1089,9 @@
     var comps = {};
     top.forEach(function (k) { comps[k] = out.components[k]; });
     out.components = comps;
-    var groups = out.spine.realtimeBy;
-    var topGroups = {};
-    Object.keys(groups).sort(function (a, b) { return groups[b] - groups[a]; }).slice(0, 5).forEach(function (k) { topGroups[k] = groups[k]; });
-    out.spine.realtimeBy = topGroups;
+    out.spine.realtimeBy = topGroups(out.spine.realtimeBy, 5);
+    out.spine.hiddenBy = topGroups(out.spine.hiddenBy, 5);
+    out.spine.unusedBy = topGroups(out.spine.unusedBy, 5);
     try {
       var m = cc.macro || {};
       var game = cc.game || {};
