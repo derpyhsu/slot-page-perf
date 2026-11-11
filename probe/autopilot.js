@@ -223,6 +223,7 @@
     var same = 0;
     var splashMarked = false;
     var progressSince = 0;
+    var netSince = 0;
     while (now() < deadline) {
       var e = P.entry(E);
       if (e.spinReady) {
@@ -241,7 +242,13 @@
       if (progress && !progressSince) progressSince = now();
       if (!progress) progressSince = 0;
       var loadingBar = progress && now() - progressSince < 30000;
-      if (!settled || !e.scene || loadingBar) {
+      // Files still arriving means loading is not done, with or without a percentage on screen.
+      // A game that polls the server keeps this busy, so stop waiting on it after netWaitSeconds.
+      var netBusy = e.netQuietMs != null && e.netQuietMs < (E.netQuietMs || 3000);
+      if (netBusy && !netSince) netSince = now();
+      if (!netBusy) netSince = 0;
+      var downloading = netBusy && now() - netSince < (E.netWaitSeconds || 60) * 1000;
+      if (!settled || !e.scene || loadingBar || downloading) {
         await sleep(1000);
         continue;
       }

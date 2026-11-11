@@ -1237,8 +1237,16 @@
     };
     var texts = hasScene ? activeTexts(60) : [];
     var spin = pick(spinW);
+    // How long since the last request finished. Not every loading screen shows a percentage, but
+    // every one is still downloading, and on a throttled network the screen can sit still between
+    // texture uploads while files keep arriving.
+    var lastNet = 0;
+    try {
+      (performance.getEntriesByType("resource") || []).forEach(function (r) { if (r.responseEnd > lastNet) lastNet = r.responseEnd; });
+    } catch (e) {}
     return {
       quietMs: Math.round(performance.now() - (state.lastTexUploadAt || state.t0)),
+      netQuietMs: Math.round(performance.now() - (lastNet || state.t0)),
       scene: hasScene,
       spinReady: spin.some(function (b) { return b.interactable; }),
       spin: spin,

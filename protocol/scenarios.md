@@ -40,7 +40,7 @@ Feature 或大獎只在該轉的 mark 上記 `tags`。不另外加轉，不買 F
 每秒呼叫一次 `__slotPerf.entry(entry)`，最多 `entry.maxSeconds` 秒、最多按 `entry.maxSteps` 次：
 
 1. `spinReady` 是 true：已經在遊戲裡，`mark("game-ready")`，結束迴圈。
-2. 還沒載入滿：`quietMs` 小於 `entry.quietMs`，或候選清單跟上一秒不同，就繼續等。候選要連續 `entry.stablePolls` 次一樣才算穩。進度條還在跑時不按。
+2. 還沒載入滿：`quietMs` 小於 `entry.quietMs`，或候選清單跟上一秒不同，就繼續等。候選要連續 `entry.stablePolls` 次一樣才算穩。進度條還在跑時不按：畫面上有「45 %」這類字時等它（最多 30 秒）；沒有百分比的遊戲看網路，`netQuietMs`（最後一個請求完成到現在）小於 `entry.netQuietMs` 就繼續等。網路一直忙的遊戲（例如定時向伺服器查詢）最多等 `entry.netWaitSeconds` 秒。
 3. 載入滿了但不能轉，就先截圖，看畫面上要按什麼。第一次走到這裡時 `mark("splash")`。
 4. 依這個順序選一個來按，只選一個：
    1. `start` 裡 `interactable` 的。

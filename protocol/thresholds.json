@@ -18,9 +18,11 @@
   "neverPress": ["購買", "购买", "buy", "purchase", "super", "超轉", "超转", "feature", "特色", "充值", "儲值", "储值", "加注", "減注", "减注", "bet", "copy", "複製", "复制", "auto", "自動", "自动", "lobby", "大廳", "大厅", "home"],
   "settle": { "minMs": 1500, "stablePolls": 3, "pollMs": 250, "nudgeAfterMs": 30000, "maxMs": 120000, "stillMs": 15000, "hardMaxMs": 600000 },
   "entry": {
-    "maxSeconds": 90,
+    "maxSeconds": 180,
     "maxSteps": 5,
     "quietMs": 1500,
+    "netQuietMs": 3000,
+    "netWaitSeconds": 60,
     "stablePolls": 2,
     "spinWords": ["spin", "旋轉", "旋转"],
     "startWords": ["開始", "开始", "進入", "进入", "start", "play", "btn_enter", "btnenter", "點擊開始", "点击开始", "開始遊戲", "开始游戏"],
