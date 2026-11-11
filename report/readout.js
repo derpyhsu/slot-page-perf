@@ -392,25 +392,62 @@ function gaugeTab(key, part, name, selected) {
   </button>`;
 }
 
-function itemRow(i) {
-  if (i.value == null) return `<li class="off"><span class="il">${esc(i.label)}</span><span class="iv">沒量到，不計分</span></li>`;
+// What each scored item measures and how, shown when the label is hovered or focused.
+const HELP = {
+  loading: {
+    steady: "載入階段（loading、enter）每一秒算一次實際上螢幕的幀數，統計 55 FPS 以上的秒數佔幾成。上螢幕的幀以 requestAnimationFrame 的間隔判斷，不是引擎 update 的次數。",
+    stall: "載入階段最長的一次幀間隔，也就是兩次上螢幕之間隔了多久。50 ms 以上算停頓，並依當下主執行緒時間與進行中的請求分成：主執行緒在忙、在等下載、原因不明。",
+    stallTotal: "載入階段所有 50 ms 以上停頓的時間加總，抓出很多次中等卡頓累積起來的感受。",
+    longTask: "瀏覽器 Long Tasks API 記到的 50 ms 以上主執行緒任務，落在載入階段的時間除以載入階段總時間。偏高代表 JS 解析、JSON 反序列化或場景初始化把主執行緒佔滿。",
+    shader: "單次最長的 WebGL shader 編譯或連結等待，包含之後第一次呼叫 getShaderParameter／getProgramParameter，驅動常在這時才真正同步編譯。",
+    low: "載入階段所有上螢幕的幀依間隔排序，最慢那 1% 的門檻換算成 FPS。比平均 FPS 更能反映偶發掉幀。",
+    fcp: "瀏覽器 Paint Timing 的 first-contentful-paint：從開始導航到第一次畫出文字、圖片或非空白 canvas。只在空快取且網路限速時計分。",
+    tti: "從開始導航到 loading 階段結束：有開始畫面時是開始畫面出現，沒有時是 spin 鈕能按（探針輪詢偵測，誤差約 1 秒）。只在空快取且網路限速時計分。",
+    requests: "game-ready 之前 Resource Timing 記到的請求數。Cocos 沒有合併 JSON 時，每個資源各有一個 import JSON；散圖也各是一個請求。同一網域請求多了會排隊。",
+  },
+  smooth: {
+    steady: "進遊戲後每一秒算一次實際上螢幕的 FPS，統計 55 以上的秒數佔幾成。等 agent 或強制 GC 的時間不算。幀率上限低於 60 時這項拿不到分。",
+    low: "遊戲階段所有上螢幕的幀依間隔排序，最慢那 1% 的門檻換算成 FPS。",
+    pace: "上螢幕間隔偏離應有幀長超過容許值的比例。應有幀長取螢幕更新間隔與 1000 ÷ 幀率上限中較長的。平均 FPS 正常時也可能節奏不齊，看起來會一頓一頓。",
+    stall: "進遊戲後最長的一次幀間隔。50 ms 以上玩家就會覺得頓。",
+    stallRate: "遊戲階段平均每分鐘有幾次 50 ms 以上的停頓。",
+    cpu: "引擎主迴圈（Cocos mainLoop）每幀花的時間，取各段 p95 中最高的那段。一幀的預算是 16.7 ms，數字越小，留給慢手機的餘裕越多。這是主執行緒時間，不是作業系統的 CPU 使用率。",
+    gpu: "WebGL timer query（EXT_disjoint_timer_query）量到的每幀 GPU 時間，取幀數足夠的段落中 p95 最高的那段。瀏覽器沒有這個擴充時不計。",
+  },
+  memory: {
+    gpu: "探針攔截 WebGL 配置算出的 GPU 記憶體峰值：貼圖、緩衝區與 renderbuffer。不含預設畫面緩衝與驅動額外配置。",
+    heap: "進遊戲後 performance.memory 取樣的第 10 百分位，當作 JS heap 的地板，避開 GC 前的鋸齒高點。",
+    growth: "第 5 轉之後每轉多留多少 JS heap。有強制 GC 點時，用兩次 GC 後的差除以轉數；沒有時看大 GC 後留下的量，或地板的斜率。都沒有 GC 時最多扣一半。",
+    bigTextures: "單張超過 16 MB 的貼圖張數（寬 × 高 × 每像素位元組）。2048×2048 RGBA 剛好 16 MB，不算。",
+    audio: "decodeAudioData 解出來的 PCM 合計。這塊不在 JS heap，也不在 GPU，但一樣佔裝置記憶體。",
+    panelResidue: "打開下注紀錄或規則之前，跟關掉之後的待機相比，GPU 記憶體多出來沒有放掉的量，取兩次中較大的。",
+  },
+};
+
+function itemLabel(i, help) {
+  return help ? `<span class="tip" tabindex="0">${esc(i.label)}<span class="tiptext" role="tooltip">${esc(help)}</span></span>` : esc(i.label);
+}
+
+function itemRow(i, help) {
+  if (i.value == null) return `<li class="off"><span class="il">${itemLabel(i, help)}</span><span class="iv">沒量到，不計分</span></li>`;
   const level = levelOf(i.score);
   const where = spinWhere(i.stage);
   const lost = loss(i);
   const pos = i.score == null ? null : Math.min(100, Math.max(0, 100 - i.score));
-  return `<li><span class="il">${scoreMark(i.score)}${esc(i.label)}${where ? `<small>${esc(where)}</small>` : ""}</span><span class="iv"${level !== "green" ? ` style="color:${COLOR[level]}"` : ""}>${esc(itemText(i))}</span>` +
+  return `<li><span class="il">${scoreMark(i.score)}${itemLabel(i, help)}${where ? `<small>${esc(where)}</small>` : ""}</span><span class="iv"${level !== "green" ? ` style="color:${COLOR[level]}"` : ""}>${esc(itemText(i))}</span>` +
     (pos == null ? "" : `<span class="scale" aria-hidden="true"><i style="left:calc(${pos}% - 1px)"></i></span><span class="scap"><span>滿分 ${esc(i.full)}</span><span>${lost >= 0.05 ? `扣 ${round(lost, 1)} 分 · ` : ""}零分 ${esc(i.zero)}</span></span>`) +
     "</li>";
 }
 
-function itemList(part) {
+function itemList(part, key) {
   const items = part.items || [];
+  const row = (i) => itemRow(i, (HELP[key] || {})[i.id]);
   const lost = items.filter((i) => i.value != null && i.score != null && i.score < 100).sort((a, b) => loss(b) - loss(a));
   const full = items.filter((i) => i.value != null && (i.score == null || i.score >= 100));
   const off = items.filter((i) => i.value == null);
-  let html = `<h3>計分子項 · 扣分多的在前</h3><ul class="items">${lost.map(itemRow).join("")}${off.map(itemRow).join("")}</ul>`;
-  if (!lost.length && !off.length) html = `<h3>計分子項</h3><p class="small">${items.length} 項都滿分。</p><ul class="items">${full.map(itemRow).join("")}</ul>`;
-  else if (full.length) html += `<details class="more"><summary>另外 ${full.length} 項滿分</summary><ul class="items">${full.map(itemRow).join("")}</ul></details>`;
+  let html = `<h3>計分子項 · 扣分多的在前</h3><ul class="items">${lost.map(row).join("")}${off.map(row).join("")}</ul>`;
+  if (!lost.length && !off.length) html = `<h3>計分子項</h3><p class="small">${items.length} 項都滿分。</p><ul class="items">${full.map(row).join("")}</ul>`;
+  else if (full.length) html += `<details class="more"><summary>另外 ${full.length} 項滿分</summary><ul class="items">${full.map(row).join("")}</ul></details>`;
   return html;
 }
 
@@ -496,7 +533,7 @@ function panel(ev, m, key, selected) {
     wide = factTable(ev, m);
   }
   return `<div class="panel" role="tabpanel" id="panel-${key}" aria-labelledby="tab-${key}"${selected ? "" : " hidden"}>
-    ${side ? `<div class="panel-cols"><div>${itemList(part)}</div><div>${side}</div></div>` : `<div class="panel-one">${itemList(part)}</div>`}${wide}
+    ${side ? `<div class="panel-cols"><div>${itemList(part, key)}</div><div>${side}</div></div>` : `<div class="panel-one">${itemList(part, key)}</div>`}${wide}
   </div>`;
 }
 

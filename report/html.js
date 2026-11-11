@@ -124,6 +124,10 @@ ul.rel a:hover { text-decoration: underline; }
 ul.items, ul.ctx, ul.rel, ul.parts { list-style: none; margin: 0; padding: 0; }
 ul.items li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 ul.items .il { display: flex; align-items: center; gap: 8px; }
+.tip { position: relative; cursor: help; border-bottom: 1px dotted var(--faint); }
+.tip:focus { outline: none; }
+.tiptext { visibility: hidden; opacity: 0; position: absolute; left: 0; top: calc(100% + 6px); z-index: 5; width: min(340px, 80vw); padding: 8px 10px; border-radius: 6px; background: var(--ink); color: #fff; font-size: 12px; font-weight: 400; line-height: 1.6; box-shadow: 0 4px 14px rgba(0,0,0,.18); transition: opacity .12s; pointer-events: none; }
+.tip:hover .tiptext, .tip:focus .tiptext { visibility: visible; opacity: 1; }
 ul.items .il small { color: var(--faint); font-size: 11.5px; }
 ul.items .iv { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 ul.items li.off { color: var(--faint); }
