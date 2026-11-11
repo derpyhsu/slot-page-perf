@@ -577,6 +577,9 @@
     var decoded = 0;
     var cached = 0;
     var duringPlay = state.gameReadyAt == null ? null : 0;
+    // Requests that started before the spin button was ready, split by kind. Cocos asks for one
+    // import JSON per asset unless the bundle merges them, so their count says whether it does.
+    var load = { count: 0, transfer: 0, decoded: 0, cached: 0, json: 0, importJson: 0, images: 0, audio: 0, scripts: 0, queued: 0 };
     function shortPath(name) {
       var clean = String(name || "").split("?")[0].split("#")[0];
       var parts = clean.split("/").filter(Boolean);
@@ -600,6 +603,22 @@
       if (e.decodedBodySize > 0) decoded += e.decodedBodySize;
       if (e.transferSize === 0 && e.decodedBodySize > 0) cached += 1;
       if (duringPlay != null && e.startTime >= state.gameReadyAt) duringPlay += 1;
+      if (state.gameReadyAt == null || e.startTime < state.gameReadyAt) {
+        var file = String(e.name || "").split("?")[0].split("#")[0].toLowerCase();
+        load.count += 1;
+        if (e.transferSize > 0) load.transfer += e.transferSize;
+        if (e.decodedBodySize > 0) load.decoded += e.decodedBodySize;
+        // Cross-origin files without Timing-Allow-Origin report no sizes, so a near-instant fetch
+        // also counts as cached. On a throttled network nothing from the wire finishes in 5 ms.
+        if (e.transferSize === 0 && (e.decodedBodySize > 0 || (e.duration || 0) < 5)) load.cached += 1;
+        if (queue >= 80) load.queued += 1;
+        if (/\.json$/.test(file)) {
+          load.json += 1;
+          if (/\/import\//.test(file)) load.importJson += 1;
+        } else if (/\.(png|jpe?g|webp|gif|astc|pkm|pvr|ktx)$/.test(file)) load.images += 1;
+        else if (/\.(mp3|ogg|wav|m4a|aac)$/.test(file)) load.audio += 1;
+        else if (/\.js$/.test(file)) load.scripts += 1;
+      }
       slow.push({ path: path, ms: round(e.duration || 0), queueMs: round(queue), kb: e.transferSize ? Math.round(e.transferSize / 1024) : 0 });
     });
     var hostRows = Object.keys(hosts).map(function (k) {
@@ -616,10 +635,24 @@
       decodedMb: round(decoded / 1048576),
       cached: cached,
       duringPlay: duringPlay,
+      load: { count: load.count, transferMb: round(load.transfer / 1048576), decodedMb: round(load.decoded / 1048576), cached: load.cached, json: load.json, importJson: load.importJson, images: load.images, audio: load.audio, scripts: load.scripts, queued: load.queued },
       hosts: hostRows,
       duplicates: duplicates,
       slowest: slow.slice(0, 5)
     };
+  }
+
+  // Browser paint timing, in ms from navigation start. t0 is when the probe started on the same
+  // clock, so stage times (relative to t0) can be put on it.
+  function paintSummary() {
+    var out = { t0: round(state.t0) };
+    try {
+      (performance.getEntriesByType("paint") || []).forEach(function (p) {
+        if (p.name === "first-paint") out.fp = round(p.startTime);
+        if (p.name === "first-contentful-paint") out.fcp = round(p.startTime);
+      });
+    } catch (e) {}
+    return out;
   }
 
   function attachContext(gl) {
@@ -1346,6 +1379,7 @@
           textures: textureInfo()
         },
         resources: resourceSummary(),
+        paint: paintSummary(),
         shaders: state.shaderN ? { status: "ok", ms: round(state.shaderMs), maxMs: round(state.shaderMax), count: state.shaderN, stalls: state.shaderStalls } : { status: "none", ms: 0, count: 0, stalls: [] },
         audio: state.audioN ? { status: "ok", pcmMb: round(state.audioPcm / 1048576), count: state.audioN, maxMs: round(state.audioMaxMs) } : { status: "none", pcmMb: 0, count: 0, maxMs: 0 }
       };

@@ -93,6 +93,14 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 
 同一個路徑（不含 query）出現至少 `network.duplicate` 次。
 
+## network-json-unmerged
+
+`resources.load` 存在時才看。game-ready 之前、路徑含 `/import/` 的 JSON 請求數達到 `network.importJson`。Cocos 預設每個資源一個 import JSON；Asset Bundle 的壓縮類型設成「合併所有 JSON」時，同一個 bundle 只剩少數幾個檔。150 個以上為橘色。
+
+## network-many-images
+
+`resources.load` 存在時才看。game-ready 之前的圖片請求數達到 `network.loadImages`。300 張以上為橘色。
+
 ## context-flags
 
 `conditions.context.antialias` 或 `preserveDrawingBuffer` 為 true。`alpha` 單獨成立不觸發。

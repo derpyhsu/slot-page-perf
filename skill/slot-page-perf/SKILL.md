@@ -21,9 +21,10 @@ The page drives itself. The agent starts it, answers when it asks, and saves the
 Use the `chrome-devtools` MCP. If it is not connected, stop and point at the README.
 
 1. `node probe/build.js`. It writes `probe/dist/stash.js` and prints the one-line loader.
-2. `navigate_page` to the game's origin, for example `http://host/`. Any page there works, even a 404.
+   Then get an empty cache and a throttled network. On an `https` game, `new_page` with `url: "about:blank"` and `isolatedContext` set to the run's `<utc>`; a new context starts with no cache. Isolated contexts refuse plain `http` pages, so on an `http` game stay on a normal page and use the reload in step 4. On the page you use, `emulate` with `networkConditions: "Fast 4G"` and nothing else: no CPU throttling. Do every later step on this page.
+2. `navigate_page` to a path on the game's origin that does not exist, for example `http://host/__slot-perf.txt`, so no game file is cached before the run. A plain 404 is what you want; if that path shows the game or a styled page, use `http://host/favicon.ico` instead. The report checks the cache anyway: if most loading requests came from cache, load times are shown but not scored.
 3. `evaluate_script` with `sourcePath` = absolute path of `probe/dist/stash.js`. It saves the probe in that origin's sessionStorage.
-4. `navigate_page` to the game URL with `initScript` = the loader. Then `evaluate_script` `() => typeof __slotPerf`. If it is not `"object"`, the game moved to another origin: navigate again with `initScript` = the contents of `probe/dist/bundle.js`.
+4. `navigate_page` to the game URL with `initScript` = the loader and `timeout: 120000`; under Fast 4G a slot takes far longer than the default 10 seconds. Without an isolated context, follow it at once with `navigate_page` `type: "reload"`, `ignoreCache: true`, the same `initScript` and timeout; that reload is the one measured. Skip the reload for URLs that only load once (some session tokens); load times then show but are not scored. Then `evaluate_script` `() => typeof __slotPerf`. If it is not `"object"`, the game moved to another origin: navigate again with `initScript` = the contents of `probe/dist/bundle.js`.
 5. `evaluate_script` `() => __slotPerf.auto.start()`.
 6. Loop on `evaluate_script` `async () => __slotPerf.auto.wait(100000)`. It returns a short status as soon as the driver needs you, finishes, or 100 seconds pass:
    Every `needs` reply starts with a fresh screenshot. Points are screenshot pixels of the whole page; the probe converts them when the game sits in an iframe. Never point at buy, bet, auto, copy, or lobby controls; the probe refuses them anyway.
@@ -55,6 +56,7 @@ The only thing the agent writes. Keep it short.
 - The generator already writes 要處理的地方 rows from findings (stalls, FPS, memory budget, leak, heavy panels) and Cocos rules. Their ids are in the digest's `todo` line. Do not restate them. If you know more than the generic row (for example what the stall coincides with), set `rule` to its id and your row replaces it.
 - `issues` can be empty. Use it for what only you saw: a screenshot, a popup, a stuck screen.
 - `missing`: what was not measured, in plain words.
+- `network`: the preset set in step 1, for example `"Fast 4G"`. Leave it out if the run was not throttled; load times are then shown but not scored.
 
 Do not hand-write findings, scores, or the report. If something important is missing, put it in `issues` or fix the generator.
 

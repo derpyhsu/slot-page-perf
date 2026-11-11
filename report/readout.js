@@ -179,6 +179,7 @@ function metaLine(ev) {
     settings.frameRate != null ? `幀率上限 ${settings.frameRate}` : "",
     named ? named.trim() + (m.soft ? "（軟體繪製，數字是這台電腦）" : "") : "",
     spins ? `spin ${spins.stages} 段` : "",
+    c.network ? `網路 ${c.network}` : "",
     (c.capturedAt || "").slice(0, 10),
   ];
   return parts.filter(Boolean).join(" · ");
@@ -425,14 +426,21 @@ function loadingContext(ev) {
   const sec = (ms) => (ms ? `${round(ms / 1000, 1)} 秒` : null);
   const total = ["boot", "loading", "splash", "enter"].reduce((a, n) => a + wall(n), 0);
   const res = ev.resources && ev.resources.status === "ok" ? ev.resources : null;
+  const ld = res && res.load;
   const sh = ev.shaders && ev.shaders.status === "ok" ? ev.shaders : null;
+  const net = ev.conditions && ev.conditions.network;
+  const cold = ld && ld.count ? ld.cached / ld.count < 0.1 : null;
   const entry = ev.entry && ev.entry.result ? { direct: "載入完直接能轉", pressed: `按了 ${(ev.entry.steps || []).length} 次才能轉`, stuck: "卡住，沒進到能轉的畫面" }[ev.entry.result] : null;
   return `<h3>背景數字 · 不計分</h3>` + ctxList([
+    ["量測條件", net || cold != null ? `${net ? `網路 ${net}` : "網路沒限速"} · ${cold == null ? "快取不明" : cold ? "空快取" : "有快取"}${net && cold ? "" : "（時間不計分）"}` : null],
+    ["首次繪製", ev.paint && ev.paint.fp != null ? `${round(ev.paint.fp / 1000, 2)} 秒` : null],
     ["打開到能轉", sec(total)],
     ["其中載入", sec(wall("loading"))],
     ["其中進遊戲", sec(wall("enter"))],
     ["進遊戲", entry],
-    ["資源請求", res ? `${res.count} 個${res.decodedMb != null ? ` · 解碼後 ${round(res.decodedMb, 1)} MB` : ""}` : null],
+    ["載入請求", ld ? `${ld.count} 個 · JSON ${ld.json}（import ${ld.importJson}）· 圖 ${ld.images} · 音效 ${ld.audio} · 腳本 ${ld.scripts}` : null],
+    ["載入下載量", ld ? `${round(ld.transferMb, 1)} MB · 解碼後 ${round(ld.decodedMb, 1)} MB${ld.queued ? ` · 排隊超過 80 ms 的 ${ld.queued} 個` : ""}` : null],
+    ["全程請求", res ? `${res.count} 個${res.decodedMb != null ? ` · 解碼後 ${round(res.decodedMb, 1)} MB` : ""}` : null],
     ["shader", sh ? `${sh.count} 個 · 共 ${round(sh.ms, 1)} ms${sh.maxMs != null ? ` · 最長 ${round(sh.maxMs, 1)} ms` : ""}` : null],
   ]);
 }

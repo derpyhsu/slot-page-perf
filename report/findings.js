@@ -281,6 +281,9 @@ function findings(ev, T) {
     if (blocked.length) out.push({ id: "network-blocked", hosts: blocked.slice(0, 2) });
     const dups = (net.duplicates || []).filter((d) => d.count >= (N.duplicate || 3));
     if (dups.length) out.push({ id: "network-duplicate", files: dups.slice(0, 3) });
+    const ld = net.load;
+    if (ld && ld.importJson >= (N.importJson || 30)) out.push({ id: "network-json-unmerged", importJson: ld.importJson, json: ld.json, count: ld.count });
+    if (ld && ld.images >= (N.loadImages || 100)) out.push({ id: "network-many-images", images: ld.images, count: ld.count });
   }
 
   const ctx = ev.conditions && ev.conditions.context;

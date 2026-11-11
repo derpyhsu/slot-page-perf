@@ -363,6 +363,18 @@ function lowOnePercent(list, minFrames) {
   return 1000 / vsync;
 }
 const loadLow = loadStages.length ? lowOnePercent(loadStages, 1) : null;
+// Load times only count from a cold cache on a throttled network, the conditions the protocol sets.
+// The agent names the network in notes.json; the cache is cold when almost nothing before
+// game-ready came from it.
+const loadNet = ev.resources && ev.resources.status === "ok" && ev.resources.load ? ev.resources.load : null;
+const coldCache = !!(loadNet && loadNet.count && loadNet.cached / loadNet.count < ((thresholds.network || {}).coldCachedShare || 0.1));
+const timedLoad = coldCache && !!(ev.conditions && ev.conditions.network);
+const paint = ev.paint || null;
+const fcpSec = timedLoad && paint && paint.fcp != null ? paint.fcp / 1000 : null;
+// Time to interactive: loading ends at the start screen or at the spin button, whichever comes first.
+const loadingStage = stages.find((x) => x.name === "loading" && x.startMs != null);
+const ttiSec = timedLoad && paint && paint.t0 != null && loadingStage ? (paint.t0 + loadingStage.startMs + loadingStage.wallMs) / 1000 : null;
+const loadRequests = loadNet ? loadNet.count : null;
 const lower = (v, item, log) => (v == null ? null : v <= item.full ? 1 : curve(v, item.full, item.zero, { log }));
 const loadingItems = [
   {
@@ -392,6 +404,9 @@ const loadingItems = [
   { id: "longTask", label: "主執行緒堵塞", weight: L.longTask.weight, value: loadLongShare == null ? null : round(loadLongShare * 100, 1), unit: "%", full: `${L.longTask.full * 100}%`, zero: `${L.longTask.zero * 100}%`, score: lower(loadLongShare, L.longTask) },
   { id: "shader", label: "shader 編譯", weight: L.shader.weight, value: shader == null ? null : round(shader.value, 0), approx: shader ? shader.approx : false, unit: "ms", full: `${L.shader.full} ms`, zero: `${L.shader.zero} ms`, score: shader == null ? null : lower(shader.value, L.shader, true) },
   { id: "low", label: "1% low", weight: L.low.weight, value: loadLow == null ? null : round(loadLow, 1), unit: "FPS", full: `${L.low.full} FPS`, zero: `${L.low.zero} FPS`, score: loadLow == null ? null : curve(loadLow, L.low.full, L.low.zero, { higherIsBetter: true }) },
+  { id: "fcp", label: "首次內容繪製", weight: L.fcp.weight, value: fcpSec == null ? null : round(fcpSec, 2), unit: "秒", full: `${L.fcp.full} 秒`, zero: `${L.fcp.zero} 秒`, score: lower(fcpSec, L.fcp, true) },
+  { id: "tti", label: "可操作時間", weight: L.tti.weight, value: ttiSec == null ? null : round(ttiSec, 1), unit: "秒", full: `${L.tti.full} 秒`, zero: `${L.tti.zero} 秒`, score: lower(ttiSec, L.tti, true) },
+  { id: "requests", label: "載入請求數", weight: L.requests.weight, value: loadRequests, unit: "個", full: `${L.requests.full} 個`, zero: `${L.requests.zero} 個`, score: lower(loadRequests, L.requests, true) },
 ];
 
 const M = cfg.memory;
@@ -726,6 +741,10 @@ function findingRows() {
       t: null,
     });
   }
+  const unmerged = found.find((f) => f.id === "network-json-unmerged");
+  if (unmerged) rows.push({ rule: "network-json-unmerged", level: unmerged.importJson >= 150 ? "orange" : "yellow", title: `載入時請求了 ${unmerged.importJson} 個 import JSON（全部 ${unmerged.count} 個請求）`, area: "網路", fix: "每個資源各自一個 import JSON，請求一多就會排隊。可以在 Asset Bundle 的「壓縮類型」選「合併所有 JSON」（Merge All JSON），同一個 bundle 的 JSON 會合成一個檔。", stage: "loading", t: null });
+  const images = found.find((f) => f.id === "network-many-images");
+  if (images) rows.push({ rule: "network-many-images", level: images.images >= 300 ? "orange" : "yellow", title: `載入時請求了 ${images.images} 張圖（全部 ${images.count} 個請求）`, area: "網路", fix: "散圖每張各一個請求，也各自一張貼圖、會打斷合批。小圖可以用自動圖集（Auto Atlas）合起來，進遊戲用不到的延後載入。", stage: "loading", t: null });
   const dups = found.find((f) => f.id === "network-duplicate");
   if (dups) {
     const list = dups.files.map((d) => `${d.path} ×${d.count}`).join("、");
