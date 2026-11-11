@@ -23,6 +23,10 @@
 - Claude Code 讀 `.mcp.json`
 - Codex 把 `docs/codex-mcp.toml` 合併進 Codex 的設定
 
+設定都帶 `--isolated`：每次啟動 MCP 用一個全新的暫時設定檔，快取是空的，載入時間才能計分。同一款遊戲要重量時，先重啟 MCP。
+
+`--disable-features=HttpsUpgrades,...` 關掉 Chrome 的 HTTPS-First。新版 Chrome 的全新設定檔預設會擋 `http` 網站（`ERR_BLOCKED_BY_CLIENT`），測試環境常常只有 `http`。
+
 MCP 沒連上時不要改用猜的數字。先把這個伺服器接上。
 
 ## 怎麼跑

@@ -3,4 +3,4 @@
 
 [mcp_servers.chrome-devtools]
 command = "npx"
-args = ["-y", "chrome-devtools-mcp@latest"]
+args = ["-y", "chrome-devtools-mcp@latest", "--isolated", "--chrome-arg=--disable-features=HttpsUpgrades,HttpsFirstBalancedModeAutoEnable,HttpsFirstModeV2ForTypicallySecureUsers,HttpsFirstModeV2ForEngagedSites,HttpsFirstModeWithEsbPairing,HttpsFirstModeDefaultSettingPairsWithEsb,HttpsFirstModeIncognito"]
