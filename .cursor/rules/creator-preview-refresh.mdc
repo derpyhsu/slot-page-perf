@@ -1,0 +1,17 @@
+---
+description: Creator 預覽改完腳本後，由 agent 呼叫 agent-refresh，不要請工程師手動重新整理編輯器
+alwaysApply: false
+---
+
+# Creator 預覽更新
+
+工程師不手動按編輯器的重新整理。套件在 `C:\Users\User\.CocosCreator\packages\agent-refresh`（Creator 2.x 全域，開任何專案都會載入）。編輯器開著時，`<專案>/temp/agent-refresh.json` 寫著 host、port、projectPath、pid。
+
+改完腳本、要讓預覽吃到新程式時：
+
+1. 讀那個 json。port 是 7480–7489 裡第一個空的。
+2. `POST http://127.0.0.1:<port>/refresh`，等它回傳。預設重新整理 `db://assets/scripts`，並等到 `temp/quick-scripts/dst` 編譯安靜。預覽載入的就是這裡的腳本。
+3. 其他資源用 `?url=db://assets/...`。只接受 `db://assets` 底下、已經存在的子路徑。不要 refresh `db://assets` 根目錄（整包刷新曾把 .meta 的 uuid 整批重產）。路徑不存在會讓後面的 refresh 卡住；搬移或刪除資料夾時，改 refresh 共同的上層。
+4. 回傳的 `uuidChanged` 應為 0。不是 0 就停下來告訴工程師，不要繼續量。
+
+預覽迭代直接量 Creator 預覽（本機 7456），不要為了每次小改去打包。刷新完成後再量。

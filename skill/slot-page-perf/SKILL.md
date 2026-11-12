@@ -60,6 +60,10 @@ The only thing the agent writes. Keep it short.
 
 Do not hand-write findings, scores, or the report. If something important is missing, put it in `issues` or fix the generator.
 
+## Creator preview
+
+Local iteration uses the Creator preview, not a fresh package for every small edit. After script changes, do not ask the user to refresh the editor. Read `<project>/temp/agent-refresh.json` and `POST http://127.0.0.1:<port>/refresh`, then measure. The package is the global Creator 2.x plugin `agent-refresh`. Never refresh `db://assets` itself. See `.cursor/rules/creator-preview-refresh.mdc`.
+
 ## Rules that still apply
 
 - Pointer events only. The autopilot dispatches them at the points you give. Never call an internal spin handler.
