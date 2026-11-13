@@ -26,7 +26,7 @@
 - 壞幀：上螢幕間隔超過 `frames.badFactor` × E。60 上限在 60 Hz 時，33 ms 是壞幀；40 上限時 E 是 25 ms，33 ms 不是壞幀。
 - 節奏不齊：上螢幕間隔離 E 超過 `frames.paceTolerance` × E。40 上限在 60 Hz 會 16.7、33.3 ms 交替，幾乎每一幀都不齊。
 - 下面的 FPS、1% low、掉幀、壞幀都用上螢幕的幀；舊探針沒有這組資料時，退回引擎幀與 33 ms。
-- 每 250 ms 的 bucket 也記上螢幕的幀數（`presentedFrames`），計分的「55 FPS 以上」用它算每一秒的 FPS。
+- 每 250 ms 的 bucket 也記上螢幕的幀數（`presentedFrames`），計分的「平均 FPS」用它算每一秒的 FPS。
 
 ## fps-drop
 
@@ -37,7 +37,7 @@
 - 壞幀佔比 `badShare` 高於 `fps.badShareMax`
 - 1% low 低於 `fps.lowMin` × 應有 FPS / 60。1% low 是最慢那 1% 幀的 FPS；幀長只會落在螢幕更新的整數倍，所以它常在 60 和 30 之間跳，只當輔助。
 
-`stageMin` 和 `lowMin` 是照 60 的目標寫的，所以依上限換算。上限本身低於 60，已經反映在計分的「55 FPS 以上」，並由 `cocos-frame-rate` 說明原因，不在這裡再算一次。
+`stageMin` 和 `lowMin` 是照 60 的目標寫的，所以依上限換算。上限本身低於 60，已經反映在計分的「平均 FPS」，並由 `cocos-frame-rate` 說明原因，不在這裡再算一次。
 
 `conditions.gpu` 是軟體繪製（SwiftShader、Microsoft Basic Render Driver、llvmpipe）時照樣觸發，但證據註明這是這台電腦的軟體繪製，不代表手機 GPU。
 

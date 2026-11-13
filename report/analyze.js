@@ -50,10 +50,10 @@ function gameReadyMs() {
   return m ? m[1] : null;
 }
 
-// Share of whole seconds whose presented FPS reached minFps (protocol/scoring.md 55 FPS 以上).
+// Average presented FPS over whole seconds (protocol/scoring.md 平均 FPS).
 // Buckets from older probes have no presented count, so they use engine frames.
 // inWindow picks the seconds: after game-ready for 幀率穩定度, loading and enter for 載入階段.
-function steadyShare(inWindow, minFps, fallbackStages) {
+function steadyFps(inWindow, fallbackStages) {
   const B = (ev.timeline && ev.timeline.bucketMs) || (thresholds.timeline && thresholds.timeline.bucketMs) || 250;
   const buckets = (ev.timeline && ev.timeline.buckets) || [];
   const per = Math.round(1000 / B);
@@ -67,20 +67,20 @@ function steadyShare(inWindow, minFps, fallbackStages) {
   });
   const whole = [...secs.values()].filter((a) => a.length === per);
   if (whole.length) {
-    const ok = whole.filter((a) => a.reduce((x, y) => x + y, 0) >= minFps).length;
-    return { share: ok / whole.length, seconds: whole.length, approx: false };
+    const frames = whole.reduce((t, a) => t + a.reduce((x, y) => x + y, 0), 0);
+    return { fps: frames / whole.length, seconds: whole.length, approx: false };
   }
-  // Coarse fallback from stage summaries: wall time of stages whose FPS reached minFps.
+  // Coarse fallback from stage summaries: stage FPS weighted by wall time.
   let total = 0;
-  let ok = 0;
+  let sum = 0;
   fallbackStages.forEach((s) => {
     const f = stageFrames(s);
     const fps = f ? f.fps : s.fps;
     if (fps == null) return;
     total += s.wallMs;
-    if (fps >= minFps) ok += s.wallMs;
+    sum += fps * s.wallMs;
   });
-  return total ? { share: ok / total, approx: true } : null;
+  return total ? { fps: sum / total, approx: true } : null;
 }
 
 // gap is the driver waiting on the agent or a forced GC, not play. Its seconds are left out.
@@ -90,15 +90,15 @@ function inGap(t, B) {
 }
 function stableShare() {
   const ready = gameReadyMs();
-  if (ready == null) return steadyShare(() => false, cfg.smooth.steady.minFps, gameStages);
-  return steadyShare((t, B) => t >= ready && !inGap(t, B), cfg.smooth.steady.minFps, gameStages);
+  if (ready == null) return steadyFps(() => false, gameStages);
+  return steadyFps((t, B) => t >= ready && !inGap(t, B), gameStages);
 }
 
 // Same measure over the loading and enter stages only. splash waits for a person.
 function loadingStableShare() {
   if (!loadStages.length) return null;
   const inLoad = (t, B) => loadStages.some((s) => t >= s.startMs && t + B <= s.startMs + s.wallMs);
-  return steadyShare(inLoad, cfg.loading.steady.minFps, loadStages);
+  return steadyFps(inLoad, loadStages);
 }
 
 function worstStall(list = gameStages) {
@@ -276,14 +276,14 @@ const cpu = cpuStat && cpuStat.value;
 const smoothItems = [
   {
     id: "steady",
-    label: "55 FPS 以上",
+    label: "平均 FPS",
     weight: S.steady.weight,
-    value: stable ? round(stable.share * 100, 1) : null,
-    unit: "%",
+    value: stable ? round(stable.fps, 1) : null,
+    unit: "FPS",
     approx: stable ? stable.approx : false,
-    full: `${S.steady.full * 100}%`,
-    zero: `${S.steady.zero * 100}%`,
-    score: stable ? curve(stable.share, S.steady.full, S.steady.zero, { higherIsBetter: true }) : null,
+    full: `${S.steady.full} FPS`,
+    zero: `${S.steady.zero} FPS`,
+    score: stable ? curve(stable.fps, S.steady.full, S.steady.zero, { higherIsBetter: true }) : null,
   },
   {
     id: "stall",
@@ -379,14 +379,14 @@ const lower = (v, item, log) => (v == null ? null : v <= item.full ? 1 : curve(v
 const loadingItems = [
   {
     id: "steady",
-    label: "55 FPS 以上",
+    label: "平均 FPS",
     weight: L.steady.weight,
-    value: loadStable ? round(loadStable.share * 100, 1) : null,
-    unit: "%",
+    value: loadStable ? round(loadStable.fps, 1) : null,
+    unit: "FPS",
     approx: loadStable ? loadStable.approx : false,
-    full: `${L.steady.full * 100}%`,
-    zero: `${L.steady.zero * 100}%`,
-    score: loadStable ? curve(loadStable.share, L.steady.full, L.steady.zero, { higherIsBetter: true }) : null,
+    full: `${L.steady.full} FPS`,
+    zero: `${L.steady.zero} FPS`,
+    score: loadStable ? curve(loadStable.fps, L.steady.full, L.steady.zero, { higherIsBetter: true }) : null,
   },
   {
     id: "stall",

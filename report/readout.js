@@ -395,7 +395,7 @@ function gaugeTab(key, part, name, selected) {
 // What each scored item measures and how, shown when the label is hovered or focused.
 const HELP = {
   loading: {
-    steady: "載入階段（loading、enter）每一秒算一次實際上螢幕的幀數，統計 55 FPS 以上的秒數佔幾成。上螢幕的幀以 requestAnimationFrame 的間隔判斷，不是引擎 update 的次數。",
+    steady: "載入階段（loading、enter）實際上螢幕的平均 FPS，以完整的秒為單位計算。上螢幕的幀以 requestAnimationFrame 的間隔判斷，不是引擎 update 的次數。60 滿分、40 零分，中間線性。",
     stall: "載入階段最長的一次幀間隔，也就是兩次上螢幕之間隔了多久。50 ms 以上算停頓，並依當下主執行緒時間與進行中的請求分成：主執行緒在忙、在等下載、原因不明。",
     stallTotal: "載入階段所有 50 ms 以上停頓的時間加總，抓出很多次中等卡頓累積起來的感受。",
     longTask: "瀏覽器 Long Tasks API 記到的 50 ms 以上主執行緒任務，落在載入階段的時間除以載入階段總時間。偏高代表 JS 解析、JSON 反序列化或場景初始化把主執行緒佔滿。",
@@ -406,7 +406,7 @@ const HELP = {
     requests: "game-ready 之前 Resource Timing 記到的請求數。Cocos 沒有合併 JSON 時，每個資源各有一個 import JSON；散圖也各是一個請求。同一網域請求多了會排隊。",
   },
   smooth: {
-    steady: "進遊戲後每一秒算一次實際上螢幕的 FPS，統計 55 以上的秒數佔幾成。等 agent 或強制 GC 的時間不算。幀率上限低於 60 時這項拿不到分。",
+    steady: "進遊戲後實際上螢幕的平均 FPS，以完整的秒為單位計算。等 agent 或強制 GC 的時間不算。60 滿分、40 零分，中間線性。",
     low: "遊戲階段所有上螢幕的幀依間隔排序，最慢那 1% 的門檻換算成 FPS。",
     pace: "上螢幕間隔偏離應有幀長超過容許值的比例。應有幀長取螢幕更新間隔與 1000 ÷ 幀率上限中較長的。平均 FPS 正常時也可能節奏不齊，看起來會一頓一頓。",
     stall: "進遊戲後最長的一次幀間隔。50 ms 以上玩家就會覺得頓。",
