@@ -23,6 +23,15 @@ const { heapFit, causeText } = require("./findings");
 const NOT_GAME = new Set(["boot", "loading", "splash", "enter", "game-ready", "gap"]);
 const stages = ev.stages || [];
 const gameStages = stages.filter((s) => !NOT_GAME.has(s.name) && s.frames > 0);
+// The bought free game or feature (scenarios.md 購買免費遊戲) is scored in its own item. Its seconds
+// stay out of the base play items, so runs of games with and without a buy button compare.
+const FEATURE = new Set(["feature", "idle-after-feature"]);
+const baseStages = gameStages.filter((s) => !FEATURE.has(s.name));
+const featureStages = stages.filter((s) => s.name === "feature" && s.frames > 0 && s.startMs != null);
+const featureWindows = stages.filter((s) => FEATURE.has(s.name) && s.startMs != null);
+function inFeature(t, B) {
+  return featureWindows.some((s) => t + B > s.startMs && t < s.startMs + s.wallMs);
+}
 const spinStages = stages.filter((s) => /^(spin|turbo)-\d+$/.test(s.name));
 const loadStages = stages.filter((s) => (s.name === "loading" || s.name === "enter") && s.frames > 0);
 
@@ -90,8 +99,15 @@ function inGap(t, B) {
 }
 function stableShare() {
   const ready = gameReadyMs();
-  if (ready == null) return steadyFps(() => false, gameStages);
-  return steadyFps((t, B) => t >= ready && !inGap(t, B), gameStages);
+  if (ready == null) return steadyFps(() => false, baseStages);
+  return steadyFps((t, B) => t >= ready && !inGap(t, B) && !inFeature(t, B), baseStages);
+}
+
+// Same measure inside the bought feature only.
+function featureShare() {
+  if (!featureStages.length) return null;
+  const inside = (t, B) => featureStages.some((s) => t >= s.startMs && t + B <= s.startMs + s.wallMs);
+  return steadyFps((t, B) => inside(t, B) && !inGap(t, B), featureStages);
 }
 
 // Same measure over the loading and enter stages only. splash waits for a person.
@@ -101,7 +117,7 @@ function loadingStableShare() {
   return steadyFps(inLoad, loadStages);
 }
 
-function worstStall(list = gameStages) {
+function worstStall(list = baseStages) {
   let worst = { dt: 0, stage: null, t: null };
   list.forEach((s) => {
     (s.hitches || []).forEach((h) => {
@@ -114,7 +130,7 @@ function worstStall(list = gameStages) {
 function cpuP95() {
   if (!(ev.channels && ev.channels.engineCpu)) return null;
   let best = null;
-  gameStages.forEach((s) => {
+  baseStages.forEach((s) => {
     if (!s.cpuMs || s.cpuFrames === 0 || s.cpuMs.p95 == null) return;
     if (!best || s.cpuMs.p95 > best.value) best = { value: s.cpuMs.p95, stage: s.name };
   });
@@ -186,7 +202,7 @@ function gameFrames() {
   let exp = 0;
   let hz = 0;
   let cap = null;
-  gameStages.forEach((s) => {
+  baseStages.forEach((s) => {
     const f = stageFrames(s);
     if (!f) return;
     n += f.frames;
@@ -256,15 +272,15 @@ function total(items, cap) {
 const S = cfg.smooth;
 const stable = stableShare();
 const stall = worstStall();
-const low1 = lowOnePercent(gameStages, S.gpu.minFrames);
+const low1 = lowOnePercent(baseStages, S.gpu.minFrames);
 const pace = gf ? gf.offShare : null;
 // Stalls of 50 ms or more per minute of play.
-const playMs = gameStages.reduce((a, s) => a + s.wallMs, 0);
-const stallRate = playMs ? gameStages.reduce((a, s) => a + (s.hitches || []).length, 0) / (playMs / 60000) : null;
+const playMs = baseStages.reduce((a, s) => a + s.wallMs, 0);
+const stallRate = playMs ? baseStages.reduce((a, s) => a + (s.hitches || []).length, 0) / (playMs / 60000) : null;
 // Worst GPU timer p95 among stages long enough to trust.
 function gpuP95() {
   let best = null;
-  gameStages.forEach((s) => {
+  baseStages.forEach((s) => {
     if (!s.gpuMs || s.gpuMs.p95 == null || s.frames < S.gpu.minFrames) return;
     if (!best || s.gpuMs.p95 > best.value) best = { value: s.gpuMs.p95, stage: s.name };
   });
@@ -313,6 +329,31 @@ const smoothItems = [
   { id: "stallRate", label: "卡頓頻率", weight: S.stallRate.weight, value: stallRate == null ? null : round(stallRate, 1), unit: "次/分", full: `${S.stallRate.full} 次/分`, zero: `${S.stallRate.zero} 次/分`, score: stallRate == null ? null : stallRate <= S.stallRate.full ? 1 : curve(stallRate, S.stallRate.full, S.stallRate.zero) },
   { id: "gpu", label: "GPU 餘裕", weight: S.gpu.weight, value: gpuStat ? round(gpuStat.value, 1) : null, unit: "ms", stage: gpuStat && gpuStat.stage, full: `${S.gpu.full} ms`, zero: `${S.gpu.zero} ms`, score: gpuStat ? (gpuStat.value <= S.gpu.full ? 1 : curve(gpuStat.value, S.gpu.full, S.gpu.zero, { log: true })) : null },
 ];
+// Only when the game has a buy button. Without one the item is left out, not counted as missing.
+const featureApplies = !!(S.feature && ev.coverage && ev.coverage.feature && ev.coverage.feature !== "no buy button");
+if (featureApplies) {
+  const ff = featureShare();
+  smoothItems.push({
+    id: "feature",
+    label: "免費遊戲平均 FPS",
+    weight: S.feature.weight,
+    value: ff ? round(ff.fps, 1) : null,
+    unit: "FPS",
+    approx: ff ? ff.approx : false,
+    stage: "feature",
+    full: `${S.feature.full} FPS`,
+    zero: `${S.feature.zero} FPS`,
+    score: ff ? curve(ff.fps, S.feature.full, S.feature.zero, { higherIsBetter: true }) : null,
+  });
+}
+// Heap a bought feature left after a forced GC, against the floor after the last spin.
+function featureGc() {
+  const gc = (ev.gc || []).filter((g) => g.mb != null);
+  const a = gc.find((g) => g.at === "end");
+  const b = gc.find((g) => g.at === "after-feature");
+  return a && b ? { from: a.mb, to: b.mb, retainedMb: round(b.mb - a.mb, 2) } : null;
+}
+ev.featureGc = featureGc();
 
 const L = cfg.loading;
 const loadStable = loadingStableShare();
@@ -467,7 +508,7 @@ loadStages.forEach((s) => {
 function playFps() {
   let acc = 0;
   let wall = 0;
-  gameStages.forEach((s) => {
+  baseStages.forEach((s) => {
     const f = stageFrames(s);
     const fps = f && f.fps != null ? f.fps : s.fps;
     if (fps == null || !(s.wallMs > 0)) return;
@@ -536,6 +577,8 @@ const STAGE_NAMES = {
   "idle-after-rules": "規則後待機",
   "history-after": "轉後下注紀錄",
   "idle-end": "最後待機",
+  feature: "購買免費遊戲",
+  "idle-after-feature": "免費遊戲後待機",
   spin: "spin",
   turbo: "加速 spin",
 };
@@ -554,7 +597,7 @@ ev.fps = fpsTable();
 // One row per stage group for the FPS table, in the order the run visits them.
 function fpsTable() {
   const { groups } = require("./findings");
-  const ORDER = ["loading", "enter", "idle", "menu", "history-before", "rules", "idle-after-rules", "spin", "turbo", "history-after", "idle-end"];
+  const ORDER = ["loading", "enter", "idle", "menu", "history-before", "rules", "idle-after-rules", "spin", "turbo", "history-after", "idle-end", "feature", "idle-after-feature"];
   const F = thresholds.fps || {};
   return groups(stages)
     .filter((g) => ORDER.includes(g.group) && g.frames >= 30)

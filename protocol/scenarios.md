@@ -14,14 +14,16 @@
 1. `boot`：網址開始到第一個 WebGL 幀。探針自動切。
 2. `loading`：第一個幀到 agent 呼叫 `mark("game-ready")`。spin 鈕可按時才打這個 mark。引擎主迴圈掛上之前，主執行緒時間只靠 long task。中間要按開始或關公告時，照下面「進遊戲」切成 `splash` 和 `enter`。
 3. `idle`：`mark("idle")` 後等待 `idleSeconds`。這是後面所有差值的基準。
-4. 截一張遊戲畫面，標出 spin、功能列表、下注紀錄、遊戲規則、加速的位置（見下面「按鈕位置」）。同時讀畫面上的押注和餘額。餘額夠這一次的 spin 就繼續，不改押注，也不問使用者。讀不到押注或餘額，或餘額不夠，才停下來說明。
+4. 截一張遊戲畫面，標出 spin、功能列表、下注紀錄、遊戲規則、加速的位置，有購買免費遊戲（Feature Buy）鈕時也標出來（見下面「按鈕位置」）。同時讀畫面上的押注和餘額。餘額夠這一次的 spin 就繼續，不改押注，也不問使用者。讀不到押注或餘額，或餘額不夠，才停下來說明。
 5. `history-before`：打開下注紀錄。先記 `panelSpikeSeconds` 的尖峰，再記 `panelSteadySeconds` 的穩態，然後關閉。功能列表只負責打開，不單獨成結論。
 6. `rules`：打開遊戲規則，同樣先尖峰再穩態，然後關閉。關閉後再量一段短待機，記進 `idle-after-rules`。
 7. 一般 spin `normalSpins` 次。每一次 `mark("spin-N")` 開始，停穩後結束。
 8. 有加速鈕時，接著 `turboSpins` 次，mark 名為 `turbo-N`。沒有加速鈕就繼續一般 spin，直到 `maxSpins`。
 9. `history-after`：轉完後再打開一次下注紀錄，量法與第 5 步相同。
+10. `idle-end`：最後待機 `idleSeconds`。
+11. `feature`：畫面上有購買免費遊戲或 Feature Buy 鈕時才做，沒有就在 `coverage.feature` 寫 `no buy button`，這一項不適用。見下面「購買免費遊戲」。
 
-Feature 或大獎只在該轉的 mark 上記 `tags`。不另外加轉，不買 Feature。
+一般 spin 中出現的 Feature 或大獎只在該轉的 mark 上記 `tags`，不另外加轉。買 Feature 只在第 11 步做一次。
 
 4 倍 CPU 慢速不在這一次裡。要測時另開一輪，只量待機與少數幾轉。
 
@@ -60,6 +62,17 @@ Feature 或大獎只在該轉的 mark 上記 `tags`。不另外加轉，不買 F
 
 `splash` 是等人按的時間，由 agent 決定長短，不評分。`enter` 是按下去到下一個畫面，跟 `loading` 一樣算載入。有好幾層就會有好幾段 `splash` 和 `enter`，報告會合在一起畫。
 
+## 購買免費遊戲
+
+不是每款遊戲都有免費遊戲或 Feature，有購買鈕的才量。量的是玩家花錢買下去之後，整段免費遊戲順不順，和玩完回到主遊戲後有沒有留下記憶體。
+
+- 等畫面靜下來，記下主遊戲的畫面特徵，按 map 時標的購買鈕。
+- 探針停下來請 agent 截圖（`needs: "buy"`）。agent 讀價格和餘額：餘額夠就按確認，不改價格、押注或購買的種類，用預設那一個。餘額不夠、或畫面不是單純的購買確認（要選很多選項、要儲值），就關掉畫面略過，`coverage.feature` 寫 `skipped by agent`。購買會扣餘額，只在測試帳號上跑。
+- 按確認後 `feature.startSeconds` 內 spin 點變成不能按、或畫面被蓋住，才算開始；確認最多問 `feature.confirmSteps` 次，還是沒開始寫 `buy did not start`。
+- 開始到回到主遊戲記成 `feature`：spin 點可按、沒有東西蓋住，而且連續 `feature.backMs` 都這樣才算回來。最長 `feature.maxSeconds`，超過寫 `did not return to the base game`。
+- 中間停在「點擊繼續」之類的畫面：字不動 `feature.nudgeStillMs` 後，探針先按一次開始或確定類的字（`entry` 字表）；`feature.askStillMs` 還是不動才問 agent，最多三次。
+- 回來後強制 GC 一次（`after-feature`），再待機 `feature.idleSeconds`，記進 `idle-after-feature`。前後的等待都記成 `gap`。
+
 ## 按鈕位置
 
 每款遊戲的節點命名都不一樣，所以按哪裡由截圖決定，不靠名字。
@@ -68,6 +81,7 @@ Feature 或大獎只在該轉的 mark 上記 `tags`。不另外加轉，不買 F
 - 下注紀錄或規則在功能列表裡時，第一次打開功能列表再截一張，標出它們和關閉功能列表的位置。
 - 面板打開、量完穩態之後，才截圖找關閉鈕，這樣思考時間不會算進面板。同一個面板第二次打開時沿用同一個位置。
 - 按任何座標之前，探針檢查那裡的節點。名字或短字串對得上 `neverPress`（購買、押注、複製、自動、大廳等）就拒絕，請 agent 重給。這是唯一用名字判斷的規則。
+- 購買鈕是例外：只在第 11 步按，位置由 agent 在 map 時標出，而且那裡的節點要對得上 `buttons.buy`，對不上就拒絕。
 - 遊戲在 iframe 裡時，探針會把截圖座標換成 iframe 裡的座標。
 
 找不到某個面板就在 `coverage` 寫 `not on screen`，不拿待機數字充當該面板。

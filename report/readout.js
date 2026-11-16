@@ -120,6 +120,8 @@ const STAGE = {
   idle: "待機",
   "idle-after-rules": "規則後待機",
   "idle-end": "最後待機",
+  feature: "購買免費遊戲",
+  "idle-after-feature": "免費遊戲後待機",
   loading: "載入",
   enter: "進遊戲",
 };
@@ -207,6 +209,12 @@ function factRows(ev, m) {
     else notes.push("這輪沒看到大 GC");
     rows.push(["JS heap", `地板 ${Math.round(fit.from)} MB → ${Math.round(fit.to)} MB，每轉 ${fit.slopeMb >= 0 ? "+" : ""}${fit.slopeMb} MB`, notes.join("；")]);
   } else if (growth && growth.value != null) rows.push(["JS heap", `每轉 +${growth.value} MB`, ""]);
+  // The bought free game: forced-GC floor after it, against the floor after the last spin.
+  const cov = (ev.coverage && ev.coverage.feature) || null;
+  if (ev.featureGc) {
+    const d = ev.featureGc.retainedMb;
+    rows.push(["免費遊戲", `GC 後 heap ${Math.round(ev.featureGc.from)} MB → ${Math.round(ev.featureGc.to)} MB（${d >= 0 ? "+" : ""}${d} MB）`, ev.feature && ev.feature.ms ? `買一次玩完 ${Math.round(ev.feature.ms / 1000)} 秒` : ""]);
+  } else if (cov && cov !== "ok") rows.push(["免費遊戲", cov === "no buy button" ? "畫面上沒有購買免費遊戲" : `沒量到（${cov}）`, ""]);
   const sc = ev.cocosAdvice && ev.cocosAdvice.scene;
   const labels = m.snap.labels;
   const settings = m.snap.settings || {};

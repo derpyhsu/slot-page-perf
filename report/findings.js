@@ -17,7 +17,7 @@ function groupOf(name) {
   return name.replace(/-spike$/, "");
 }
 
-const GAME_GROUPS = new Set(["idle", "spin", "turbo", "history-before", "rules", "idle-after-rules", "history-after", "idle-end"]);
+const GAME_GROUPS = new Set(["idle", "spin", "turbo", "history-before", "rules", "idle-after-rules", "history-after", "idle-end", "feature", "idle-after-feature"]);
 
 // Frame-weighted stats per group. Spike windows stay separate from the steady panel stage.
 function groups(stages) {

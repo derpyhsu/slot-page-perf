@@ -34,6 +34,8 @@ const NAMES = {
   "idle-after-rules": "規則後待機",
   "history-after": "轉後下注紀錄",
   "idle-end": "最後待機",
+  feature: "購買免費遊戲",
+  "idle-after-feature": "免費遊戲後待機",
 };
 function groupName(name) {
   if (/^spin-\d+$/.test(name)) return "spin";

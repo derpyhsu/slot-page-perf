@@ -478,9 +478,10 @@
       menu: guess(find(B.menu, { interactable: true })[0]),
       history: guess(find(B.history, { interactable: true })[0]),
       rules: guess(find(B.rules, { interactable: true })[0]),
-      turbo: guess(find(B.turbo, { interactable: true })[0])
+      turbo: guess(find(B.turbo, { interactable: true })[0]),
+      buy: guess(find(B.buy, { interactable: true })[0])
     };
-    var note = "screenshot the game, read the bet and the balance, and if the balance covers the planned spins call auto.map({spin, menu, history, rules, turbo}) with screenshot points (null where absent). Do not ask the user. Stop only if the bet or balance cannot be read, or the balance is short. guess is what node names suggest";
+    var note = "screenshot the game, read the bet and the balance, and if the balance covers the planned spins call auto.map({spin, menu, history, rules, turbo, buy}) with screenshot points (null where absent). buy is a button that buys a free game or feature on the main screen; it is pressed once, after everything else. Do not ask the user. Stop only if the bet or balance cannot be read, or the balance is short. guess is what node names suggest";
     for (var tries = 0; tries < 4; tries += 1) {
       var r = await ask("map", note, { bet: betCandidates(), guess: guesses });
       var m = (r && r.map) || {};
@@ -492,6 +493,13 @@
       if (bad.length) {
         note = "refused " + bad.join(", ") + ": the node there looks like buy, bet or copy. " + note;
         log("map refused " + bad.join(","));
+        continue;
+      }
+      // buy is the one point allowed on a buy control, and only on one: a named node there must read like buy.
+      var bn = m.buy && nodeNear(m.buy);
+      if (bn && !hit(bn, B.buy)) {
+        note = "refused buy: the node there (" + (bn.name || bn.text) + ") does not look like a buy button. " + note;
+        log("map refused buy " + bn.name);
         continue;
       }
       st.map = m;
@@ -664,6 +672,116 @@
     }
   }
 
+  // A start or dismiss control the engine can name, for feature intros and win boards that wait
+  // for a tap. Buy and bet words are already filtered out by entry().
+  async function featureNudge() {
+    var e = P.entry(CFG.entry);
+    var pick = e.start.concat(e.dismiss).filter(function (b) { return b.interactable && b.point; })[0];
+    if (!pick) return false;
+    press(pick);
+    await sleep(800);
+    return true;
+  }
+
+  // From the confirm until the base game is back: the spin point is ready again, nothing covers
+  // the game, and either the spin point went busy on the way or the screen matches the one before
+  // the buy. Feature intros and win boards that wait for a tap are nudged; a long still screen
+  // goes to the agent.
+  async function featureWait(base) {
+    var F = CFG.feature || {};
+    var end = now() + (F.maxSeconds || 420) * 1000;
+    var sawBusy = false;
+    var last = null;
+    var since = now();
+    var backSince = 0;
+    var lastNudge = 0;
+    var asks = 0;
+    while (now() < end) {
+      await sleep(500);
+      var s = spinState();
+      if (!s.ready) sawBusy = true;
+      if (s.texts !== last) {
+        last = s.texts;
+        since = now();
+      }
+      // Texts are not required to hold still: tip marquees on the base game change them all the time.
+      if (s.ready && !covered() && (sawBusy || !differs(footprint(), base))) {
+        if (!backSince) backSince = now();
+        if (now() - backSince >= (F.backMs || 4000)) return true;
+        continue;
+      }
+      backSince = 0;
+      var still = now() - since;
+      if (still > (F.nudgeStillMs || 6000) && now() - lastNudge > 3000) {
+        lastNudge = now();
+        if (await featureNudge()) since = now();
+      }
+      if (still > (F.askStillMs || 30000) && asks < 3) {
+        asks += 1;
+        var r = await ask("screen", "the bought feature has not changed the screen for " + Math.round(still / 1000) + "s: auto.click(x, y) on what continues it (start, collect, a win board), auto.resume() if it is still playing, or auto.ready() if the base game is back");
+        if (r && r.ready) return true;
+        if (r && r.click) click(r.click.x, r.click.y);
+        since = now();
+      }
+    }
+    log("feature not back after " + (F.maxSeconds || 420) + "s");
+    return false;
+  }
+
+  // After the last stage: buy one free game or feature at the agent's point and measure it until
+  // the base game is back. Games without a buy button skip this. The agent reads the price and
+  // confirms; the driver never picks a price tier or changes the bet.
+  async function featureStage() {
+    var F = CFG.feature || {};
+    var p = st.map && st.map.buy;
+    if (!p) {
+      st.coverage.feature = "no buy button";
+      return;
+    }
+    st.phase = "feature";
+    await waitCalm(60000);
+    var base = footprint();
+    P.mark("gap");
+    log("press buy @" + p.x + "," + p.y);
+    click(p.x, p.y);
+    await waitChange(base, 3000);
+    await sleep(800);
+    var started = false;
+    var note = "the buy screen should be up: screenshot it and read the price and the balance. If the balance covers the price, auto.click(x, y) on its confirm. Do not change the price, the bet or the feature; take the default. auto.resume() if the feature is already playing; close the screen and call auto.skip() to not buy";
+    for (var k = 0; k < (F.confirmSteps || 4) && !started; k += 1) {
+      var r = await ask("buy", note);
+      if (r && r.skip) {
+        st.coverage.feature = "skipped by agent";
+        log("feature skipped");
+        return;
+      }
+      if (!r || !r.click) {
+        started = true;
+        break;
+      }
+      log("press buy confirm @" + r.click.x + "," + r.click.y);
+      click(r.click.x, r.click.y);
+      var until = now() + (F.startSeconds || 10) * 1000;
+      while (now() < until && spinState().ready && !covered()) await sleep(250);
+      started = !spinState().ready || covered();
+      note = "pressed confirm but the spin point is still ready: screenshot. auto.click(x, y) on a further confirm, auto.resume() if the feature is playing, or close the screen and auto.skip()";
+    }
+    if (!started) {
+      st.coverage.feature = "buy did not start";
+      return;
+    }
+    P.mark("feature");
+    var t0 = now();
+    var back = await featureWait(base);
+    P.mark("gap");
+    st.feature = { ms: now() - t0, back: back };
+    st.coverage.feature = back ? "ok" : "did not return to the base game";
+    log("feature " + Math.round((now() - t0) / 1000) + "s");
+    await gcPoint("after-feature");
+    await idle("idle-after-feature", F.idleSeconds || 5, "after-feature");
+    P.mark("gap");
+  }
+
   async function run() {
     st.started = now();
     st.phase = "entry";
@@ -751,6 +869,7 @@
     await panel("history", "history-after", "history-after");
     await idle("idle-end", 5, "idle-end");
     P.mark("gap");
+    await featureStage();
     st.phase = "done";
     log("done");
   }
@@ -793,8 +912,10 @@
     ready: function () { return resume({ ready: true }); },
     click: function (x, y, text) { return resume({ click: toLocal({ x: x, y: y }), text: text }); },
     resume: function () { return resume({}); },
+    // At needs "buy": do not buy (the balance is short, or the screen is not a plain buy).
+    skip: function () { return resume({ skip: true }); },
     result: function () {
-      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, log: st.log };
+      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, feature: st.feature || null, log: st.log };
     }
   };
 
