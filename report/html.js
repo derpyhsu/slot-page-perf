@@ -8,7 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const { metaLine, readoutHtml } = require("./readout");
 const { eventSvg } = require("./timeline");
-const { SOFTWARE_GPU } = require("./findings");
+const { SOFTWARE_GPU, causeText } = require("./findings");
 
 const evidencePath = process.argv[2];
 if (!evidencePath) {
@@ -51,7 +51,8 @@ function stallFacts(r) {
     const w = tl.bucketMs || 250;
     if (ui >= 0) tl.buckets.forEach((b) => { if (b[0] + w >= h.t && b[0] <= h.t + h.value) upload += b[ui] || 0; });
   }
-  return { seen, also: upload >= 1 ? `貼圖上傳 ${Math.round(upload * 10) / 10} MB（時間吻合，未證實是原因）` : "" };
+  const ct = causeText(h.cause);
+  return { seen, cause: ct ? ct.fact : "", also: !ct && upload >= 1 ? `貼圖上傳 ${Math.round(upload * 10) / 10} MB（時間吻合，未證實是原因）` : "" };
 }
 // Event cards only for stalls with one moment, at most three, and not on a software renderer.
 const carded = new Set((ev.todo || []).filter((r) => !soft && !r.note && /^stall-/.test(r.rule || "") && r.t != null).slice(0, 3).map((r) => r.n));
@@ -65,7 +66,7 @@ function todoRow(r, open) {
   return `<details class="acc" id="todo-${r.n}"${open ? " open" : ""}>
 <summary><span class="pb ${r.level}">${PRIORITY[r.level] || "P2"}</span><span class="tt">${esc(r.title)}${r.parts && r.parts.length ? ` <span class="times">${r.env ? "含" : "另含"} ${r.parts.length} 條</span>` : ""}</span><span class="at">${esc(at)}</span><span class="chev" aria-hidden="true">›</span></summary>
 <div class="body">
-${facts ? `<div class="k">量到</div><p>${esc(facts.seen)}</p>${facts.also ? `<div class="k">同時發生</div><p>${esc(facts.also)}</p>` : ""}` : ""}
+${facts ? `<div class="k">量到</div><p>${esc(facts.seen)}</p>${facts.cause ? `<div class="k">原因</div><p>${esc(facts.cause)}</p>` : ""}${facts.also ? `<div class="k">同時發生</div><p>${esc(facts.also)}</p>` : ""}` : ""}
 ${card ? `<div class="evcard">${card}</div>` : ""}
 ${parts ? `<div class="k">包含</div><ul class="parts">${parts}</ul>` : ""}
 <div class="k">建議</div><p>${esc(r.fix)}</p>

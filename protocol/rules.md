@@ -16,6 +16,24 @@
 
 `cpu` 是 `null` 表示那一幀沒有引擎計時，不是 0 毫秒。這時若同一段有時間相近的 long task，寫成同一次 `hitch-main-thread`；沒有就寫 `hitch-other`，證據註明 CPU 未讀到。
 
+### 長幀歸因
+
+每次 hitch 另外看那一幀量到的工作（探針 `hitches[].work`），以及時間重疊的 Long Animation Frame（`timeline.loafs`）。只有一項量到的工作佔該次 `dt` 一半以上，而且說得出具體對象，才寫原因（finding 的 `cause`）；否則不寫，原始數字留在 evidence。原因只陳述量到的事和該從哪裡查，不判斷要不要改。
+
+依序判斷：
+
+- `loading-burst`：這一幀收完 2 個以上下載，且資源解析（`cc.deserialize`、`JSON.parse`）加貼圖上傳的時間過半。寫同時下載數、收完的檔名、解析與上傳各多久，最大一張貼圖 1 MB 以上就寫尺寸與檔名。
+- `texture-upload`：`texImage2D` 等上傳時間過半。寫張數、MB、最大一張的尺寸與檔名（圖片來源有網址才有）。
+- `deserialize`：資源解析時間過半。
+- `shader-compile`：shader 編譯與連結時間過半。
+- `instantiate`：`cc.instantiate` 時間過半；來源名稱可讀才寫名稱。
+- `component`：單一元件類別的 `update`、`lateUpdate`、`onLoad`、`start`、`onEnable` 時間過半，類別名可讀（不是一兩個字母、不是 uuid）。巢狀呼叫只算最外層。元件計時每幀額外成本超過 0.3 ms 就自動關掉（`componentTiming.status` 為 `off-overhead`）。
+- `render`：引擎繪製時間扣掉上傳和 shader 後仍過半，而且有 draw call 數。
+- `layout`：重疊的 LoAF 樣式與版面時間過半。
+- `script`：重疊的 LoAF 裡最長的腳本過半，檔案不是引擎檔，也不是引擎每幀的 rAF 回呼。函式名可讀才寫函式名；呼叫來源（事件、回呼、Promise、腳本載入）一併寫。
+
+不歸因：GC、非同步音訊解碼、量不到 `work` 的舊探針。`source` 是 `longtask` 而且和某個幀 hitch 時間重疊時，視為同一次停頓，只留幀那筆。
+
 `channels.engineCpu` 為 false 時，所有 CPU 平均、p95、CPU% 都是 `unavailable`，`cpu-heavy` 不觸發。
 
 ## 幀節奏

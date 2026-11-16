@@ -47,8 +47,25 @@
     lastDrawSample: 0,
     // Spine components seen drawable at least once (any sample or snapshot), and how many samples ran.
     spineShown: typeof WeakSet !== "undefined" ? new WeakSet() : null,
-    spineSamples: 0
+    spineSamples: 0,
+    // Long Animation Frame entries at or above HITCH_MS (see timeline.loafFields).
+    loafs: [],
+    // What ran between two recorded frames. A hitch keeps a copy as `work`; reset after each frame.
+    fw: null,
+    afterUpdateAt: 0,
+    // Component update timing: wrapped classes, call count, measured cost per wrapped call.
+    compWrapped: 0,
+    compClassCount: -1,
+    compCalls: 0,
+    compFramesSeen: 0,
+    compCallUs: null,
+    compOff: false
   };
+
+  function newLedger() {
+    return { texN: 0, texBytes: 0, texMs: 0, texTopBytes: 0, texTop: "", dlDone: 0, dlNames: [], dlMax: 0, desN: 0, desMs: 0, shN: 0, shMs: 0, instN: 0, instMs: 0, instTop: "", instTopMs: 0, upd: 0, rnd: 0, ticks: 0, comps: {}, calls: 0 };
+  }
+  state.fw = newLedger();
 
   function round(n) {
     return Math.round(n * 100) / 100;
@@ -121,6 +138,7 @@
   function openStage(name) {
     closeStage();
     if (state.marks.length < SERIES_CAP) state.marks.push([name, rel(performance.now())]);
+    state.fw = newLedger();
     state.stage = {
       name: name,
       t0: performance.now(),
@@ -169,7 +187,7 @@
   }
 
   function recordFrame(dt, cpu, draws) {
-    if (!(dt > 0) || dt > 10000) return;
+    if (!(dt > 0) || dt > 10000) { state.fw = newLedger(); return; }
     if (!state.seenFrame) {
       state.seenFrame = true;
       openStage("loading");
@@ -178,7 +196,7 @@
     state.lastDraws = draws;
     bucketFrame(now, dt, cpu, draws);
     var s = state.stage;
-    if (!s) return;
+    if (!s) { state.fw = newLedger(); return; }
     state.frameCount += 1;
     s.frames += 1;
     s.sumDt += dt;
@@ -209,9 +227,28 @@
         gpu: gpu == null ? null : round(gpu),
         draws: draws,
         inFlight: state.active.size,
-        urls: urls
+        urls: urls,
+        work: workOf(state.fw)
       });
     }
+    state.fw = newLedger();
+  }
+
+  // Compact copy of the ledger for a hitch: only what was measured, top 3 component classes.
+  function workOf(fw) {
+    var comps = Object.keys(fw.comps).map(function (k) { return [k, round(fw.comps[k])]; });
+    comps.sort(function (a, b) { return b[1] - a[1]; });
+    return {
+      updMs: fw.ticks && !fw.noSplit ? round(fw.upd) : null,
+      rndMs: fw.ticks && !fw.noSplit ? round(fw.rnd) : null,
+      comps: state.compOff || !state.compWrapped ? null : comps.slice(0, 3),
+      texN: fw.texN, texMb: round(fw.texBytes / 1048576), texMs: round(fw.texMs),
+      texTop: fw.texTop || undefined, texTopMb: fw.texTopBytes ? round(fw.texTopBytes / 1048576) : undefined,
+      dlDone: fw.dlDone, dlNames: fw.dlNames.length ? fw.dlNames : undefined, dlMax: Math.max(fw.dlMax, state.active.size),
+      desN: fw.desN, desMs: round(fw.desMs),
+      shN: fw.shN, shMs: round(fw.shMs),
+      instN: fw.instN, instMs: round(fw.instMs), instTop: fw.instTop || undefined
+    };
   }
 
   function takeGpu() {
@@ -389,7 +426,8 @@
         var ret = orig.apply(this, arguments);
         var ms = performance.now() - t0;
         state.shaderMs += ms;
-        if (counts) state.shaderN += 1;
+        state.fw.shMs += ms;
+        if (counts) { state.shaderN += 1; state.fw.shN += 1; }
         if (ms > state.shaderMax) state.shaderMax = ms;
         if (ms >= HITCH_MS && state.shaderStalls.length < 8) state.shaderStalls.push({ t: rel(t0), ms: round(ms), kind: name });
         return ret;
@@ -400,13 +438,31 @@
       var orig = proto[name];
       proto[name] = function () {
         state.texUploads += 1;
-        state.lastTexUploadAt = performance.now();
+        var t0 = performance.now();
+        state.lastTexUploadAt = t0;
+        var bytes = 0;
         try {
           var src = arguments[arguments.length - 1];
-          if (src && src.byteLength) state.texBytes += src.byteLength;
-          else if (src && src.width && src.height) state.texBytes += src.width * src.height * 4;
+          if (src && src.byteLength) bytes = src.byteLength;
+          else if (src && src.width && src.height) bytes = src.width * src.height * 4;
         } catch (e) {}
-        return orig.apply(this, arguments);
+        state.texBytes += bytes;
+        var ret = orig.apply(this, arguments);
+        state.fw.texN += 1;
+        state.fw.texBytes += bytes;
+        state.fw.texMs += performance.now() - t0;
+        if (bytes > state.fw.texTopBytes) {
+          state.fw.texTopBytes = bytes;
+          var desc = "";
+          try {
+            var im = arguments[arguments.length - 1];
+            if (im && im.width && im.height) desc = im.width + "x" + im.height;
+            var u = im && (im.currentSrc || im.src);
+            if (typeof u === "string" && u.indexOf("data:") !== 0) desc += " " + pathOnly(u).split("/").pop();
+          } catch (e) {}
+          state.fw.texTop = desc.slice(0, 80);
+        }
+        return ret;
       };
     });
   }
@@ -501,10 +557,35 @@
     po.observe({ type: "longtask", buffered: true });
   } catch (e) {}
 
+  // Long Animation Frames: which script ran (invoker type, file, function) and how long style and
+  // layout took. Kept beside longTasks, which still feeds the load score.
+  try {
+    var LOAF = "long-animation-frame";
+    if (PerformanceObserver.supportedEntryTypes && PerformanceObserver.supportedEntryTypes.indexOf(LOAF) >= 0) {
+      var lo = new PerformanceObserver(function (list) {
+        list.getEntries().forEach(function (e) {
+          if (e.duration < HITCH_MS || state.loafs.length >= 400) return;
+          var end = e.startTime + e.duration;
+          var layout = e.styleAndLayoutStart > 0 ? end - e.styleAndLayoutStart : 0;
+          var scripts = (e.scripts || []).slice().sort(function (a, b) { return b.duration - a.duration; }).slice(0, 3).map(function (s) {
+            return [s.invokerType || "", String(s.invoker || "").slice(0, 60), pathOnly(s.sourceURL || ""), String(s.sourceFunctionName || "").slice(0, 60), round(s.duration), round(s.forcedStyleAndLayoutDuration || 0)];
+          });
+          state.loafs.push([Math.round(e.startTime - state.t0), round(e.duration), round(e.blockingDuration || 0), round(layout), scripts]);
+        });
+      });
+      lo.observe({ type: LOAF, buffered: true });
+    }
+  } catch (e) {}
+
   function track(url, start) {
     var path = pathOnly(url);
-    if (start) state.active.add(path);
-    else state.active.delete(path);
+    if (start) {
+      state.active.add(path);
+      if (state.active.size > state.fw.dlMax) state.fw.dlMax = state.active.size;
+    } else if (state.active.delete(path)) {
+      state.fw.dlDone += 1;
+      if (state.fw.dlNames.length < 3) state.fw.dlNames.push(path.split("/").pop().slice(0, 60));
+    }
   }
 
   var origOpen = XMLHttpRequest.prototype.open;
@@ -680,28 +761,167 @@
     if (!name) return;
     state.loopHooked = true;
     state.loopName = name;
+    try {
+      var D = cc.Director;
+      if (D && D.EVENT_AFTER_UPDATE && director.on) director.on(D.EVENT_AFTER_UPDATE, function () { state.afterUpdateAt = performance.now(); });
+    } catch (e) {}
     var orig = director[name];
     var last = performance.now();
+    var prevCpu = null, prevDraws = 0;
     director[name] = function () {
       var now = performance.now();
       var dt = now - last;
       last = now;
       state.loopHookedAt = now;
       state.loopFrames += 1;
+      // The gap that ends now began when the previous tick started, so it holds that tick's work
+      // and whatever ran between the two ticks. Record it before this tick adds its own.
+      if (prevCpu != null) recordFrame(dt, prevCpu, prevDraws);
+      else state.fw = newLedger();
       beginGpu();
       var t0 = performance.now();
       var ret = orig.apply(this, arguments);
-      var cpu = performance.now() - t0;
+      var t1 = performance.now();
+      var cpu = t1 - t0;
       endGpu();
-      recordFrame(dt, cpu, drawsThisFrame());
+      // Split the tick at EVENT_AFTER_UPDATE: before it is game logic (components, schedulers,
+      // tweens), after it is the engine drawing the frame.
+      var fw = state.fw;
+      fw.ticks += 1;
+      if (state.afterUpdateAt >= t0 && state.afterUpdateAt <= t1) {
+        fw.upd += state.afterUpdateAt - t0;
+        fw.rnd += t1 - state.afterUpdateAt;
+      } else {
+        fw.noSplit = true;
+      }
+      if (fw.calls) { state.compCalls += fw.calls; state.compFramesSeen += 1; }
+      prevCpu = cpu;
+      prevDraws = drawsThisFrame();
       return ret;
     };
   }
+
+  // Component update timing. Wrap update/lateUpdate on every registered component class (bundles
+  // register more later, so rescan when the registry grows). Only the outermost call is timed, so a
+  // super.update() call is not counted twice, and time goes to the concrete class of `this`.
+  var compDepth = 0;
+  function compName(obj, cc) {
+    var C = obj.constructor;
+    if (!C) return "?";
+    if (!Object.prototype.hasOwnProperty.call(C, "__slotName")) {
+      var n = "";
+      try { n = cc.js.getClassName(C) || C.name || ""; } catch (e) {}
+      try { Object.defineProperty(C, "__slotName", { value: n || "?", enumerable: false }); } catch (e) { return n || "?"; }
+    }
+    return C.__slotName;
+  }
+  function wrapMethod(proto, m, cc) {
+    var orig = proto[m];
+    if (typeof orig !== "function" || orig.__slotComp) return;
+    var w = function () {
+      if (compDepth || state.compOff) return orig.apply(this, arguments);
+      compDepth = 1;
+      var t0 = performance.now();
+      try { return orig.apply(this, arguments); } finally {
+        var ms = performance.now() - t0;
+        compDepth = 0;
+        var fw = state.fw, k = compName(this, cc) + "." + m;
+        fw.comps[k] = (fw.comps[k] || 0) + ms;
+        fw.calls += 1;
+      }
+    };
+    w.__slotComp = true;
+    proto[m] = w;
+    state.compWrapped += 1;
+  }
+  function hookComponents(cc) {
+    var reg = cc.js && (cc.js._registeredClassNames || cc.js._nameToClass);
+    if (!reg || !cc.Component) return;
+    var names = Object.keys(reg);
+    if (names.length === state.compClassCount) return;
+    state.compClassCount = names.length;
+    names.forEach(function (n) {
+      var C = reg[n];
+      if (typeof C !== "function" || !C.prototype || !(C.prototype instanceof cc.Component)) return;
+      ["update", "lateUpdate", "onLoad", "start", "onEnable"].forEach(function (m) {
+        if (Object.prototype.hasOwnProperty.call(C.prototype, m)) wrapMethod(C.prototype, m, cc);
+      });
+    });
+    if (state.compCallUs == null && state.compWrapped) {
+      // Cost of one wrapper call over a bare call, measured once in this page.
+      var dummy = { constructor: function () {} };
+      var p = { f: function () {} };
+      var bare = p.f;
+      wrapMethod(p, "f", cc);
+      state.compWrapped -= 1;
+      var N = 20000, i, t0 = performance.now();
+      for (i = 0; i < N; i++) bare.call(dummy);
+      var t1 = performance.now();
+      var save = state.fw;
+      state.fw = newLedger();
+      for (i = 0; i < N; i++) p.f.call(dummy);
+      var t2 = performance.now();
+      state.fw = save;
+      state.compCallUs = Math.max(0, ((t2 - t1) - (t1 - t0)) / N * 1000);
+    }
+  }
+
+  function hookInstantiate(cc) {
+    if (typeof cc.instantiate !== "function" || cc.instantiate.__slotInst) return;
+    var orig = cc.instantiate;
+    var w = function (src) {
+      var t0 = performance.now();
+      var ret = orig.apply(this, arguments);
+      var ms = performance.now() - t0;
+      var fw = state.fw;
+      fw.instN += 1;
+      fw.instMs += ms;
+      if (ms > fw.instTopMs) {
+        fw.instTopMs = ms;
+        var n = "";
+        try { n = (src && (src.name || (src.data && src.data.name))) || ""; } catch (e) {}
+        fw.instTop = String(n).slice(0, 60);
+      }
+      return ret;
+    };
+    for (var k in orig) { try { w[k] = orig[k]; } catch (e) {} }
+    w.__slotInst = true;
+    try { cc.instantiate = w; } catch (e) {}
+  }
+
+  // Deserializing scenes, prefabs and other assets, and large JSON.parse calls, both on the main thread.
+  var desDepth = 0;
+  function timeInto(fn, flag) {
+    var w = function () {
+      if (desDepth) return fn.apply(this, arguments);
+      desDepth = 1;
+      var t0 = performance.now();
+      try { return fn.apply(this, arguments); } finally {
+        desDepth = 0;
+        state.fw.desN += 1;
+        state.fw.desMs += performance.now() - t0;
+      }
+    };
+    for (var k in fn) { try { w[k] = fn[k]; } catch (e) {} }
+    w[flag] = true;
+    return w;
+  }
+  function hookDeserialize(cc) {
+    if (typeof cc.deserialize === "function" && !cc.deserialize.__slotDes) {
+      try { cc.deserialize = timeInto(cc.deserialize, "__slotDes"); } catch (e) {}
+    }
+  }
+  try { if (!JSON.parse.__slotDes) JSON.parse = timeInto(JSON.parse, "__slotDes"); } catch (e) {}
 
   function watch() {
     var cc = window.cc;
     if (!cc) return;
     try { hookDirector(cc); } catch (e) {}
+    try { hookComponents(cc); } catch (e) {}
+    try { hookDeserialize(cc); } catch (e) {}
+    try { hookInstantiate(cc); } catch (e) {}
+    // Component timing must stay cheap; above 0.3 ms per frame it is switched off for the run.
+    if (!state.compOff && state.compCallUs != null && state.compFramesSeen > 300 && (state.compCalls / state.compFramesSeen) * state.compCallUs / 1000 > 0.3) state.compOff = true;
     try {
       var scene = cc.director && cc.director.getScene && cc.director.getScene();
       var name = scene && scene.name;
@@ -1442,6 +1662,16 @@
           buckets: state.buckets.concat(state.bucket ? [state.bucket.slice(0, 9)] : []),
           longTasks: state.longTasks,
           longTaskFields: ["startMs", "durationMs", "inFlight"],
+          loafs: state.loafs,
+          loafFields: ["startMs", "durationMs", "blockingMs", "styleLayoutMs", "scripts"],
+          loafScriptFields: ["invokerType", "invoker", "path", "function", "durationMs", "forcedLayoutMs"],
+          componentTiming: {
+            status: !state.compWrapped ? "unavailable" : state.compOff ? "off-overhead" : "ok",
+            wrappedMethods: state.compWrapped,
+            callUs: state.compCallUs == null ? null : Math.round(state.compCallUs * 1000) / 1000,
+            callsPerFrame: state.compFramesSeen ? round(state.compCalls / state.compFramesSeen) : null,
+            overheadMsPerFrame: state.compFramesSeen && state.compCallUs != null ? Math.round(state.compCalls / state.compFramesSeen * state.compCallUs) / 1000 : null
+          },
           marks: state.marks,
           heap: state.heapSeries,
           textures: state.textureSeries,

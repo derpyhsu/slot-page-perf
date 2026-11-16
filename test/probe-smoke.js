@@ -62,15 +62,26 @@ hiddenFx.children.forEach((c) => { c.parent = hiddenFx; });
 const scene = node("scene", [], [startBtn, node("a", [new Skeleton(0), new Label()]), node("b", [new Skeleton(1)]), hiddenFx, node("off", [new Skeleton(0)], [], { active: false, activeInHierarchy: false })], { getComponentsInChildren: () => [cam] });
 const assets = [new Texture2D(2048, 2048, 35), new Texture2D(1024, 1024, 99)];
 let ticks = 0;
+// One game component with a readable class name; its update stalls once during spin 3.
+class Component {}
+class SlotReelController extends Component { update() { if (slowUpdate) { slowUpdate = false; now += 80; } } onLoad() {} }
+let slowUpdate = false;
+const reel = new SlotReelController();
+names.set(SlotReelController, "SlotReelController");
+const listeners = {};
 global.cc = {
   ENGINE_VERSION: "3.8.2",
   Texture2D,
   UITransform,
   Camera,
   Vec3,
-  js: { getClassName: (o) => names.get(o.constructor) || "Other" },
+  js: { getClassName: (o) => names.get(o) || names.get(o && o.constructor) || "Other", _registeredClassNames: { SlotReelController } },
+  Component,
+  Director: { EVENT_AFTER_UPDATE: "director_after_update" },
+  instantiate: (x) => x,
+  deserialize: (x) => x,
   assetManager: { assets: { forEach: (f) => assets.forEach(f) } },
-  director: { tick() { ticks += 1; now += 3; }, mainLoop() { throw new Error("3.x never calls mainLoop"); }, getScene: () => scene },
+  director: { on(e, f) { listeners[e] = f; }, tick() { ticks += 1; now += 2; reel.update(); (listeners.director_after_update || (() => {}))(); now += 1; }, mainLoop() { throw new Error("3.x never calls mainLoop"); }, getScene: () => scene },
   game: { frameRate: 60 },
   macro: {},
 };
@@ -116,6 +127,7 @@ gl.deleteTexture(tex);
 assert.strictEqual(P.live().gpuMb, 1, "deleted texture is freed");
 for (let i = 1; i <= 12; i += 1) {
   P.mark("spin-" + i);
+  if (i === 3) { advance(500); slowUpdate = true; }
   advance(2000);
   P.mark("gap");
   advance(200);
@@ -156,5 +168,13 @@ assert.ok(ev.fps.some((r) => r.group === "spin" && r.stages === 12), "spins grou
 assert.ok(ev.todo.some((t) => t.rule === "cocos-spine-hidden"), "hidden Spine listed for the team");
 assert.ok(md.includes("各階段 FPS") && md.includes("進遊戲"), "report shows FPS table and entry");
 assert.ok(!/secret|token=/.test(JSON.stringify(ev) + md), "no token in evidence or report");
+assert.strictEqual(s.timeline.componentTiming.status, "ok", "component timing ran");
+const slow = s.stages.find((x) => x.name === "spin-3").hitches[0];
+assert.ok(slow && slow.work && slow.work.updMs >= 80 && slow.work.rndMs != null, "hitch carries the update/render split");
+assert.strictEqual(slow.work.comps[0][0], "SlotReelController.update", "slow component named");
+const hit = ev.findings.find((f) => f.stage === "spin-3" && /^hitch-/.test(f.id));
+assert.ok(hit && hit.cause && hit.cause.kind === "component" && hit.cause.ms <= hit.value, "stall cause attributed to the component");
+assert.ok(!ev.findings.some((f) => f.stage === "idle" && f.cause), "no cause for the idle long task without detail");
+assert.ok(fs.readFileSync(path.join(runDir, "report.html"), "utf8").includes("SlotReelController.update"), "report shows the cause");
 console.log(digest.trim());
 console.log(`\nok ${ticks} ticks, run at ${runDir}`);

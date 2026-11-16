@@ -162,6 +162,72 @@ function heapFit(ev, T) {
   };
 }
 
+// Cause of one stall, per protocol/rules.md "長幀歸因". Returns null unless one measured factor
+// covers at least half of the stall and names something specific to look at.
+const ENGINE_FILE = /cocos|cc\.js|cc-|engine|_virtual|polyfill|system\.bundle|import-map|physics|spine|dragonbones/i;
+const READABLE = (n) => typeof n === "string" && n.length >= 4 && !/^[\w$]{1,2}$/.test(n) && !/^[0-9a-f]{5,}/i.test(n) && !/^[\w$]{1,2}\./.test(n) && n !== "?";
+const INVOKER = { "user-callback": "回呼", "event-listener": "事件", "resolve-promise": "Promise", "reject-promise": "Promise", "classic-script": "腳本載入", "module-script": "模組載入" };
+function stallCause(h, loafs) {
+  const dt = h.dt;
+  if (!(dt > 0)) return null;
+  const half = dt * 0.5;
+  const c = [];
+  const w = h.work;
+  if (w) {
+    // Many downloads landing at once: the parse and upload work they bring, counted together.
+    const loadMs = (w.desMs || 0) + (w.texMs || 0);
+    if (w.dlDone >= 2 && loadMs >= half) c.push({ kind: "loading-burst", ms: loadMs, inFlight: w.dlMax, done: w.dlDone, names: w.dlNames, desMs: w.desMs, texMs: w.texMs, texN: w.texN, mb: w.texMb, top: w.texTop, topMb: w.texTopMb, rank: 1 });
+    else {
+      if (w.texMs >= half && w.texN) c.push({ kind: "texture-upload", ms: w.texMs, n: w.texN, mb: w.texMb, top: w.texTop, topMb: w.texTopMb });
+      if (w.desMs >= half && w.desN) c.push({ kind: "deserialize", ms: w.desMs, n: w.desN });
+    }
+    if (w.shMs >= half && w.shN) c.push({ kind: "shader-compile", ms: w.shMs, n: w.shN });
+    if (w.instMs >= half && w.instN) c.push({ kind: "instantiate", ms: w.instMs, n: w.instN, name: READABLE(w.instTop) ? w.instTop : undefined });
+    const top = (w.comps || [])[0];
+    if (top && top[1] >= half && READABLE(top[0].replace(/\.(update|lateUpdate)$/, ""))) c.push({ kind: "component", ms: top[1], name: top[0] });
+    const heavy = (w.texMs || 0) + (w.shMs || 0);
+    if (w.rndMs != null && h.draws != null && w.rndMs - heavy >= half) c.push({ kind: "render", ms: w.rndMs, draws: h.draws });
+  }
+  // A Long Animation Frame overlapping the stall: forced layout, or one script outside the engine.
+  const lf = loafs.filter((l) => l[0] < h.t + dt && h.t < l[0] + l[1]).sort((a, b) => b[1] - a[1])[0];
+  if (lf) {
+    if (lf[3] >= half) c.push({ kind: "layout", ms: lf[3] });
+    const s = (lf[4] || [])[0];
+    if (s && s[4] >= half && s[2] && !ENGINE_FILE.test(s[2]) && !(s[0] === "user-callback" && /FrameRequestCallback/i.test(s[1]))) {
+      const file = s[2].split("/").filter(Boolean).slice(-2).join("/");
+      c.push({ kind: "script", ms: s[4], file, fn: READABLE(s[3]) ? s[3] : undefined, invoker: s[1] || undefined, via: INVOKER[s[0]] || s[0] });
+    }
+  }
+  if (!c.length) return null;
+  // A factor longer than the stall means the ledger spanned more than this frame; trust none of it.
+  if (c.some((f) => f.ms > dt * 1.1)) return null;
+  const best = c.sort((a, b) => (b.rank || 0) - (a.rank || 0) || b.ms - a.ms)[0];
+  delete best.rank;
+  best.ms = round(best.ms);
+  best.share = round(best.ms / dt, 2);
+  return best;
+}
+
+// Text for a measured cause: what was measured, and where to look. Facts only.
+function causeText(c) {
+  if (!c) return null;
+  const pct = `${Math.round(c.share * 100)}%`;
+  switch (c.kind) {
+    case "loading-burst": return {
+      fact: `同時下載 ${c.inFlight} 個、這一幀收完 ${c.done} 個${c.names ? `（${c.names.join("、")}）` : ""}；解析 ${round(c.desMs || 0)} ms、貼圖上傳 ${c.texN || 0} 張${c.mb ? ` ${c.mb} MB` : ""} ${round(c.texMs || 0)} ms，合計 ${c.ms} ms（佔 ${pct}）${c.top && c.topMb >= 1 ? `；最大一張 ${c.top}（解碼後 ${c.topMb} MB）` : ""}`,
+      look: "從同一時間收進來的這批資源查" };
+    case "texture-upload": return { fact: `貼圖上傳 ${c.n} 張${c.mb ? ` ${c.mb} MB` : ""}，花 ${c.ms} ms（佔 ${pct}）${c.top ? `；最大一張 ${c.top}${c.topMb ? `（解碼後 ${c.topMb} MB）` : ""}` : ""}`, look: c.top && /\./.test(c.top) ? `從 ${c.top.split(" ").pop()} 這張圖查` : "從這一刻上傳的貼圖查" };
+    case "deserialize": return { fact: `資源解析（cc.deserialize / JSON.parse）${c.n} 次，花 ${c.ms} ms（佔 ${pct}）`, look: "從這一刻載入的場景、prefab 或設定檔查" };
+    case "shader-compile": return { fact: `編譯 shader ${c.n} 次，花 ${c.ms} ms（佔 ${pct}）`, look: "從這一刻第一次出現的材質或特效查" };
+    case "instantiate": return { fact: `cc.instantiate ${c.n} 次，花 ${c.ms} ms（佔 ${pct}）${c.name ? `，最慢的是 ${c.name}` : ""}`, look: c.name ? `從 ${c.name} 的建立查` : "從這一刻建立的 prefab 查" };
+    case "component": return { fact: `${c.name} 花 ${c.ms} ms（佔 ${pct}）`, look: `從 ${c.name} 查` };
+    case "render": return { fact: `繪製花 ${c.ms} ms（佔 ${pct}），draw call ${c.draws}`, look: "從這一幀畫的內容查" };
+    case "layout": return { fact: `樣式與版面計算花 ${c.ms} ms（佔 ${pct}）`, look: "從 canvas 以外的 DOM 變動查" };
+    case "script": return { fact: `${c.file}${c.fn ? ` 的 ${c.fn}` : ""}（${c.via}${c.invoker ? `：${c.invoker}` : ""}）花 ${c.ms} ms（佔 ${pct}）`, look: `從 ${c.file}${c.fn ? ` 的 ${c.fn}` : ""} 查` };
+  }
+  return null;
+}
+
 function findings(ev, T) {
   const out = [];
   const stages = ev.stages || [];
@@ -171,13 +237,18 @@ function findings(ev, T) {
   const soft = SOFTWARE_GPU.test((ev.conditions && ev.conditions.gpu) || "");
   const engineCpu = !!(ev.channels && ev.channels.engineCpu);
 
+  const loafs = (ev.timeline && ev.timeline.loafs) || [];
   stages.forEach((s) => {
     if (s.name === "splash" || s.name === "gap" || s.name === "boot") return;
-    (s.hitches || []).forEach((h) => {
+    const hs = s.hitches || [];
+    hs.forEach((h) => {
+      // A long task that overlaps a frame hitch is the same stall; keep the frame, which has more detail.
+      if (h.source === "longtask" && hs.some((o) => o !== h && o.source !== "longtask" && o.t < h.t + h.dt && h.t < o.t + o.dt)) return;
       let id = "hitch-other";
       if (h.inFlight > 0) id = "hitch-network";
       else if (h.source === "longtask" || (h.cpu != null && h.cpu >= 0.8 * h.dt)) id = "hitch-main-thread";
-      out.push({ id, stage: s.name, t: h.t, value: h.dt, cpu: h.cpu == null ? null : h.cpu, urls: h.urls && h.urls.length ? h.urls : undefined });
+      const cause = stallCause(h, loafs);
+      out.push({ id, stage: s.name, t: h.t, value: h.dt, cpu: h.cpu == null ? null : h.cpu, urls: h.urls && h.urls.length ? h.urls : undefined, cause: cause || undefined, work: h.work || undefined });
     });
   });
 
@@ -303,4 +374,4 @@ function findings(ev, T) {
   return { findings: out, groups: gs, softwareGpu: soft };
 }
 
-module.exports = { findings, groups, groupOf, heapFit, SOFTWARE_GPU };
+module.exports = { findings, stallCause, causeText, groups, groupOf, heapFit, SOFTWARE_GPU };
