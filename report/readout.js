@@ -2,7 +2,7 @@
 // The report opens with three scores, 載入階段, 幀率穩定度 and 資源占用, then the numbers behind them.
 "use strict";
 
-const { groups, groupOf, SOFTWARE_GPU } = require("./findings");
+const { groups, groupOf, SOFTWARE_GPU, nodeGrowthText } = require("./findings");
 
 const THRESHOLDS = require("../protocol/thresholds.json");
 const CELLS = THRESHOLDS.cells;
@@ -209,6 +209,8 @@ function factRows(ev, m) {
     else notes.push("這輪沒看到大 GC");
     rows.push(["JS heap", `地板 ${Math.round(fit.from)} MB → ${Math.round(fit.to)} MB，每轉 ${fit.slopeMb >= 0 ? "+" : ""}${fit.slopeMb} MB`, notes.join("；")]);
   } else if (growth && growth.value != null) rows.push(["JS heap", `每轉 +${growth.value} MB`, ""]);
+  // Node counts after the two forced GCs (probe census), and what grew between them.
+  if (ev.nodeGrowth) rows.push(["節點", `GC 後 ${ev.nodeGrowth.nodes[0]} → ${ev.nodeGrowth.nodes[1]} 個`, nodeGrowthText(ev.nodeGrowth)]);
   // The bought free game: forced-GC floor after it, against the floor after the last spin.
   const cov = (ev.coverage && ev.coverage.feature) || null;
   if (ev.featureGc) {

@@ -232,6 +232,75 @@ function labelText(lb, dt) {
   return `Label 更新 ${lb.n} 次，花 ${round(lb.ms)} ms（佔 ${Math.round((lb.ms / dt) * 100)}%）：${labelList(lb.top)}`;
 }
 
+// Node counts between two probe censuses (autopilot takeCensus): scene groups by folded path
+// that gained at least minNodes, and instantiated nodes still referenced after the forced GC,
+// by source name. A group missing from a capped list is skipped, not taken as zero.
+function censusAt(ev, at) {
+  return ((ev.census || []).filter((c) => c && c.status === "ok" && c.at === at)).slice(-1)[0] || null;
+}
+function sceneDiff(a, b, min) {
+  const am = new Map((a.paths || []).map((p) => [p[0], p]));
+  const out = [];
+  (b.paths || []).forEach((p) => {
+    const q = am.get(p[0]);
+    const from = q ? q[1] : a.truncated ? null : 0;
+    if (from == null || p[1] - from < min) return;
+    out.push({ path: p[0], from, to: p[1], activeFrom: q ? q[2] : 0, activeTo: p[2] });
+  });
+  return out.sort((x, y) => (y.to - y.from) - (x.to - x.from)).slice(0, 5);
+}
+function madeDiff(a, b, min) {
+  const al = (a.made && a.made.byName) || [];
+  const am = new Map(al.map((g) => [g.name, g]));
+  const zero = { inScene: 0, detached: 0, destroyed: 0 };
+  const out = [];
+  ((b.made && b.made.byName) || []).forEach((g) => {
+    const q = am.get(g.name) || (al.length >= 40 ? null : zero);
+    if (!q) return;
+    const d = g.detached - q.detached;
+    const x = g.destroyed - q.destroyed;
+    if (d < min && x < min) return;
+    out.push({ name: g.name, detached: [q.detached, g.detached], destroyed: [q.destroyed, g.destroyed], inScene: [q.inScene, g.inScene] });
+  });
+  return out.sort((x, y) => (y.detached[1] - y.detached[0] + y.destroyed[1] - y.destroyed[0]) - (x.detached[1] - x.detached[0] + x.destroyed[1] - x.destroyed[0])).slice(0, 5);
+}
+function nodeGrowth(ev, T) {
+  const min = (T.census && T.census.minNodes) || 5;
+  const a = censusAt(ev, "after-warmup");
+  const b = censusAt(ev, "end");
+  if (!a || !b) return null;
+  const made = a.made && b.made && a.made.status !== "unavailable" ? {
+    status: b.made.status,
+    detached: [a.made.detached, b.made.detached],
+    destroyed: [a.made.destroyed, b.made.destroyed],
+    byName: madeDiff(a, b, min),
+  } : null;
+  return { spins: b.spins - a.spins, min, nodes: [a.nodes, b.nodes], paths: sceneDiff(a, b, min), made };
+}
+function panelNodes(ev, T) {
+  const min = (T.census && T.census.minNodes) || 5;
+  const a = censusAt(ev, "idle");
+  const b = censusAt(ev, "after-rules");
+  return a && b ? { nodes: [a.nodes, b.nodes], paths: sceneDiff(a, b, min) } : null;
+}
+const perSpin = (d, spins) => (spins > 0 ? `，每轉 +${round(d / spins, 1)}` : "");
+// One line of what the node counts did between the two points. Facts only; a pool holds
+// detached nodes on purpose, so detached is not called a leak.
+function nodeGrowthText(g) {
+  if (!g) return null;
+  const bits = [];
+  if (g.paths.length) bits.push("場景節點變多：" + g.paths.map((p) => `${p.path} ${p.from} → ${p.to}${perSpin(p.to - p.from, g.spins)}${p.activeTo !== p.to ? `（顯示中 ${p.activeTo}）` : ""}`).join("；"));
+  const m = g.made;
+  if (m && m.byName.length) bits.push("instantiate 出來、GC 後仍被參考：" + m.byName.map((x) => {
+    const parts = [];
+    if (x.detached[1] - x.detached[0] > 0) parts.push(`不在場景也沒 destroy ${x.detached[0]} → ${x.detached[1]}`);
+    if (x.destroyed[1] - x.destroyed[0] > 0) parts.push(`已 destroy ${x.destroyed[0]} → ${x.destroyed[1]}`);
+    return `${x.name}（${parts.join("，")}${perSpin(x.detached[1] - x.detached[0] + x.destroyed[1] - x.destroyed[0], g.spins)}）`;
+  }).join("；"));
+  if (!bits.length) return `暖機後到最後，場景節點 ${g.nodes[0]} → ${g.nodes[1]}，沒有哪一組多 ${g.min} 個以上${m ? "；instantiate 的節點 GC 後也沒有變多" : ""}`;
+  return `暖機後到最後（${g.spins} 轉）${bits.join("。")}`;
+}
+
 // Text for a measured cause: what was measured, and where to look. Facts only.
 function causeText(c) {
   if (!c) return null;
@@ -400,4 +469,4 @@ function findings(ev, T) {
   return { findings: out, groups: gs, softwareGpu: soft };
 }
 
-module.exports = { findings, stallCause, causeText, labelText, groups, groupOf, heapFit, SOFTWARE_GPU };
+module.exports = { findings, stallCause, causeText, labelText, nodeGrowth, nodeGrowthText, panelNodes, groups, groupOf, heapFit, SOFTWARE_GPU };

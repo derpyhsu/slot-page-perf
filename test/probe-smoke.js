@@ -174,8 +174,25 @@ assert.deepStrictEqual(pick(), { spinReady: false, start: [], dismiss: ["notice_
 scene.children.push(node("btn_spin", [new Button()]));
 assert.strictEqual(pick().spinReady, true, "spin button ready");
 
+// Census: instantiated nodes still held (detached, destroyed, in scene) and scene groups by path.
+const coinLayer = node("coin_layer", [], [], { parent: scene });
+scene.children.push(coinLayer);
+const held = [];
+const make = (name, extra) => { const n = cc.instantiate(node(name, [], [], Object.assign({ parent: null, isValid: true }, extra))); held.push(n); return n; };
+const addCoins = (k) => { for (let j = 0; j < k; j += 1) { const c = make("Coin", { parent: coinLayer }); coinLayer.children.push(c); } };
+for (let j = 0; j < 3; j += 1) make("WinFx");
+make("WinFx", { isValid: false });
+addCoins(2);
+const c1 = Object.assign(P.census(), { at: "after-warmup", spins: 5 });
+assert.strictEqual(c1.status, "ok");
+assert.deepStrictEqual((({ detached, destroyed, inScene }) => ({ detached, destroyed, inScene }))(c1.made), { detached: 3, destroyed: 1, inScene: 2 }, "instantiated nodes split by where they are");
+for (let j = 0; j < 7; j += 1) make("WinFx");
+addCoins(9);
+const c2 = Object.assign(P.census(), { at: "end", spins: 12 });
+assert.ok(c2.paths.some((p) => p[0] === "coin_layer/Coin" && p[1] === 11), "scene grouped by folded path");
+
 const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
-const raw = { autopilot: 1, summary: s, cocos: { snapshots: [snap] }, entry: { result: "pressed", steps: [{ kind: "button", text: "开始", afterMs: 900 }] }, coverage: { "history-before": "not found" } };
+const raw = { autopilot: 1, summary: s, cocos: { snapshots: [snap] }, census: [c1, c2], entry: { result: "pressed", steps: [{ kind: "button", text: "开始", afterMs: 900 }] }, coverage: { "history-before": "not found" } };
 fs.writeFileSync(path.join(runDir, "raw.json"), "Script ran on page and returned:\n```json\n" + JSON.stringify(raw) + "\n```\n");
 const digest = execFileSync(process.execPath, [path.join(root, "report", "build.js"), runDir], { encoding: "utf8" });
 const ev = JSON.parse(fs.readFileSync(path.join(runDir, "evidence.json"), "utf8"));
@@ -204,6 +221,10 @@ assert.ok(locHit.labels && locHit.labels.top[0].path === "txt_title" && locHit.l
 assert.ok(!/PLAYER-8848|Title 1/.test(JSON.stringify(ev) + JSON.stringify(s)), "label text never kept");
 const html = fs.readFileSync(path.join(runDir, "report.html"), "utf8");
 assert.ok(html.includes("lbl_win") && html.includes("overflow SHRINK"), "report names the labels on the worst spin stall");
+const ng = ev.nodeGrowth;
+assert.ok(ng && ng.spins === 7 && ng.paths[0].path === "coin_layer/Coin" && ng.paths[0].from === 2 && ng.paths[0].to === 11, "scene group growth between the GC points");
+assert.deepStrictEqual(ng.made.byName[0], { name: "WinFx", detached: [3, 10], destroyed: [1, 1], inScene: [0, 0] }, "detached instantiated nodes by source name");
+assert.ok(html.includes("coin_layer/Coin 2 → 11") && html.includes("WinFx（不在場景也沒 destroy 3 → 10"), "report shows node growth");
 assert.ok(fs.readFileSync(path.join(runDir, "report.html"), "utf8").includes("SlotReelController.update"), "report shows the cause");
 console.log(digest.trim());
 console.log(`\nok ${ticks} ticks, run at ${runDir}`);

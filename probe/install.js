@@ -57,6 +57,8 @@
     compWrapped: 0,
     lblWrapped: 0,
     lblReg: null,
+    made: [],
+    madeOff: false,
     compClassCount: -1,
     compCalls: 0,
     compFramesSeen: 0,
@@ -879,17 +881,68 @@
       var fw = state.fw;
       fw.instN += 1;
       fw.instMs += ms;
+      var n = "";
+      try { n = String((src && (src.name || (src.data && src.data.name))) || (ret && ret.name) || "").slice(0, 60); } catch (e) {}
       if (ms > fw.instTopMs) {
         fw.instTopMs = ms;
-        var n = "";
-        try { n = (src && (src.name || (src.data && src.data.name))) || ""; } catch (e) {}
-        fw.instTop = String(n).slice(0, 60);
+        fw.instTop = n;
       }
+      try { trackMade(ret, n); } catch (e) {}
       return ret;
     };
     for (var k in orig) { try { w[k] = orig[k]; } catch (e) {} }
     w.__slotInst = true;
     try { cc.instantiate = w; } catch (e) {}
+  }
+
+  // Nodes made by cc.instantiate, held weakly so the census after a forced GC sees only the ones
+  // something still references. Nodes built with new cc.Node are not seen.
+  var MADE_CAP = 30000;
+  function trackMade(node, name) {
+    if (state.madeOff || typeof WeakRef !== "function" || !node || typeof node !== "object" || !("parent" in node || "_parent" in node)) return;
+    if (state.made.length >= MADE_CAP) {
+      state.made = state.made.filter(function (m) { return m.ref.deref() !== undefined; });
+      if (state.made.length >= MADE_CAP) { state.madeOff = true; return; }
+    }
+    state.made.push({ ref: new WeakRef(node), name: name || "?" });
+  }
+  function topCounts(groups, n, by) {
+    return Object.keys(groups).map(function (k) { return groups[k]; }).sort(by).slice(0, n);
+  }
+  // What the scene and instantiated nodes hold right now. Call it after a forced GC, in a gap:
+  // the scene walk builds a path per node. Counts only; nothing is judged here.
+  function census() {
+    var cc = window.cc;
+    var scene = cc && cc.director && cc.director.getScene && cc.director.getScene();
+    if (!scene) return { status: "unavailable" };
+    var paths = {};
+    var total = 0;
+    walkScene(function (node) {
+      total += 1;
+      var k = groupPath(node);
+      var g = paths[k] || (paths[k] = [k, 0, 0]);
+      g[1] += 1;
+      if (node.activeInHierarchy !== false) g[2] += 1;
+    });
+    var made = { status: typeof WeakRef !== "function" ? "unavailable" : state.madeOff ? "capped" : "ok", alive: 0, inScene: 0, detached: 0, destroyed: 0, byName: [] };
+    var byName = {};
+    var keep = [];
+    state.made.forEach(function (m) {
+      var node = m.ref.deref();
+      if (node === undefined) return;
+      keep.push(m);
+      made.alive += 1;
+      var g = byName[m.name] || (byName[m.name] = { name: m.name, inScene: 0, detached: 0, destroyed: 0 });
+      if (node.isValid === false) { made.destroyed += 1; g.destroyed += 1; return; }
+      var top = node;
+      while (top && (top.parent || top._parent)) top = top.parent || top._parent;
+      if (top === scene) { made.inScene += 1; g.inScene += 1; } else { made.detached += 1; g.detached += 1; }
+    });
+    state.made = keep;
+    made.byName = topCounts(byName, 40, function (a, b) { return (b.detached + b.destroyed) - (a.detached + a.destroyed) || b.inScene - a.inScene; });
+    // paths: [folded path, nodes, active], most nodes first, at most 1000 groups.
+    var groups = Object.keys(paths).length;
+    return { status: "ok", nodes: total, groups: groups, truncated: groups > 1000 || undefined, paths: topCounts(paths, 1000, function (a, b) { return b[1] - a[1]; }), made: made };
   }
 
   // Label text layout and drawing. Every path that rebuilds a label's text, onEnable and the render
@@ -1720,6 +1773,10 @@
       info.at = label || (state.stage && state.stage.name) || null;
       info.t = rel(performance.now());
       return info;
+    },
+    // Node counts by folded scene path, and instantiated nodes still referenced. After a forced GC.
+    census: function () {
+      try { return census(); } catch (e) { return { status: "error", note: String(e && e.message || e).slice(0, 80) }; }
     },
     // Clickable Cocos nodes, optionally only those whose name or text contains one of words.
     // quietMs is how long since the last texture upload, a sign that loading has settled.

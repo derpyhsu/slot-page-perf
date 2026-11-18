@@ -84,6 +84,7 @@ const ev = {
   cocos: raw.cocos || { snapshots: [] },
   entry: raw.entry,
   gc: raw.gc || [],
+  census: raw.census || undefined,
   feature: raw.feature || undefined,
   coverage,
   findings: [],

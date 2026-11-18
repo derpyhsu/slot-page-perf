@@ -29,6 +29,7 @@
     longAsks: 0,
     entryPressed: {},
     gc: [],
+    census: [],
     resume: null,
     started: 0
   };
@@ -674,6 +675,19 @@
     }
     st.gc.push({ at: label, spins: st.spins, beforeMb: before, mb: low });
     log("gc " + label + " " + before + " -> " + low + " MB");
+    takeCensus(label);
+  }
+
+  // Node counts by scene path and instantiated nodes still referenced (probe census). Only in a
+  // gap: the walk builds a path per node.
+  function takeCensus(label) {
+    try {
+      var c = P.census && P.census();
+      if (!c) return;
+      c.at = label;
+      c.spins = st.spins;
+      st.census.push(c);
+    } catch (e) {}
   }
 
   // Close a big-win popup or a notice that blocks the spin button. Never presses avoid words.
@@ -826,6 +840,7 @@
     st.channels = { frameLoop: ch.frameLoop, engineCpu: ch.engineCpu, gpuMemory: ch.gpuMemory, gpuTimer: ch.gpuTimer };
     if (!ch.engineCpu) st.coverage.cpu = "frameLoop " + ch.frameLoop + ": per-frame CPU unavailable";
     P.mark("gap");
+    takeCensus("idle");
 
     st.phase = "map";
     st.plan = CFG.maxSpins || 30;
@@ -841,6 +856,7 @@
     await panel("rules", "rules", "rules");
     await idle("idle-after-rules", 4, null);
     P.mark("gap");
+    takeCensus("after-rules");
 
     st.phase = "spins";
     var normal = Math.min(st.plan, CFG.normalSpins || 24);
@@ -929,7 +945,7 @@
     // At needs "buy": do not buy (the balance is short, or the screen is not a plain buy).
     skip: function () { return resume({ skip: true }); },
     result: function () {
-      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, feature: st.feature || null, log: st.log };
+      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, feature: st.feature || null, log: st.log };
     }
   };
 

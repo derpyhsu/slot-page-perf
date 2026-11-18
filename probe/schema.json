@@ -78,6 +78,9 @@
     "findings": { "type": "array" },
     "coverage": { "type": "object" },
     "gc": { "type": "array", "description": "Heap floor right after a forced full GC (heap snapshot): after-warmup, end, and after-feature when a free game was bought", "items": { "type": "object" } },
+    "census": { "type": "array", "description": "Probe census after idle, after the panels (after-rules) and after each forced GC (after-warmup, end): nodes, paths as [folded path, nodes, active] (at most 1000), and made: instantiated nodes still referenced, by source name, split into inScene, detached and destroyed. Counts only.", "items": { "type": "object" } },
+    "nodeGrowth": { "type": "object", "description": "Written by report/analyze.js: scene groups and instantiated nodes that grew from after-warmup to end." },
+    "panelNodes": { "type": "object", "description": "Written by report/analyze.js: scene groups that grew from idle to after-rules." },
     "feature": { "type": "object", "description": "The bought free game or feature: ms from confirm until the base game was back, and back (whether it came back). coverage.feature says why it is missing." }
   }
 }

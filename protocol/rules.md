@@ -96,6 +96,17 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 
 轉數不夠就寫 `not-enough-spins`，不要當成沒有洩漏。
 
+### 節點數
+
+autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每次強制 GC 之後（`after-warmup`、`end`）各做一次 census（`evidence.census`），都在 gap 裡做，不算進量測：
+
+- 場景節點依去掉數字的節點路徑分組計數（含不顯示的節點），最多 1000 組。
+- `cc.instantiate` 做出來的節點用 WeakRef 記著，GC 後還活著的依來源名稱（prefab 名）分成：在場景裡、不在場景也沒 destroy、已 destroy。用 `new cc.Node` 建的節點看不到。
+
+`nodeGrowth` 是 `after-warmup` 到 `end` 之間多出 `census.minNodes` 個以上的組，前五名，附每轉多幾個。`leak-suspected` 那一列和記憶體表的「節點」列照實寫出來。不在場景的節點可能是物件池（`cc.NodePool`）刻意留著的，所以只寫數字，不說是洩漏。
+
+`panel-left-open` 那一列另外寫 `idle` 到 `after-rules` 之間多出的組（`panelNodes`），附顯示中的個數。
+
 ## panel-heavier
 
 `history-before`、`history-after` 或 `rules` 的穩態，相對 `idle`：FPS 下降超過 10，或 draw call 平均增加超過三成，或尖峰窗出現 `hitchMs` 以上的幀。證據寫明減掉待機之後的差。

@@ -18,7 +18,7 @@ const cfg = thresholds.scoring;
 const ev = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
 
 const { stageFrames } = require("./frames");
-const { heapFit, causeText, labelText } = require("./findings");
+const { heapFit, causeText, labelText, nodeGrowth, nodeGrowthText, panelNodes } = require("./findings");
 
 const NOT_GAME = new Set(["boot", "loading", "splash", "enter", "game-ready", "gap"]);
 const stages = ev.stages || [];
@@ -354,6 +354,9 @@ function featureGc() {
   return a && b ? { from: a.mb, to: b.mb, retainedMb: round(b.mb - a.mb, 2) } : null;
 }
 ev.featureGc = featureGc();
+// Node counts from the probe census: after-warmup against end, and idle against after the panels.
+ev.nodeGrowth = nodeGrowth(ev, thresholds) || undefined;
+ev.panelNodes = panelNodes(ev, thresholds) || undefined;
 
 const L = cfg.loading;
 const loadStable = loadingStableShare();
@@ -617,6 +620,13 @@ function fpsTable() {
 
 // Rows written from findings, so the table does not depend on the agent writing issues.
 // rule ids: stall-<group>, fps-*, memory-budget, leak-suspected, panel-history, panel-<stage>, panel-left-open, gpu-fill, network-*.
+// Scene groups that gained nodes between idle and after the panels closed (probe census).
+function panelNodeNote() {
+  const p = ev.panelNodes;
+  if (!p) return "";
+  if (!p.paths.length) return `打開紀錄和規則前後，場景節點 ${p.nodes[0]} → ${p.nodes[1]}，沒有哪一組明顯變多。`;
+  return "關掉面板後多出的節點：" + p.paths.map((x) => `${x.path} ${x.from} → ${x.to}（顯示中 ${x.activeFrom} → ${x.activeTo}）`).join("；") + "。";
+}
 function findingRows() {
   const { groups } = require("./findings");
   const found = ev.findings || [];
@@ -727,8 +737,10 @@ function findingRows() {
   }
 
   const leak = found.find((f) => f.id === "leak-suspected");
-  if (leak && leak.status === "retained-after-gc") rows.push({ rule: "leak-suspected", level: "red", title: `大 GC 之後 JS 記憶體地板仍比轉前高 ${Math.round(leak.delta)} MB`, area: "記憶體", fix: "轉前、轉後各拍一次 heap snapshot 比對，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。", stage: null, t: null });
-  else if (leak) rows.push({ rule: "leak-suspected", level: "orange", title: `JS 記憶體地板每轉多 ${leak.slopeMb} MB，這輪沒看到大 GC`, area: "記憶體", fix: "還不能確定是洩漏：大 GC 可能會收回。多轉幾十轉看地板會不會掉回來，或轉前、轉後各拍一次 heap snapshot 比對。", stage: null, t: null });
+  const ng = nodeGrowthText(ev.nodeGrowth);
+  const nodeNote = ng ? `${ng}。` : "";
+  if (leak && leak.status === "retained-after-gc") rows.push({ rule: "leak-suspected", level: "red", title: `大 GC 之後 JS 記憶體地板仍比轉前高 ${Math.round(leak.delta)} MB`, area: "記憶體", fix: "轉前、轉後各拍一次 heap snapshot 比對，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。" + nodeNote, stage: null, t: null });
+  else if (leak) rows.push({ rule: "leak-suspected", level: "orange", title: `JS 記憶體地板每轉多 ${leak.slopeMb} MB，這輪沒看到大 GC`, area: "記憶體", fix: "還不能確定是洩漏：大 GC 可能會收回。多轉幾十轉看地板會不會掉回來，或轉前、轉後各拍一次 heap snapshot 比對。" + nodeNote, stage: null, t: null });
 
   const idle = grp("idle");
   const labelCount = (snap) => (snap && snap.labels ? (snap.labels.noCacheTtf != null ? snap.labels.noCacheTtf : snap.labels.noCache) : null);
@@ -759,7 +771,7 @@ function findingRows() {
     const ratio = x.draws / idle.draws;
     rows.push({ rule: `panel-${f.stage}`, level: ratio >= 2 ? "orange" : "yellow", title: `${stageName(f.stage)}每一幀畫 ${Math.round(x.draws)} 次，是待機的 ${round(ratio, 1)} 倍`, area: "draw call", fix: panelFix(f.stage), stage: f.stage, t: null });
   });
-  if (found.some((f) => f.id === "panel-left-open")) rows.push({ rule: "panel-left-open", level: "orange", title: "關掉面板後，畫面工作量沒回到待機", area: "draw call", fix: "關面板時把節點設成不啟用或銷毀，不要只是移出畫面。", stage: "idle-after-rules", t: null });
+  if (found.some((f) => f.id === "panel-left-open")) rows.push({ rule: "panel-left-open", level: "orange", title: "關掉面板後，畫面工作量沒回到待機", area: "draw call", fix: "關面板時把節點設成不啟用或銷毀，不要只是移出畫面。" + panelNodeNote(), stage: "idle-after-rules", t: null });
 
   const fill = found.find((f) => f.id === "gpu-fill");
   if (fill) {
