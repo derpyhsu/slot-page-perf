@@ -1,7 +1,7 @@
 {
-  "maxSpins": 30,
-  "normalSpins": 24,
-  "turboSpins": 6,
+  "maxSpins": 15,
+  "normalSpins": 12,
+  "turboSpins": 3,
   "warmupSpins": 5,
   "idleSeconds": 8,
   "panelSteadySeconds": 5,
