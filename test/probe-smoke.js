@@ -81,6 +81,14 @@ class LocalizableLabel extends Component { onLoad() { now += 33; Label.Assembler
 names.set(LocalizableLabel, "localizable.label");
 let slowLabel = false;
 let slowLoc = false;
+// 2.4 shape: assembler classes registered on cc.Label.__assembler__, made by _resetAssembler on
+// enable, then called by _applyFontTexture (spin-9) or straight from the render flow (spin-11).
+class TTF24 { updateRenderData(comp) { now += comp.cost || 0; } }
+Label.__assembler__ = { getConstructor: function () { return TTF24; }, TTF: TTF24 };
+Label.prototype._resetAssembler = function () { this._assembler = new TTF24(); };
+const node24 = node("lbl_jackpot", []);
+const lbl24 = Object.assign(new Label("88,888.00"), { node: node24, overflow: 0, fontSize: 30, cost: 60 });
+let slow24 = 0;
 const listeners = {};
 global.cc = {
   ENGINE_VERSION: "3.8.2",
@@ -95,7 +103,7 @@ global.cc = {
   instantiate: (x) => x,
   deserialize: (x) => x,
   assetManager: { assets: { forEach: (f) => assets.forEach(f) } },
-  director: { on(e, f) { listeners[e] = f; }, tick() { ticks += 1; now += 2; reel.update(); if (slowLabel) { slowLabel = false; Label.Assembler.getAssembler(lblWin).updateRenderData(lblWin); } if (slowLoc) { slowLoc = false; new LocalizableLabel().onLoad(); } (listeners.director_after_update || (() => {}))(); now += 1; }, mainLoop() { throw new Error("3.x never calls mainLoop"); }, getScene: () => scene },
+  director: { on(e, f) { listeners[e] = f; }, tick() { ticks += 1; now += 2; reel.update(); if (slowLabel) { slowLabel = false; Label.Assembler.getAssembler(lblWin).updateRenderData(lblWin); } if (slowLoc) { slowLoc = false; new LocalizableLabel().onLoad(); } if (slow24 === 1) { lbl24._resetAssembler(); lbl24._assembler.updateRenderData(lbl24); } if (slow24 === 2) lbl24._assembler.updateRenderData(lbl24); slow24 = 0; (listeners.director_after_update || (() => {}))(); now += 1; }, mainLoop() { throw new Error("3.x never calls mainLoop"); }, getScene: () => scene },
   game: { frameRate: 60 },
   macro: {},
 };
@@ -144,6 +152,8 @@ for (let i = 1; i <= 12; i += 1) {
   if (i === 3) { advance(500); slowUpdate = true; }
   if (i === 5) { advance(500); slowLabel = true; }
   if (i === 7) { advance(500); slowLoc = true; }
+  if (i === 9) { advance(500); slow24 = 1; }
+  if (i === 11) { advance(500); slow24 = 2; }
   advance(2000);
   P.mark("gap");
   advance(200);
@@ -218,7 +228,12 @@ assert.deepStrictEqual(
 const locHit = ev.findings.find((f) => f.stage === "spin-7" && /^hitch-/.test(f.id));
 assert.ok(locHit && locHit.cause && locHit.cause.kind === "component" && locHit.cause.name === "localizable.label.onLoad", "localisation component is the cause");
 assert.ok(locHit.labels && locHit.labels.top[0].path === "txt_title" && locHit.labels.ms >= 22, "label part of the component named beside it");
-assert.ok(!/PLAYER-8848|Title 1/.test(JSON.stringify(ev) + JSON.stringify(s)), "label text never kept");
+for (const st of ["spin-9", "spin-11"]) {
+  const h24 = ev.findings.find((f) => f.stage === st && /^hitch-/.test(f.id));
+  assert.ok(h24 && h24.cause && h24.cause.kind === "label" && h24.cause.top[0].path === "lbl_jackpot", "2.4 label assembler timed on " + st);
+}
+assert.ok(s.timeline.componentTiming.labelAssemblers >= 2, "3.x and 2.4 label assemblers wrapped");
+assert.ok(!/PLAYER-8848|Title 1|88,888/.test(JSON.stringify(ev) + JSON.stringify(s)), "label text never kept");
 const html = fs.readFileSync(path.join(runDir, "report.html"), "utf8");
 assert.ok(html.includes("lbl_win") && html.includes("overflow SHRINK"), "report names the labels on the worst spin stall");
 const ng = ev.nodeGrowth;
