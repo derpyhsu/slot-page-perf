@@ -55,6 +55,8 @@
     afterUpdateAt: 0,
     // Component update timing: wrapped classes, call count, measured cost per wrapped call.
     compWrapped: 0,
+    lblWrapped: 0,
+    lblReg: null,
     compClassCount: -1,
     compCalls: 0,
     compFramesSeen: 0,
@@ -63,7 +65,7 @@
   };
 
   function newLedger() {
-    return { texN: 0, texBytes: 0, texMs: 0, texTopBytes: 0, texTop: "", dlDone: 0, dlNames: [], dlMax: 0, desN: 0, desMs: 0, shN: 0, shMs: 0, instN: 0, instMs: 0, instTop: "", instTopMs: 0, upd: 0, rnd: 0, ticks: 0, comps: {}, calls: 0 };
+    return { texN: 0, texBytes: 0, texMs: 0, texTopBytes: 0, texTop: "", dlDone: 0, dlNames: [], dlMax: 0, desN: 0, desMs: 0, shN: 0, shMs: 0, instN: 0, instMs: 0, instTop: "", instTopMs: 0, upd: 0, rnd: 0, ticks: 0, comps: {}, calls: 0, lblN: 0, lblMs: 0, lbl: null };
   }
   state.fw = newLedger();
 
@@ -247,7 +249,8 @@
       dlDone: fw.dlDone, dlNames: fw.dlNames.length ? fw.dlNames : undefined, dlMax: Math.max(fw.dlMax, state.active.size),
       desN: fw.desN, desMs: round(fw.desMs),
       shN: fw.shN, shMs: round(fw.shMs),
-      instN: fw.instN, instMs: round(fw.instMs), instTop: fw.instTop || undefined
+      instN: fw.instN, instMs: round(fw.instMs), instTop: fw.instTop || undefined,
+      lbl: state.compOff ? undefined : safeLabels(fw)
     };
   }
 
@@ -889,6 +892,115 @@
     try { cc.instantiate = w; } catch (e) {}
   }
 
+  // Label text layout and drawing. Every path that rebuilds a label's text, onEnable and the render
+  // flow alike, ends in its assembler's updateRenderData(comp): 2.4 Label._applyFontTexture and
+  // RenderFlow._updateRenderData, 3.x Label/UIRenderer.updateRenderData. The assembler is wrapped
+  // before its first call: 2.x through cc.Label.__assembler__ and Label._resetAssembler, 3.x through
+  // Label.Assembler.getAssembler. Per call only the time per component is kept; path, font and
+  // settings are read when the frame turns out to be a hitch. The text itself is never kept.
+  var lblDepth = 0;
+  function wrapLabelAssembler(obj, cc) {
+    var t = obj;
+    while (t && t !== Object.prototype && !Object.prototype.hasOwnProperty.call(t, "updateRenderData")) t = Object.getPrototypeOf(t);
+    if (!t || t === Object.prototype) return;
+    var orig = t.updateRenderData;
+    if (typeof orig !== "function" || orig.__slotLbl) return;
+    var L = cc.Label;
+    var w = function (comp) {
+      if (lblDepth || state.compOff || !L || !(comp instanceof L)) return orig.apply(this, arguments);
+      lblDepth = 1;
+      var t0 = performance.now();
+      try { return orig.apply(this, arguments); } finally {
+        var ms = performance.now() - t0;
+        lblDepth = 0;
+        var fw = state.fw;
+        fw.lblMs += ms;
+        fw.lblN += 1;
+        fw.calls += 1;
+        var m = fw.lbl || (fw.lbl = new Map());
+        m.set(comp, (m.get(comp) || 0) + ms);
+      }
+    };
+    w.__slotLbl = true;
+    try { t.updateRenderData = w; state.lblWrapped += 1; } catch (e) {}
+  }
+  function hookLabels(cc) {
+    var L = cc.Label;
+    if (!L || !L.prototype) return;
+    var reg = L.__assembler__;
+    if (reg && reg !== state.lblReg) {
+      state.lblReg = reg;
+      Object.keys(reg).forEach(function (k) { if (typeof reg[k] === "function" && reg[k].prototype) wrapLabelAssembler(reg[k].prototype, cc); });
+    }
+    var A = L.Assembler;
+    if (A && typeof A.getAssembler === "function" && !A.getAssembler.__slotLbl) {
+      var get = A.getAssembler;
+      var g = function () {
+        var a = get.apply(this, arguments);
+        if (a) { try { wrapLabelAssembler(a, cc); } catch (e) {} }
+        return a;
+      };
+      g.__slotLbl = true;
+      try { A.getAssembler = g; } catch (e) {}
+    }
+    var reset = L.prototype._resetAssembler;
+    if (typeof reset === "function" && !reset.__slotLbl) {
+      var r = function () {
+        var ret = reset.apply(this, arguments);
+        if (this._assembler) { try { wrapLabelAssembler(this._assembler, cc); } catch (e) {} }
+        return ret;
+      };
+      r.__slotLbl = true;
+      try { L.prototype._resetAssembler = r; } catch (e) {}
+    }
+  }
+  var CACHE_NAMES = ["NONE", "BITMAP", "CHAR"];
+  var OVERFLOW_NAMES = ["NONE", "CLAMP", "SHRINK", "RESIZE_HEIGHT"];
+  function safeLabels(fw) {
+    try { return labelsOf(fw); } catch (e) { return undefined; }
+  }
+  // The labels a hitch frame spent its label time on, grouped by folded node path, top 3 by time.
+  function labelsOf(fw) {
+    if (!fw.lbl || !fw.lblN) return undefined;
+    var cc = window.cc;
+    var groups = {};
+    fw.lbl.forEach(function (ms, c) {
+      var node = c.node;
+      var key = node ? groupPath(node) : "?";
+      var g = groups[key];
+      if (!g) {
+        var bm = !c.useSystemFont && cc && cc.BitmapFont && c.font instanceof cc.BitmapFont;
+        var font = c.useSystemFont || !c.font ? "system" : bm ? "bmfont" : "ttf";
+        var fontName = font === "system" ? c.fontFamily : c.font && (c.font.name || c.font._name);
+        var effects = [];
+        var comps = (node && (node._components || node.components)) || [];
+        comps.forEach(function (o) { var n = className(o); if (/Outline/.test(n)) effects.push("outline"); else if (/Shadow/.test(n)) effects.push("shadow"); });
+        if (c.enableOutline && effects.indexOf("outline") < 0) effects.push("outline");
+        if (c.enableShadow && effects.indexOf("shadow") < 0) effects.push("shadow");
+        var str = c.string;
+        g = groups[key] = {
+          path: key,
+          n: 0,
+          ms: 0,
+          font: font,
+          fontName: typeof fontName === "string" && fontName ? fontName.slice(0, 40) : undefined,
+          cache: CACHE_NAMES[c.cacheMode || 0] || String(c.cacheMode),
+          overflow: OVERFLOW_NAMES[c.overflow || 0] || String(c.overflow),
+          size: typeof c.fontSize === "number" ? c.fontSize : undefined,
+          chars: str != null ? String(str).length : undefined,
+          wrap: c.enableWrapText === true ? true : undefined,
+          effects: effects.length ? effects : undefined
+        };
+      }
+      g.n += 1;
+      g.ms += ms;
+      if (c.string != null) g.chars = Math.max(g.chars || 0, String(c.string).length);
+    });
+    var top = Object.keys(groups).map(function (k) { return groups[k]; }).sort(function (a, b) { return b.ms - a.ms; }).slice(0, 3);
+    top.forEach(function (g) { g.ms = round(g.ms); });
+    return { ms: round(fw.lblMs), n: fw.lblN, top: top };
+  }
+
   // Deserializing scenes, prefabs and other assets, and large JSON.parse calls, both on the main thread.
   var desDepth = 0;
   function timeInto(fn, flag) {
@@ -920,6 +1032,7 @@
     try { hookComponents(cc); } catch (e) {}
     try { hookDeserialize(cc); } catch (e) {}
     try { hookInstantiate(cc); } catch (e) {}
+    try { hookLabels(cc); } catch (e) {}
     // Component timing must stay cheap; above 0.3 ms per frame it is switched off for the run.
     if (!state.compOff && state.compCallUs != null && state.compFramesSeen > 300 && (state.compCalls / state.compFramesSeen) * state.compCallUs / 1000 > 0.3) state.compOff = true;
     try {
@@ -1668,6 +1781,7 @@
           componentTiming: {
             status: !state.compWrapped ? "unavailable" : state.compOff ? "off-overhead" : "ok",
             wrappedMethods: state.compWrapped,
+            labelAssemblers: state.lblWrapped,
             callUs: state.compCallUs == null ? null : Math.round(state.compCallUs * 1000) / 1000,
             callsPerFrame: state.compFramesSeen ? round(state.compCalls / state.compFramesSeen) : null,
             overheadMsPerFrame: state.compFramesSeen && state.compCallUs != null ? Math.round(state.compCalls / state.compFramesSeen * state.compCallUs) / 1000 : null

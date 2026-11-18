@@ -68,6 +68,19 @@ class SlotReelController extends Component { update() { if (slowUpdate) { slowUp
 let slowUpdate = false;
 const reel = new SlotReelController();
 names.set(SlotReelController, "SlotReelController");
+// Label text layout through a 3.x-style assembler. spin-5: the label itself takes most of a frame.
+// spin-7: a localisation component's onLoad takes most of it, a smaller part being label layout.
+const ttfAsm = { updateRenderData(comp) { now += comp.cost || 0; } };
+Label.Assembler = { getAssembler: () => ttfAsm };
+const lblNode = node("lbl_win", []);
+const lblWin = Object.assign(new Label("PLAYER-8848"), { node: lblNode, overflow: 2, fontSize: 40, useSystemFont: true, fontFamily: "Arial", cost: 90 });
+lblNode.components.push(lblWin);
+const locNode = node("txt_title", []);
+const lblTitle = Object.assign(new Label("Title 1"), { node: locNode, overflow: 0, fontSize: 24, cost: 22 });
+class LocalizableLabel extends Component { onLoad() { now += 33; Label.Assembler.getAssembler(lblTitle).updateRenderData(lblTitle); } }
+names.set(LocalizableLabel, "localizable.label");
+let slowLabel = false;
+let slowLoc = false;
 const listeners = {};
 global.cc = {
   ENGINE_VERSION: "3.8.2",
@@ -75,13 +88,14 @@ global.cc = {
   UITransform,
   Camera,
   Vec3,
-  js: { getClassName: (o) => names.get(o) || names.get(o && o.constructor) || "Other", _registeredClassNames: { SlotReelController } },
+  js: { getClassName: (o) => names.get(o) || names.get(o && o.constructor) || "Other", _registeredClassNames: { SlotReelController, LocalizableLabel } },
   Component,
+  Label,
   Director: { EVENT_AFTER_UPDATE: "director_after_update" },
   instantiate: (x) => x,
   deserialize: (x) => x,
   assetManager: { assets: { forEach: (f) => assets.forEach(f) } },
-  director: { on(e, f) { listeners[e] = f; }, tick() { ticks += 1; now += 2; reel.update(); (listeners.director_after_update || (() => {}))(); now += 1; }, mainLoop() { throw new Error("3.x never calls mainLoop"); }, getScene: () => scene },
+  director: { on(e, f) { listeners[e] = f; }, tick() { ticks += 1; now += 2; reel.update(); if (slowLabel) { slowLabel = false; Label.Assembler.getAssembler(lblWin).updateRenderData(lblWin); } if (slowLoc) { slowLoc = false; new LocalizableLabel().onLoad(); } (listeners.director_after_update || (() => {}))(); now += 1; }, mainLoop() { throw new Error("3.x never calls mainLoop"); }, getScene: () => scene },
   game: { frameRate: 60 },
   macro: {},
 };
@@ -128,6 +142,8 @@ assert.strictEqual(P.live().gpuMb, 1, "deleted texture is freed");
 for (let i = 1; i <= 12; i += 1) {
   P.mark("spin-" + i);
   if (i === 3) { advance(500); slowUpdate = true; }
+  if (i === 5) { advance(500); slowLabel = true; }
+  if (i === 7) { advance(500); slowLoc = true; }
   advance(2000);
   P.mark("gap");
   advance(200);
@@ -175,6 +191,19 @@ assert.strictEqual(slow.work.comps[0][0], "SlotReelController.update", "slow com
 const hit = ev.findings.find((f) => f.stage === "spin-3" && /^hitch-/.test(f.id));
 assert.ok(hit && hit.cause && hit.cause.kind === "component" && hit.cause.ms <= hit.value, "stall cause attributed to the component");
 assert.ok(!ev.findings.some((f) => f.stage === "idle" && f.cause), "no cause for the idle long task without detail");
+const lblHit = ev.findings.find((f) => f.stage === "spin-5" && /^hitch-/.test(f.id));
+assert.ok(lblHit && lblHit.cause && lblHit.cause.kind === "label", "label layout named as the cause");
+assert.deepStrictEqual(
+  (({ path, n, font, fontName, cache, overflow, size, chars }) => ({ path, n, font, fontName, cache, overflow, size, chars }))(lblHit.cause.top[0]),
+  { path: "lbl_win", n: 1, font: "system", fontName: "Arial", cache: "NONE", overflow: "SHRINK", size: 40, chars: 11 },
+  "label node, font and settings"
+);
+const locHit = ev.findings.find((f) => f.stage === "spin-7" && /^hitch-/.test(f.id));
+assert.ok(locHit && locHit.cause && locHit.cause.kind === "component" && locHit.cause.name === "localizable.label.onLoad", "localisation component is the cause");
+assert.ok(locHit.labels && locHit.labels.top[0].path === "txt_title" && locHit.labels.ms >= 22, "label part of the component named beside it");
+assert.ok(!/PLAYER-8848|Title 1/.test(JSON.stringify(ev) + JSON.stringify(s)), "label text never kept");
+const html = fs.readFileSync(path.join(runDir, "report.html"), "utf8");
+assert.ok(html.includes("lbl_win") && html.includes("overflow SHRINK"), "report names the labels on the worst spin stall");
 assert.ok(fs.readFileSync(path.join(runDir, "report.html"), "utf8").includes("SlotReelController.update"), "report shows the cause");
 console.log(digest.trim());
 console.log(`\nok ${ticks} ticks, run at ${runDir}`);

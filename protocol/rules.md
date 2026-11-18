@@ -23,6 +23,7 @@
 依序判斷：
 
 - `loading-burst`：這一幀收完 2 個以上下載，且資源解析（`cc.deserialize`、`JSON.parse`）加貼圖上傳的時間過半。寫同時下載數、收完的檔名、解析與上傳各多久，最大一張貼圖 1 MB 以上就寫尺寸與檔名。
+- `label`：Label 排版與繪字（各版本都收在 assembler 的 `updateRenderData`：2.4 的 onEnable 和 RenderFlow、3.x 的 `updateRenderData`）時間過半。這段時間包在元件和繪製時間裡，所以排在 `component`、`render`、`texture-upload` 前面。寫次數和時間，再依去掉數字的節點路徑分組列前三組：個數、時間、字型種類（系統字、TTF、BMFont）與名稱、字級、`cacheMode`、`overflow`、最長字數、自動換行、描邊或陰影。不記 Label 的文字內容。
 - `texture-upload`：`texImage2D` 等上傳時間過半。寫張數、MB、最大一張的尺寸與檔名（圖片來源有網址才有）。
 - `deserialize`：資源解析時間過半。
 - `shader-compile`：shader 編譯與連結時間過半。
@@ -31,6 +32,8 @@
 - `render`：引擎繪製時間扣掉上傳和 shader 後仍過半，而且有 draw call 數。
 - `layout`：重疊的 LoAF 樣式與版面時間過半。
 - `script`：重疊的 LoAF 裡最長的腳本過半，檔案不是引擎檔，也不是引擎每幀的 rAF 回呼。函式名可讀才寫函式名；呼叫來源（事件、回呼、Promise、腳本載入）一併寫。
+
+原因不是 `label`、但 Label 時間佔該次 `dt` 四分之一以上時，finding 的 `labels` 寫同樣的明細，報告接在改法後面（「其中 Label 更新…」）。Label 計時跟元件計時一起受 0.3 ms 上限管，關掉就不量。
 
 不歸因：GC、非同步音訊解碼、量不到 `work` 的舊探針。`source` 是 `longtask` 而且和某個幀 hitch 時間重疊時，視為同一次停頓，只留幀那筆。
 

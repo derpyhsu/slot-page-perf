@@ -183,6 +183,9 @@ function stallCause(h, loafs) {
     }
     if (w.shMs >= half && w.shN) c.push({ kind: "shader-compile", ms: w.shMs, n: w.shN });
     if (w.instMs >= half && w.instN) c.push({ kind: "instantiate", ms: w.instMs, n: w.instN, name: READABLE(w.instTop) ? w.instTop : undefined });
+    // Label time sits inside component and render time, so it outranks them: it names the nodes.
+    const lb = w.lbl;
+    if (lb && lb.ms >= half && lb.top && lb.top.length) c.push({ kind: "label", ms: lb.ms, n: lb.n, top: lb.top, rank: 1 });
     const top = (w.comps || [])[0];
     if (top && top[1] >= half && READABLE(top[0].replace(/\.(update|lateUpdate)$/, ""))) c.push({ kind: "component", ms: top[1], name: top[0] });
     const heavy = (w.texMs || 0) + (w.shMs || 0);
@@ -208,6 +211,27 @@ function stallCause(h, loafs) {
   return best;
 }
 
+// Labels a stall spent time on, as measured: folded node path, how many, time, font and settings.
+const FONT_KIND = { system: "系統字", ttf: "TTF", bmfont: "BMFont" };
+function labelList(top) {
+  return (top || []).map((g) => {
+    const bits = [`${g.n} 個 ${round(g.ms)} ms`, `${FONT_KIND[g.font] || g.font}${g.fontName ? ` ${g.fontName}` : ""}${g.size ? ` ${g.size}px` : ""}`, `cacheMode ${g.cache}`, `overflow ${g.overflow}`];
+    if (g.chars != null) bits.push(`最長 ${g.chars} 字`);
+    if (g.wrap) bits.push("自動換行");
+    if (g.effects) bits.push(g.effects.join("+"));
+    return `${g.path}（${bits.join("，")}）`;
+  }).join("；");
+}
+// Label time worth naming on a stall whose cause is something else, or that has no cause.
+function labelNote(h) {
+  const lb = h.work && h.work.lbl;
+  if (!lb || !(h.dt > 0) || lb.ms < h.dt * 0.25 || !lb.top || !lb.top.length || lb.ms > h.dt * 1.1) return undefined;
+  return lb;
+}
+function labelText(lb, dt) {
+  return `Label 更新 ${lb.n} 次，花 ${round(lb.ms)} ms（佔 ${Math.round((lb.ms / dt) * 100)}%）：${labelList(lb.top)}`;
+}
+
 // Text for a measured cause: what was measured, and where to look. Facts only.
 function causeText(c) {
   if (!c) return null;
@@ -221,6 +245,7 @@ function causeText(c) {
     case "shader-compile": return { fact: `編譯 shader ${c.n} 次，花 ${c.ms} ms（佔 ${pct}）`, look: "從這一刻第一次出現的材質或特效查" };
     case "instantiate": return { fact: `cc.instantiate ${c.n} 次，花 ${c.ms} ms（佔 ${pct}）${c.name ? `，最慢的是 ${c.name}` : ""}`, look: c.name ? `從 ${c.name} 的建立查` : "從這一刻建立的 prefab 查" };
     case "component": return { fact: `${c.name} 花 ${c.ms} ms（佔 ${pct}）`, look: `從 ${c.name} 查` };
+    case "label": return { fact: `Label 更新 ${c.n} 次，花 ${c.ms} ms（佔 ${pct}）：${labelList(c.top)}`, look: `從 ${c.top.map((g) => g.path).join("、")} 查` };
     case "render": return { fact: `繪製花 ${c.ms} ms（佔 ${pct}），draw call ${c.draws}`, look: "從這一幀畫的內容查" };
     case "layout": return { fact: `樣式與版面計算花 ${c.ms} ms（佔 ${pct}）`, look: "從 canvas 以外的 DOM 變動查" };
     case "script": return { fact: `${c.file}${c.fn ? ` 的 ${c.fn}` : ""}（${c.via}${c.invoker ? `：${c.invoker}` : ""}）花 ${c.ms} ms（佔 ${pct}）`, look: `從 ${c.file}${c.fn ? ` 的 ${c.fn}` : ""} 查` };
@@ -248,7 +273,8 @@ function findings(ev, T) {
       if (h.inFlight > 0) id = "hitch-network";
       else if (h.source === "longtask" || (h.cpu != null && h.cpu >= 0.8 * h.dt)) id = "hitch-main-thread";
       const cause = stallCause(h, loafs);
-      out.push({ id, stage: s.name, t: h.t, value: h.dt, cpu: h.cpu == null ? null : h.cpu, urls: h.urls && h.urls.length ? h.urls : undefined, cause: cause || undefined, work: h.work || undefined });
+      const labels = cause && cause.kind === "label" ? undefined : labelNote(h);
+      out.push({ id, stage: s.name, t: h.t, value: h.dt, cpu: h.cpu == null ? null : h.cpu, urls: h.urls && h.urls.length ? h.urls : undefined, cause: cause || undefined, labels, work: h.work || undefined });
     });
   });
 
@@ -374,4 +400,4 @@ function findings(ev, T) {
   return { findings: out, groups: gs, softwareGpu: soft };
 }
 
-module.exports = { findings, stallCause, causeText, groups, groupOf, heapFit, SOFTWARE_GPU };
+module.exports = { findings, stallCause, causeText, labelText, groups, groupOf, heapFit, SOFTWARE_GPU };

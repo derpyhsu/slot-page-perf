@@ -18,7 +18,7 @@ const cfg = thresholds.scoring;
 const ev = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
 
 const { stageFrames } = require("./frames");
-const { heapFit, causeText } = require("./findings");
+const { heapFit, causeText, labelText } = require("./findings");
 
 const NOT_GAME = new Set(["boot", "loading", "splash", "enter", "game-ready", "gap"]);
 const stages = ev.stages || [];
@@ -640,6 +640,10 @@ function findingRows() {
   // Only the hitch classification is measured. A texture upload in the same bucket happened at the
   // same time; it is reported that way, not as the cause.
   const stallFix = (worst) => {
+    const lt = worst.labels ? `其中${labelText(worst.labels, worst.value)}。` : "";
+    return stallBase(worst) + lt;
+  };
+  const stallBase = (worst) => {
     const ct = causeText(worst.cause);
     if (ct) return `${ct.fact}。${ct.look}。`;
     const upload = uploadMbAt(worst.t, worst.value);

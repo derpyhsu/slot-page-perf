@@ -16,7 +16,7 @@
         "urlPath": { "type": "string", "description": "Path only. Never include the query string." }
       }
     },
-    "timeline": { "type": "object", "description": "Time series from summary().timeline. Bucket and long task field names are listed inside. loafs are Long Animation Frames (fields in loafFields, loafScriptFields); componentTiming says whether component update timing ran. Stage hitches carry work: per-frame update/render split, top components, texture, shader and instantiate time." },
+    "timeline": { "type": "object", "description": "Time series from summary().timeline. Bucket and long task field names are listed inside. loafs are Long Animation Frames (fields in loafFields, loafScriptFields); componentTiming says whether component update timing ran. Stage hitches carry work: per-frame update/render split, top components, texture, shader and instantiate time, and lbl: label layout time with the top label groups by folded node path, font and settings (never the text)." },
     "cocos": {
       "type": "object",
       "properties": { "snapshots": { "type": "array", "description": "Results of __slotPerf.cocos() in stage order." } }
