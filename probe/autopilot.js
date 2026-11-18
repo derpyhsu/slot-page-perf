@@ -495,6 +495,20 @@
         log("map refused " + bad.join(","));
         continue;
       }
+      // Any other point on the spin button presses spin instead: an unplanned spin on the bet.
+      // Same named node as the spin point, or within a finger of it when the engine names none.
+      var spinNode = nodeNear(m.spin);
+      var onSpin = ["menu", "history", "rules", "turbo", "buy"].filter(function (k) {
+        if (!m[k]) return false;
+        var b = nodeNear(m[k]);
+        if (b && spinNode) return key(b) === key(spinNode);
+        return Math.sqrt(Math.pow(m[k].x - m.spin.x, 2) + Math.pow(m[k].y - m.spin.y, 2)) < 40;
+      });
+      if (onSpin.length) {
+        note = "refused " + onSpin.join(", ") + ": that point is the spin button. Pass null for anything not on the main screen; history and rules inside the menu are asked for after the menu opens. " + note;
+        log("map refused on spin " + onSpin.join(","));
+        continue;
+      }
       // buy is the one point allowed on a buy control, and only on one: a named node there must read like buy.
       var bn = m.buy && nodeNear(m.buy);
       if (bn && !hit(bn, B.buy)) {
