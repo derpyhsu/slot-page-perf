@@ -53,7 +53,12 @@ if (fs.existsSync(notesPath)) {
 }
 const s = raw.summary || raw;
 
-const stages = s.stages || [];
+// Spins the autopilot saw not start (nothing on screen changed from the press until it settled)
+// are not spins: they become gap, and the report says which.
+const notStarted = new Set(raw.notStarted || []);
+const stages = (s.stages || []).map((x) => (notStarted.has(x.name) ? Object.assign({}, x, { name: "gap", notStarted: x.name }) : x));
+const spinWord = (n) => (/^turbo-/.test(n) ? `加速第 ${n.slice(6)} 轉` : `第 ${n.replace(/^spin-/, "")} 轉`);
+const notStartedNote = notStarted.size ? [`${[...notStarted].map(spinWord).join("、")}按下後畫面沒變，沒轉起來，沒算進 spin`] : [];
 const spins = stages
   .filter((x) => /^(spin|turbo)-\d+$/.test(x.name))
   .map((x) => Object.assign({}, x, { tags: x.wallMs > 12000 ? ["long"] : [] }));
@@ -62,6 +67,7 @@ const coverage = Object.assign({}, raw.coverage || {});
 if (raw.entry && raw.entry.result) coverage.entry = raw.entry.result;
 if (s.channels && !s.channels.engineCpu) coverage.cpu = coverage.cpu || `frameLoop ${s.channels.frameLoop}: per-frame CPU unavailable`;
 if (s.channels && !s.channels.gpuTimer) coverage.gpuTime = "unavailable: no GPU timer extension";
+if (notStarted.size) coverage.notStarted = [...notStarted].join(", ");
 
 const ev = {
   schemaVersion: 1,
@@ -90,7 +96,7 @@ const ev = {
   findings: [],
   summary: notes.summary,
   issues: notes.issues,
-  missing: typeof notes.missing === "string" ? [notes.missing] : notes.missing,
+  missing: notStartedNote.length ? [].concat(typeof notes.missing === "string" ? [notes.missing] : notes.missing || [], notStartedNote) : typeof notes.missing === "string" ? [notes.missing] : notes.missing,
 };
 Object.keys(ev).forEach((k) => ev[k] === undefined && delete ev[k]);
 Object.keys(ev.game).forEach((k) => ev.game[k] === undefined && delete ev.game[k]);

@@ -30,6 +30,7 @@
     entryPressed: {},
     gc: [],
     census: [],
+    notStarted: [],
     resume: null,
     started: 0
   };
@@ -572,6 +573,11 @@
     var longMs = Math.max(S.nudgeAfterMs || 30000, median * (((CFG.heap || {}).featureFactor) || 5));
     if (!times.length) longMs = Math.min(longMs, 15000);
     var asked = false;
+    // Nothing on screen changing from the press until it settles means the press did not start a
+    // spin (a win-line show can eat it). Such a stage is not a spin; it is not pressed again.
+    var texts0 = b.texts;
+    var draws0 = P.live().draws;
+    var changed = false;
     P.mark(name);
     var t0 = now();
     log("press spin");
@@ -597,6 +603,7 @@
         lastDrawChange = now();
       }
       if (!sb.ready) sawBusy = true;
+      if (!sb.ready || sb.texts !== texts0 || (draws != null && draws0 != null && Math.abs(draws - draws0) > Math.max(3, draws0 * 0.15))) changed = true;
       var drawsBack = st.idleDraws == null || draws == null || Math.abs(draws - st.idleDraws) <= Math.max(3, st.idleDraws * 0.15);
       // Some spin buttons never disable and the idle glow changes the draw count. Then a screen
       // whose texts and draw calls have both held still for a few seconds has settled.
@@ -631,8 +638,14 @@
       }
     }
     var took = now() - t0;
-    st.spinTimes.push(took);
     P.mark("gap");
+    if (!changed) {
+      st.notStarted.push(name);
+      log(name + " did not start: nothing changed after the press");
+      await sleep(300);
+      return true;
+    }
+    st.spinTimes.push(took);
     if (took > 12000) log(name + " long " + took + "ms (feature or big win?)");
     st.spins += 1;
     await sleep(300);
@@ -945,7 +958,7 @@
     // At needs "buy": do not buy (the balance is short, or the screen is not a plain buy).
     skip: function () { return resume({ skip: true }); },
     result: function () {
-      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, feature: st.feature || null, log: st.log };
+      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, notStarted: st.notStarted, feature: st.feature || null, log: st.log };
     }
   };
 

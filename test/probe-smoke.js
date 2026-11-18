@@ -233,6 +233,14 @@ for (const st of ["spin-9", "spin-11"]) {
   assert.ok(h24 && h24.cause && h24.cause.kind === "label" && h24.cause.top[0].path === "lbl_jackpot", "2.4 label assembler timed on " + st);
 }
 assert.ok(s.timeline.componentTiming.labelAssemblers >= 2, "3.x and 2.4 label assemblers wrapped");
+// A spin the autopilot saw not start is left out of the spins and named in the report.
+const runDir2 = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+fs.writeFileSync(path.join(runDir2, "raw.json"), JSON.stringify(Object.assign({}, raw, { notStarted: ["spin-2"] })));
+execFileSync(process.execPath, [path.join(root, "report", "build.js"), runDir2], { encoding: "utf8" });
+const ev2 = JSON.parse(fs.readFileSync(path.join(runDir2, "evidence.json"), "utf8"));
+assert.ok(!ev2.stages.some((x) => x.name === "spin-2") && ev2.fps.some((r) => r.group === "spin" && r.stages === 11), "unstarted spin left out of the spins");
+assert.ok(ev2.coverage.notStarted === "spin-2" && fs.readFileSync(path.join(runDir2, "report.html"), "utf8").includes("第 2 轉按下後畫面沒變"), "report names the unstarted spin");
+assert.ok(ev.missing === undefined, "nothing added to missing when every spin started");
 assert.ok(!/PLAYER-8848|Title 1|88,888/.test(JSON.stringify(ev) + JSON.stringify(s)), "label text never kept");
 const html = fs.readFileSync(path.join(runDir, "report.html"), "utf8");
 assert.ok(html.includes("lbl_win") && html.includes("overflow SHRINK"), "report names the labels on the worst spin stall");
