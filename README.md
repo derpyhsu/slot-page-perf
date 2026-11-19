@@ -48,7 +48,7 @@ node report/build.js runs/<run>
 
 跑分只說到「哪一段、哪一類問題」。要往下查某一條 finding，用 `skill/slot-perf-drill/SKILL.md`：一組可以組合的小工具，每個一次呼叫回答一個問題、結果存成檔案。
 
-- `drill/page.js`：在遊戲頁面載入後有 `__slotDrill`。`drawcalls()` 逐層暫時隱藏子樹、量 draw call 少多少，找出最多的那一棵和裡面在哪裡斷批、哪些在畫面外還在畫；`fps()` 給填充率測試用。量完把每個值還原，不改遊戲檔案。
+- `drill/page.js`：在遊戲頁面載入後有 `__slotDrill`。`drawcalls()` 逐層暫時隱藏子樹、量 draw call 少多少，找出最多的那一棵和裡面在哪裡斷批、哪些在畫面外還在畫；`spineCache()` 列出 Spine 逐幀快取在哪個骨架、哪個動畫、幾幀、約多少 MB；`fps()` 給填充率測試用。量完把每個值還原，不改遊戲檔案。
 - `drill/heap.js`：兩張 heap snapshot 的類別比對、持有鏈、NodePool 獨佔記憶體、Spine 骨架持有者。只印類名、屬性名、數量和大小。
 
 只做 Cocos 通用的事實，不判斷要不要改。

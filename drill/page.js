@@ -185,17 +185,41 @@
   // 2.4 RenderComponent._checkBacth flushes when the first material's getHash() or the node's
   // culling mask differs from the batch in progress. Mask, Graphics and Spine run their own
   // assemblers and are listed as their own kind. 3.x is approximated by material and texture.
-  function texName(comp) {
+  // The texture a component draws with: an identity for comparing, and a label a person can find.
+  // 2.4 packs small sprites into canvas-backed dynamic atlas pages (no file), keeping the source
+  // texture in spriteFrame._original; TTF and system-font labels draw from their own canvas.
+  var texIds = typeof WeakMap === "function" ? new WeakMap() : null;
+  var texSeq = 0;
+  function texId(tex) {
+    if (!tex || !texIds) return null;
+    var id = texIds.get(tex);
+    if (!id) { texSeq += 1; id = texSeq; texIds.set(tex, id); }
+    return id;
+  }
+  function fileOf(tex) {
+    if (!tex) return null;
+    var url = tex.nativeUrl || tex._nativeUrl || tex.url || "";
+    if (typeof url === "string" && url && url.indexOf("data:") !== 0) return url.split("?")[0].split("#")[0].split("/").pop();
+    return tex.name || tex._name || null;
+  }
+  function texInfo(comp) {
     try {
       var mat = comp._materials && comp._materials[0];
-      var tex = mat && mat.getProperty && mat.getProperty("texture");
-      if (!tex && comp.spriteFrame) tex = comp.spriteFrame._texture || (comp.spriteFrame.getTexture && comp.spriteFrame.getTexture()) || comp.spriteFrame.texture;
-      if (!tex) return null;
-      var url = tex.nativeUrl || tex._nativeUrl || tex.url || "";
-      if (typeof url === "string" && url && url.indexOf("data:") !== 0) return url.split("?")[0].split("#")[0].split("/").pop();
-      return tex.name || tex._name || (tex._uuid ? "uuid:" + String(tex._uuid).slice(0, 8) : "(canvas)");
-    } catch (e) { return null; }
+      var frame = comp.spriteFrame || comp._spriteFrame || null;
+      var tex = (mat && mat.getProperty && mat.getProperty("texture")) || (frame && (frame._texture || (frame.getTexture && frame.getTexture()) || frame.texture)) || null;
+      if (!tex) return { id: null, label: null };
+      var id = texId(tex);
+      var file = fileOf(tex);
+      if (file) return { id: id, label: file };
+      var fname = frame && (frame.name || frame._name);
+      var orig = frame && frame._original && frame._original._texture;
+      if (orig) return { id: id, label: "動態合圖#" + id + "（" + (fname || "?") + "，原圖 " + (fileOf(orig) || "?") + "）" };
+      if (/Label/.test(className(comp))) return { id: id, label: "文字貼圖#" + id };
+      if (/Skeleton|dragonBones|Armature/i.test(className(comp))) return { id: id, label: "Spine " + (skeletonName(comp.skeletonData || comp.dragonAsset) || "?") };
+      return { id: id, label: (fname ? fname + " " : "") + "canvas#" + id };
+    } catch (e) { return { id: null, label: null }; }
   }
+  function texName(comp) { return texInfo(comp).label; }
   function renderKey(comp, node) {
     try {
       if (!V3) {
@@ -205,7 +229,7 @@
       }
       var m3 = comp.getRenderMaterial ? comp.getRenderMaterial(0) : comp.customMaterial || comp.sharedMaterial;
       var id = m3 ? (m3.hash || m3._hash || (m3.effectName || "") + (m3._uuid || "")) : "";
-      return id + "|" + (texName(comp) || "") + "|" + (node.layer != null ? node.layer : "");
+      return id + "|" + (texInfo(comp).id || "") + "|" + (node.layer != null ? node.layer : "");
     } catch (e) { return null; }
   }
   function kindOf(comp) {
@@ -238,12 +262,13 @@
       var c = renderComp(node);
       if (c && c.enabled !== false && (c.enabledInHierarchy !== false)) {
         comps += 1;
-        var cur = { path: fold(nodePath(node)), kind: kindOf(c), key: renderKey(c, node), tex: texName(c) };
+        var ti = texInfo(c);
+        var cur = { path: fold(nodePath(node)), kind: kindOf(c), key: renderKey(c, node), tex: ti.label, texId: ti.id };
         var own = cur.kind === "mask" || cur.kind === "graphics" || cur.kind === "spine" || cur.kind === "dragonbones";
         var reason = null;
         if (!prev) reason = "start";
         else if (own || prev.own) reason = own ? cur.kind : prev.kind;
-        else if (cur.key == null || cur.key !== prev.key) reason = cur.kind === "label-own-texture" ? "label-own-texture" : cur.tex !== prev.tex ? "texture" : "material";
+        else if (cur.key == null || cur.key !== prev.key) reason = cur.kind === "label-own-texture" ? "label-own-texture" : cur.texId !== prev.texId ? "texture" : "material";
         if (reason) {
           batches += 1;
           if (prev) {
@@ -265,6 +290,12 @@
     return { renderers: comps, batches: batches, pairs: list.slice(0, limit || 8), pairKinds: list.length };
   }
 
+  // How far the baselines measured during one call spread: a cut smaller than this may be animation.
+  function noiseOf(xs) {
+    if (!xs.length) return 0;
+    return Math.max.apply(null, xs) - Math.min.apply(null, xs);
+  }
+
   // ---------- drawcalls ----------
   async function drawcalls(opts) {
     opts = opts || {};
@@ -282,6 +313,9 @@
       start = [found];
     }
     var base = median(await sample(frames, 1, 6000));
+    // Animation moves the count while a group is measured, so each group is compared with the
+    // count right before it was hidden; how far those baselines spread is the noise to beat.
+    var pres = [base];
     if (base == null) return { status: "no frames drawn (page hidden or paused?)", counter: COUNTER };
     var touched = [];
     var levels = [];
@@ -299,6 +333,8 @@
           var ns = groups[g].nodes;
           // Read before hiding: the game may remove or rebuild the node while it is measured.
           var info = { path: fold(nodePath(ns[0])), children: ns.reduce(function (s, x) { return s + kids(x).length; }, 0), offscreen: offscreen(ns), prefab: prefabOf(ns[0]) || undefined };
+          var pre = median(await sample(frames, 1, 6000));
+          if (pre != null) pres.push(pre);
           var mark = touched.length;
           ns.forEach(function (n) { hide(n, touched); });
           var hid = median(await sample(frames, 2, 6000));
@@ -310,7 +346,7 @@
             name: groups[g].name,
             path: info.path,
             n: ns.length,
-            draws: hid == null ? null : base - hid,
+            draws: hid == null || pre == null ? null : pre - hid,
             children: info.children,
             offscreen: info.offscreen,
             prefab: info.prefab,
@@ -321,7 +357,7 @@
         rows.sort(function (a, b) { return (b.draws || 0) - (a.draws || 0); });
         levels.push({ under: selName, groups: rows.length, rows: rows.slice(0, opts.top || 6).map(function (x) { var o = Object.assign({}, x); delete o._nodes; return o; }) });
         var best = rows[0];
-        if (!best || best.draws == null || best.draws < Math.max(1, minShare * base) || !best.children || partial === "time budget reached") break;
+        if (!best || best.draws == null || best.draws < Math.max(1, minShare * base, noiseOf(pres)) || !best.children || partial === "time budget reached") break;
         selection = best._nodes;
         selName = best.path + (best.n > 1 ? " ×" + best.n : "");
       }
@@ -330,6 +366,8 @@
       if (left.contended.length || left.notRestored.length) check = (check || []).concat(left.contended, left.notRestored);
     }
     var after = median(await sample(frames, 1, 6000));
+    if (after != null) pres.push(after);
+    var noise = noiseOf(pres);
     var br = batchBreaks(selection, opts.pairs || 8);
     var out = {
       status: partial ? "partial" : "ok",
@@ -340,6 +378,9 @@
       frames: frames,
       base: base,
       baseAfter: after,
+      baseRange: [Math.min.apply(null, pres), Math.max.apply(null, pres)],
+      noise: noise,
+      moving: noise > Math.max(2, 0.05 * base),
       focus: selName,
       levels: levels,
       breaks: br,
@@ -349,6 +390,103 @@
     };
     levels.forEach(function (l) { l.rows.forEach(function (x) { if (x.offscreen === true && x.draws > 0) out.offscreenDrawn.push({ path: x.path, n: x.n, draws: x.draws }); }); });
     out.summary = summarize(out);
+    api.last = out;
+    return out;
+  }
+
+  // ---------- spine cache ----------
+  // Spine in SHARED_CACHE or PRIVATE_CACHE mode keeps every frame of every animation it has played
+  // (2.4 and 3.x sp.SkeletonCache: _skeletonCache[skeletonData uuid].animationsCache[name].frames).
+  // Per skeleton data and animation: frames kept and their typed-array bytes, plus how many
+  // components use each mode. Arrays of plain objects in a frame are estimated, so MB is about.
+  var CACHE_MODES = ["realtime", "shared", "private"];
+  function typedBytes(x) { return x && typeof x.byteLength === "number" ? x.byteLength : 0; }
+  function frameBytes(f) {
+    if (!f || !f.vertices) return 0;
+    var b = typedBytes(f.vertices) + typedBytes(f.indices);
+    if (f.uintVert && f.uintVert.buffer !== f.vertices.buffer) b += typedBytes(f.uintVert);
+    b += ((f.segments && f.segments.length) || 0) * 48 + ((f.colors && f.colors.length) || 0) * 48 + ((f.boneInfos && f.boneInfos.length) || 0) * 120;
+    return b;
+  }
+  function skeletonName(sd) {
+    if (!sd) return null;
+    return String(sd.name || sd._name || fileOf(sd) || (sd._uuid ? "uuid:" + String(sd._uuid).slice(0, 8) : "?")).slice(0, 60);
+  }
+  function spineCache(opts) {
+    opts = opts || {};
+    var scene = cc.director.getScene();
+    var names = {};
+    var uses = {};
+    var caches = [];
+    var walk = function (node) {
+      var comps = node._components || node.components || [];
+      for (var i = 0; i < comps.length; i += 1) {
+        var c = comps[i];
+        if (!/sp\.Skeleton|^Skeleton$/.test(className(c))) continue;
+        var sd = c.skeletonData;
+        var name = skeletonName(sd);
+        if (!name) continue;
+        if (sd && sd._uuid) names[sd._uuid] = name;
+        var mode = c._cacheMode != null ? c._cacheMode : c.defaultCacheMode || 0;
+        var u = uses[name] || (uses[name] = { realtime: 0, shared: 0, private: 0, shown: 0 });
+        u[CACHE_MODES[mode] || "realtime"] += 1;
+        if (shown(node) && node.activeInHierarchy !== false) u.shown += 1;
+        var inst = c._skeletonCache;
+        if (inst && caches.every(function (x) { return x.inst !== inst; })) caches.push({ inst: inst, owner: mode === 2 ? "private" : "shared" });
+      }
+      kids(node).forEach(walk);
+    };
+    walk(scene);
+    var rows = {};
+    var pooled = 0;
+    caches.forEach(function (x) {
+      var map = x.inst._skeletonCache || {};
+      Object.keys(map).forEach(function (uuid) {
+        var entry = map[uuid];
+        var name = names[uuid] || "uuid:" + String(uuid).slice(0, 8);
+        var key = name + " · " + x.owner;
+        var r = rows[key] || (rows[key] = { skeleton: name, cache: x.owner, caches: 0, animations: {}, frames: 0, bytes: 0 });
+        r.caches += 1;
+        var anims = (entry && entry.animationsCache) || {};
+        Object.keys(anims).forEach(function (a) {
+          var ac = anims[a];
+          var fr = (ac && ac.frames) || [];
+          var n = 0, b = 0;
+          for (var k = 0; k < fr.length; k += 1) { var fb = frameBytes(fr[k]); if (fb) { n += 1; b += fb; } }
+          var an = r.animations[a] || (r.animations[a] = { animation: String(a).slice(0, 60), frames: 0, bytes: 0, complete: 0, caches: 0 });
+          an.frames += n;
+          an.bytes += b;
+          an.caches += 1;
+          if (ac && ac.isCompleted) an.complete += 1;
+          r.frames += n;
+          r.bytes += b;
+        });
+      });
+      var pool = x.inst._animationPool || {};
+      Object.keys(pool).forEach(function (k) { ((pool[k] && pool[k].frames) || []).forEach(function (f) { pooled += frameBytes(f); }); });
+    });
+    var mb = function (b) { return Math.round((b / 1048576) * 100) / 100; };
+    var list = Object.keys(rows).map(function (k) {
+      var r = rows[k];
+      var anims = Object.keys(r.animations).map(function (a) { var x = r.animations[a]; return { animation: x.animation, frames: x.frames, mb: mb(x.bytes), complete: x.complete, caches: x.caches }; }).sort(function (a, b) { return b.mb - a.mb; });
+      return { skeleton: r.skeleton, cache: r.cache, caches: r.caches, animations: anims.length, frames: r.frames, mb: mb(r.bytes), top: anims.slice(0, opts.top || 8), uses: uses[r.skeleton] || null };
+    }).sort(function (a, b) { return b.mb - a.mb; });
+    var total = list.reduce(function (t, x) { return t + x.mb; }, 0);
+    var out = {
+      status: caches.length ? "ok" : "no cached Spine in the scene",
+      engine: String(cc.ENGINE_VERSION || ""),
+      totalMb: Math.round(total * 100) / 100,
+      pooledMb: mb(pooled),
+      skeletons: list.slice(0, opts.limit || 20),
+      uses: uses,
+      note: "MB counts the typed arrays of each cached frame and estimates its small object arrays. Components outside the scene (pooled, removed) are not walked, but their shared cache is counted when any shared component is in the scene."
+    };
+    out.summary = [];
+    out.summary.push("Spine 逐幀快取合計約 " + out.totalMb + " MB" + (out.pooledMb ? "（另有回收池 " + out.pooledMb + " MB）" : "") + "，" + list.length + " 組骨架。");
+    list.slice(0, 5).forEach(function (x) {
+      var u = x.uses;
+      out.summary.push(x.skeleton + "（" + (x.cache === "shared" ? "SHARED_CACHE" : "PRIVATE_CACHE ×" + x.caches) + "）：" + x.animations + " 個動畫、" + x.frames + " 幀，約 " + x.mb + " MB" + (u ? "；場景裡 realtime " + u.realtime + "、shared " + u.shared + "、private " + u.private + " 個元件" : "") + (x.top.length ? "；最大 " + x.top.slice(0, 3).map(function (a) { return a.animation + " " + a.frames + " 幀 " + a.mb + " MB"; }).join("、") : ""));
+    });
     api.last = out;
     return out;
   }
@@ -383,7 +521,8 @@
   var REASON = { texture: "貼圖不同", material: "材質不同", "label-own-texture": "Label 沒開快取，自己一張貼圖", mask: "遮罩", graphics: "Graphics", spine: "Spine（沒開合批）", dragonbones: "DragonBones" };
   function summarize(o) {
     var lines = [];
-    lines.push("基準每幀 " + o.base + " 個 draw call（量完 " + o.baseAfter + "），" + (o.method === "opacity" ? "以 opacity 0 暫時隱藏" : "以 active=false 暫時關掉") + "量差值。");
+    lines.push("基準每幀 " + o.base + " 個 draw call（量完 " + o.baseAfter + "），" + (o.method === "opacity" ? "以 opacity 0 暫時隱藏" : "以 active=false 暫時關掉") + "，每組都跟隱藏前一刻的基準比。");
+    if (o.moving) lines.push("畫面在動：量的期間基準在 " + o.baseRange[0] + "–" + o.baseRange[1] + " 之間，" + o.noise + " 個以內的差值可能只是動畫；只往下查比這大的組。");
     o.levels.forEach(function (l, i) {
       var top = l.rows.filter(function (x) { return x.draws > 0; }).slice(0, 3).map(function (x) {
         return x.path + (x.n > 1 ? "（" + x.n + " 個）" : "") + " −" + x.draws + (x.offscreen === true ? "，在畫面外" : "") + (x.prefab ? "，prefab " + x.prefab : "");
@@ -407,6 +546,7 @@
     last: null,
     drawcalls: drawcalls,
     fps: fps,
+    spineCache: spineCache,
     // Batch breaks of one subtree (cc.find path) or the whole scene, without hiding anything.
     batchBreaks: function (root) { var n = root && cc.find ? cc.find(root) : cc.director.getScene(); api.last = n ? batchBreaks([n], 12) : null; return api.last; }
   };
