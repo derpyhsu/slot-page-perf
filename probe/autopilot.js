@@ -873,9 +873,18 @@
 
     st.phase = "spins";
     var normal = Math.min(st.plan, CFG.normalSpins || 24);
+    // Forced GCs after warm-up, halfway through the rest, and after the last spin. Two halves let
+    // the report tell a rise that keeps going from one that happened once (leak rule).
+    var warm = CFG.warmupSpins || 5;
+    var mid = warm + Math.floor((st.plan - warm) / 2);
+    if (mid - warm < 2 || st.plan - mid < 2) mid = -1;
+    var gcAfter = async function (n) {
+      if (n === warm) await gcPoint("after-warmup");
+      else if (n === mid) await gcPoint("mid");
+    };
     for (var i = 1; i <= normal; i += 1) {
       if (!(await oneSpin("spin-" + i))) break;
-      if (i === (CFG.warmupSpins || 5)) await gcPoint("after-warmup");
+      await gcAfter(i);
     }
     var rest = st.plan - st.spins;
     if (rest > 0) {
@@ -889,6 +898,7 @@
       }
       for (var j = 1; j <= rest; j += 1) {
         if (!(await oneSpin((turbo ? "turbo-" : "spin-") + (turbo ? j : normal + j)))) break;
+        await gcAfter(normal + j);
       }
       // Some toggles cycle through several speeds, so one more press may not turn it off.
       // A free game from the last spin hides the toggle, so wait until the game is calm.

@@ -77,7 +77,7 @@
     "audio": { "type": "object", "description": "decodeAudioData PCM bytes. status none means no decode was observed." },
     "findings": { "type": "array" },
     "coverage": { "type": "object" },
-    "gc": { "type": "array", "description": "Heap floor right after a forced full GC (heap snapshot): after-warmup, end, and after-feature when a free game was bought", "items": { "type": "object" } },
+    "gc": { "type": "array", "description": "Heap floor right after a forced full GC (heap snapshot): after-warmup, mid (halfway through the spins after warm-up), end, and after-feature when a free game was bought", "items": { "type": "object" } },
     "census": { "type": "array", "description": "Probe census after idle, after the panels (after-rules) and after each forced GC (after-warmup, end): nodes, paths as [folded path, nodes, active] (at most 1000), and made: instantiated nodes still referenced, by source name, split into inScene, detached and destroyed. Counts only.", "items": { "type": "object" } },
     "nodeGrowth": { "type": "object", "description": "Written by report/analyze.js: scene groups and instantiated nodes that grew from after-warmup to end." },
     "panelNodes": { "type": "object", "description": "Written by report/analyze.js: scene groups that grew from idle to after-rules." },

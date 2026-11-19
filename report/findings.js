@@ -232,6 +232,20 @@ function labelText(lb, dt) {
   return `Label 更新 ${lb.n} 次，花 ${round(lb.ms)} ms（佔 ${Math.round((lb.ms / dt) * 100)}%）：${labelList(lb.top)}`;
 }
 
+// Heap floors after the three forced GCs (after-warmup, mid, end). Each half's rise per spin; the
+// smaller one, taken over all the spins, is the rise both halves share (steadyMb).
+function gcHalves(ev) {
+  const gc = (ev.gc || []).filter((x) => x.mb != null);
+  const a = gc.find((x) => x.at === "after-warmup");
+  const m = gc.find((x) => x.at === "mid");
+  const b = gc.find((x) => x.at === "end");
+  if (!a || !m || !b || !(m.spins > a.spins) || !(b.spins > m.spins)) return null;
+  const d1 = m.mb - a.mb;
+  const d2 = b.mb - m.mb;
+  const rate = Math.max(0, Math.min(d1 / (m.spins - a.spins), d2 / (b.spins - m.spins)));
+  return { from: a.mb, mid: m.mb, to: b.mb, spins: [a.spins, m.spins, b.spins], deltas: [round(d1, 2), round(d2, 2)], ratePerSpin: rate, steadyMb: round(rate * (b.spins - a.spins), 2), totalMb: round(b.mb - a.mb, 2) };
+}
+
 // Node counts between two probe censuses (autopilot takeCensus): scene groups by folded path
 // that gained at least minNodes, and instantiated nodes still referenced after the forced GC,
 // by source name. A group missing from a capped list is skipped, not taken as zero.
@@ -379,7 +393,13 @@ function findings(ev, T) {
   const gc = (ev.gc || []).filter((x) => x.mb != null);
   const gcA = gc.find((x) => x.at === "after-warmup");
   const gcB = gc.find((x) => x.at === "end");
-  if (gcA && gcB && gcB.spins > gcA.spins) {
+  const halves = gcHalves(ev);
+  if (halves) {
+    // Three forced GCs: only the rise both halves share counts as staying growth. A rise in one
+    // half only (something loaded once and kept) is stated, not called a leak.
+    if (halves.steadyMb > T.leakMb) out.push({ id: "leak-suspected", status: "retained-after-gc", from: halves.from, mid: halves.mid, to: halves.to, delta: halves.steadyMb, halves: halves.deltas, forced: true });
+    else if (halves.totalMb > T.leakMb) out.push({ id: "heap-step", from: halves.from, mid: halves.mid, to: halves.to, delta: halves.totalMb, halves: halves.deltas, spins: halves.spins });
+  } else if (gcA && gcB && gcB.spins > gcA.spins) {
     // Both ends were taken right after a forced full GC, so the difference is what really stayed.
     const delta = gcB.mb - gcA.mb;
     if (delta > T.leakMb) out.push({ id: "leak-suspected", status: "retained-after-gc", from: gcA.mb, to: gcB.mb, delta, forced: true });
@@ -469,4 +489,4 @@ function findings(ev, T) {
   return { findings: out, groups: gs, softwareGpu: soft };
 }
 
-module.exports = { findings, stallCause, causeText, labelText, nodeGrowth, nodeGrowthText, panelNodes, groups, groupOf, heapFit, SOFTWARE_GPU };
+module.exports = { findings, gcHalves, stallCause, causeText, labelText, nodeGrowth, nodeGrowthText, panelNodes, groups, groupOf, heapFit, SOFTWARE_GPU };

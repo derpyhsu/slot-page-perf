@@ -209,6 +209,9 @@ function factRows(ev, m) {
     else notes.push("這輪沒看到大 GC");
     rows.push(["JS heap", `地板 ${Math.round(fit.from)} MB → ${Math.round(fit.to)} MB，每轉 ${fit.slopeMb >= 0 ? "+" : ""}${fit.slopeMb} MB`, notes.join("；")]);
   } else if (growth && growth.value != null) rows.push(["JS heap", `每轉 +${growth.value} MB`, ""]);
+  // Heap floors right after each forced GC: after warm-up, halfway, after the last spin.
+  const hv = ev.heapGc && ev.heapGc.halves;
+  if (hv) rows.push(["GC 後地板", `${Math.round(hv.from)} → ${Math.round(hv.mid)} → ${Math.round(hv.to)} MB`, `第 ${hv.spins[0]}–${hv.spins[1]} 轉 ${hv.deltas[0] >= 0 ? "+" : ""}${hv.deltas[0]} MB，第 ${hv.spins[1]}–${hv.spins[2]} 轉 ${hv.deltas[1] >= 0 ? "+" : ""}${hv.deltas[1]} MB`]);
   // Node counts after the two forced GCs (probe census), and what grew between them.
   if (ev.nodeGrowth) rows.push(["節點", `GC 後 ${ev.nodeGrowth.nodes[0]} → ${ev.nodeGrowth.nodes[1]} 個`, nodeGrowthText(ev.nodeGrowth)]);
   // The bought free game: forced-GC floor after it, against the floor after the last spin.
@@ -427,7 +430,7 @@ const HELP = {
   memory: {
     gpu: "探針攔截 WebGL 配置算出的 GPU 記憶體峰值：貼圖、緩衝區與 renderbuffer。不含預設畫面緩衝與驅動額外配置。",
     heap: "進遊戲後 performance.memory 取樣的第 10 百分位，當作 JS heap 的地板，避開 GC 前的鋸齒高點。",
-    growth: "第 5 轉之後每轉多留多少 JS heap。有強制 GC 點時，用兩次 GC 後的差除以轉數；沒有時看大 GC 後留下的量，或地板的斜率。都沒有 GC 時最多扣一半。",
+    growth: "第 5 轉之後每轉多留多少 JS heap。有三個強制 GC 點時，取前半與後半每轉增加較少的那一半，一次性的增加不算；只有兩個時，用兩次 GC 後的差除以轉數；沒有時看大 GC 後留下的量，或地板的斜率。都沒有 GC 時最多扣一半。",
     bigTextures: "單張超過 16 MB 的貼圖張數（寬 × 高 × 每像素位元組）。2048×2048 RGBA 剛好 16 MB，不算。",
     audio: "decodeAudioData 解出來的 PCM 合計。這塊不在 JS heap，也不在 GPU，但一樣佔裝置記憶體。",
     panelResidue: "打開下注紀錄或規則之前，跟關掉之後的待機相比，GPU 記憶體多出來沒有放掉的量，取兩次中較大的。",

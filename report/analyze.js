@@ -18,7 +18,7 @@ const cfg = thresholds.scoring;
 const ev = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
 
 const { stageFrames } = require("./frames");
-const { heapFit, causeText, labelText, nodeGrowth, nodeGrowthText, panelNodes } = require("./findings");
+const { heapFit, gcHalves, causeText, labelText, nodeGrowth, nodeGrowthText, panelNodes } = require("./findings");
 
 const NOT_GAME = new Set(["boot", "loading", "splash", "enter", "game-ready", "gap"]);
 const stages = ev.stages || [];
@@ -188,7 +188,11 @@ function gcRetained() {
 }
 const gcFit = gcRetained();
 ev.heapGc = gcFit;
+// With a mid GC as well, growth is the rise both halves share, so a one-off load does not count.
+const halves = gcHalves(ev);
+if (halves && ev.heapGc) ev.heapGc.halves = halves;
 function growthPerSpin() {
+  if (halves) return { value: halves.ratePerSpin, basis: "gc-halves" };
   if (gcFit) return { value: Math.max(0, gcFit.retainedMb) / gcFit.spins, basis: "gc" };
   if (fit.status !== "ok") return null;
   if (fit.majorGcs.length) return { value: Math.max(0, fit.retainedMb) / fit.points, basis: "major-gc" };
@@ -739,8 +743,14 @@ function findingRows() {
   const leak = found.find((f) => f.id === "leak-suspected");
   const ng = nodeGrowthText(ev.nodeGrowth);
   const nodeNote = ng ? `${ng}。` : "";
-  if (leak && leak.status === "retained-after-gc") rows.push({ rule: "leak-suspected", level: "red", title: `大 GC 之後 JS 記憶體地板仍比轉前高 ${Math.round(leak.delta)} MB`, area: "記憶體", fix: "轉前、轉後各拍一次 heap snapshot 比對，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。" + nodeNote, stage: null, t: null });
+  const halvesText = (f) => `強制 GC 後的地板 ${Math.round(f.from)} → ${Math.round(f.mid)} → ${Math.round(f.to)} MB（前半 ${f.halves[0] >= 0 ? "+" : ""}${f.halves[0]} MB、後半 ${f.halves[1] >= 0 ? "+" : ""}${f.halves[1]} MB）`;
+  if (leak && leak.status === "retained-after-gc" && leak.halves) rows.push({ rule: "leak-suspected", level: "red", title: `暖機後前後兩半都在增加，GC 收不回的約 ${Math.round(leak.delta)} MB`, area: "記憶體", fix: `${halvesText(leak)}。用 slot-perf-drill 的 heap 工具比對兩張 snapshot，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。` + nodeNote, stage: null, t: null });
+  else if (leak && leak.status === "retained-after-gc") rows.push({ rule: "leak-suspected", level: "red", title: `大 GC 之後 JS 記憶體地板仍比轉前高 ${Math.round(leak.delta)} MB`, area: "記憶體", fix: "轉前、轉後各拍一次 heap snapshot 比對，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。" + nodeNote, stage: null, t: null });
   else if (leak) rows.push({ rule: "leak-suspected", level: "orange", title: `JS 記憶體地板每轉多 ${leak.slopeMb} MB，這輪沒看到大 GC`, area: "記憶體", fix: "還不能確定是洩漏：大 GC 可能會收回。多轉幾十轉看地板會不會掉回來，或轉前、轉後各拍一次 heap snapshot 比對。" + nodeNote, stage: null, t: null });
+
+  // A rise in one half only: something stayed once (a new screen, an effect loaded on first use).
+  const step = found.find((f) => f.id === "heap-step");
+  if (step) rows.push({ rule: "heap-step", level: "yellow", title: `暖機後 JS heap 多了 ${Math.round(step.delta)} MB，只在其中一半增加`, area: "記憶體", fix: `${halvesText(step)}。只有一半在增加，不算持續增長，也不封頂；要知道多出來的是什麼，用 slot-perf-drill 的 heap 工具。` + nodeNote, stage: null, t: null });
 
   const idle = grp("idle");
   const labelCount = (snap) => (snap && snap.labels ? (snap.labels.noCacheTtf != null ? snap.labels.noCacheTtf : snap.labels.noCache) : null);

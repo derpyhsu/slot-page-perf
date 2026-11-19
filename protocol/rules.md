@@ -92,13 +92,22 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 - 有大 GC：最後一次大 GC 之後的最低地板，比第一個地板高出 `leakMb` 以上，標 `leak-suspected`，狀態 `retained-after-gc`。這是 GC 收不回來的部分。
 - 沒有大 GC：斜率 × 轉數大於 `leakMb`，而且最後 `leakTailSpins` 轉的斜率高於 `heap.tailSlopeMb`，標 `leak-suspected`，狀態 `no-major-gc`。大 GC 可能還會收回，所以只是疑似，要多轉或用 heap snapshot 確認。
 
-有強制 GC 點時（`evidence.gc` 裡的 `after-warmup` 和 `end`，各在一次 heap snapshot 之後量），上面的切段都不用：兩次 GC 後地板的差大於 `leakMb` 就標 `leak-suspected`，狀態 `retained-after-gc`。
+有強制 GC 點時（`evidence.gc` 裡的 `after-warmup`、`mid`、`end`，各在一次 heap snapshot 之後量），上面的切段都不用：
+
+- 三個點都有：分成前半（`after-warmup` 到 `mid`）和後半（`mid` 到 `end`），各算每轉增加多少，取較小的那一半乘上暖機後的轉數，當作兩半都有的增長。大於 `leakMb` 才標 `leak-suspected`，狀態 `retained-after-gc`。只有一半增加、但總共多了 `leakMb` 以上時，標 `heap-step`（一次性的增加，例如第一次出現的畫面或特效載入後留著），不封頂。
+- 只有 `after-warmup` 和 `end`（舊探針）：兩次 GC 後地板的差大於 `leakMb` 就標 `leak-suspected`，狀態 `retained-after-gc`。
+
+`mid` 落在暖機後剩下轉數的一半（15 轉時是第 10 轉後）。兩半各不到 2 轉時不拍 `mid`。
+
+## heap-step
+
+三個強制 GC 點裡只有一半在增加，暖機後總共多了 `leakMb` 以上。寫三個地板和兩半各多少，不說是洩漏。要看多出來的是什麼，用 slot-perf-drill 的 heap 工具。
 
 轉數不夠就寫 `not-enough-spins`，不要當成沒有洩漏。
 
 ### 節點數
 
-autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每次強制 GC 之後（`after-warmup`、`end`）各做一次 census（`evidence.census`），都在 gap 裡做，不算進量測：
+autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每次強制 GC 之後（`after-warmup`、`mid`、`end`）各做一次 census（`evidence.census`），都在 gap 裡做，不算進量測：
 
 - 場景節點依去掉數字的節點路徑分組計數（含不顯示的節點），最多 1000 組。
 - `cc.instantiate` 做出來的節點用 WeakRef 記著，GC 後還活著的依來源名稱（prefab 名）分成：在場景裡、不在場景也沒 destroy、已 destroy。用 `new cc.Node` 建的節點看不到。

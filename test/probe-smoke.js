@@ -241,6 +241,23 @@ const ev2 = JSON.parse(fs.readFileSync(path.join(runDir2, "evidence.json"), "utf
 assert.ok(!ev2.stages.some((x) => x.name === "spin-2") && ev2.fps.some((r) => r.group === "spin" && r.stages === 11), "unstarted spin left out of the spins");
 assert.ok(ev2.coverage.notStarted === "spin-2" && fs.readFileSync(path.join(runDir2, "report.html"), "utf8").includes("第 2 轉按下後畫面沒變"), "report names the unstarted spin");
 assert.ok(ev.missing === undefined, "nothing added to missing when every spin started");
+// Three forced GCs: a rise in one half only is a step, not growth; a rise in both halves is.
+const gcRun = (mbs) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+  const gc = [["after-warmup", 5], ["mid", 10], ["end", 15]].map(([at, spins], i) => ({ at, spins, beforeMb: mbs[i] + 5, mb: mbs[i] }));
+  fs.writeFileSync(path.join(d, "raw.json"), JSON.stringify(Object.assign({}, raw, { gc })));
+  execFileSync(process.execPath, [path.join(root, "report", "build.js"), d], { encoding: "utf8" });
+  return JSON.parse(fs.readFileSync(path.join(d, "evidence.json"), "utf8"));
+};
+const stepEv = gcRun([100, 130, 131]);
+const growthItem = (e) => Object.values(e.score).filter((x) => x && x.items).flatMap((x) => x.items).find((i) => i.id === "growth");
+assert.ok(stepEv.findings.some((f) => f.id === "heap-step") && !stepEv.findings.some((f) => f.id === "leak-suspected"), "one-half rise is a step, not a leak");
+assert.ok(growthItem(stepEv).value <= 0.2 && growthItem(stepEv).basis === "gc-halves", "growth takes the smaller half");
+assert.ok(stepEv.todo.some((t) => t.rule === "heap-step" && t.fix.includes("100 → 130 → 131")), "report states the three floors");
+const leakEv = gcRun([100, 120, 140]);
+const lk = leakEv.findings.find((f) => f.id === "leak-suspected");
+assert.ok(lk && lk.status === "retained-after-gc" && lk.delta === 40, "rise in both halves is a leak");
+assert.ok(!leakEv.findings.some((f) => f.id === "heap-step") && growthItem(leakEv).value === 4, "steady growth per spin");
 assert.ok(!/PLAYER-8848|Title 1|88,888/.test(JSON.stringify(ev) + JSON.stringify(s)), "label text never kept");
 const html = fs.readFileSync(path.join(runDir, "report.html"), "utf8");
 assert.ok(html.includes("lbl_win") && html.includes("overflow SHRINK"), "report names the labels on the worst spin stall");
