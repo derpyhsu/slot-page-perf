@@ -17,6 +17,10 @@ Before measuring, read `skill/slot-page-perf/SKILL.md`, then `protocol/scenarios
 - CPU% is main-thread busy time divided by wall time for that stage. It is not OS CPU usage.
 - GPU% is GPU timer time divided by `frameBudgetMs`. Without the timer extension, GPU% is `unavailable`.
 
+## Drill
+
+To dig into one finding after a run, read `skill/slot-perf-drill/SKILL.md`. Its page tools (`drill/page.js`) hide subtrees only while measuring and restore them; they are not part of the probe bundle and never run during a measuring run. `drill/heap.js` reads heap snapshots kept in the scratchpad, never in `runs/`.
+
 ## Output
 
 Save `__slotPerf.auto.result()` as `runs/<utc>-<slug>/raw.json`, write the short `notes.json`, and run `node report/build.js runs/<utc>-<slug>`. It writes `evidence.json` per `probe/schema.json`, applies `protocol/rules.md` and `protocol/scoring.md`, and generates `report.html`. That page is the report: stage zoom on the timeline, and the readings up top. `report.md` plus `timeline.svg` is only the GitHub copy. Do not hand-write findings, scores, or the report, and do not make a Cursor canvas.
