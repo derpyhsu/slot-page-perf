@@ -108,6 +108,9 @@ h3 { font-size: 11.5px; font-weight: 600; color: var(--faint); letter-spacing: .
 .gauge-risk { margin-top: 2px; color: var(--ink); }
 .legend { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px 18px; color: var(--faint); font-size: 11.5px; margin: 8px 0 0; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
+.losses { margin: 12px 0 0; font-size: 13px; }
+.losses h3 { margin: 0 0 4px; font-size: 13px; }
+.losses ol { margin: 0; padding-left: 20px; }
 .lm { display: inline-block; width: 9px; height: 9px; flex: none; }
 .lm.circ { border-radius: 50%; background: currentColor; }
 .lm.sq { background: currentColor; }

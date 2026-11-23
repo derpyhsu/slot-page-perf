@@ -270,6 +270,12 @@ function readoutMarkdown(ev) {
   lines.push("");
   lines.push(scoreLine(ev));
   lines.push("");
+  const lost = lossLines(ev);
+  if (lost.length) {
+    lines.push("扣最多分的地方：");
+    lost.forEach((l, i) => lines.push(`${i + 1}. ${l}`));
+    lines.push("");
+  }
   if (m.cols.length) {
     const head = ["讀數"].concat(m.cols.map((c) => c.label));
     lines.push(`| ${head.join(" | ")} |`);
@@ -550,6 +556,34 @@ function panel(ev, m, key, selected) {
   </div>`;
 }
 
+// The three items that cost the most points, with stage and the drill tool that answers them.
+const STAGE_WORD = { spin: "spin", turbo: "加速 spin", idle: "待機", "idle-after-rules": "規則後待機", "idle-end": "結束待機", menu: "選單", "history-before": "轉前紀錄", "history-after": "轉後紀錄", rules: "規則", feature: "免費遊戲", loading: "載入", enter: "進遊戲" };
+function stageWord(name) {
+  const m = name.match(/^(spin|turbo)-(\d+)$/);
+  if (m) return `${m[1] === "turbo" ? "加速" : ""}第 ${m[2]} 轉`;
+  const base = name.replace(/-spike$/, "");
+  return (STAGE_WORD[base] || base) + (base !== name ? "開啟瞬間" : "");
+}
+function lossLines(ev) {
+  const L = ev.losses;
+  if (!L) return [];
+  const lines = L.caps.map((c) => `${NAMES[c.category]}封頂 ${c.cap}（沒封頂是 ${c.uncapped}）：${c.fatal.map((f) => FATAL_WORD[f] || f).join("、")}`);
+  L.top.forEach((r) => {
+    const unit = r.unit && !/FPS$/.test(r.label) ? r.unit : "";
+    const v = r.value == null ? "" : ` ${r.value}${unit && unit !== "%" ? " " : ""}${unit}`;
+    const where = r.stage ? `（${stageWord(r.stage)}）` : "";
+    const tool = r.tool ? `；下鑽：slot-perf-drill ${r.tool}` : r.category === "smooth" && /^stall/.test(r.id) ? "；原因見可優化項目的卡頓列" : "";
+    lines.push(`${NAMES[r.category]} −${r.points}：${r.label}${v}${where}${tool}`);
+  });
+  return lines;
+}
+const FATAL_WORD = { "low-fps": "遊玩時平均 FPS 低於 30", stall: "載入時單次卡頓過長", "over-budget": "推估記憶體超過預算兩倍", "leak-suspected": "GC 後記憶體持續增加" };
+function lossesHtml(ev) {
+  const lines = lossLines(ev);
+  if (!lines.length) return "";
+  return `<div class="losses"><h3>扣最多分的地方</h3><ol>${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ol></div>`;
+}
+
 function readoutHtml(ev) {
   const m = model(ev);
   const S = ev.score;
@@ -559,7 +593,7 @@ function readoutHtml(ev) {
   const sum = ev.summary || {};
   const said = [sum.smooth, sum.memory].filter(Boolean).map(esc).join(" · ");
   let html = `<section class="hero">${said ? `<p class="verdict">${said}</p>` : ""}`;
-  html += `<div class="gauges" role="tablist" aria-label="三個分數">${dims.map(([k, name]) => gaugeTab(k, S[k], name, k === pick)).join("")}</div>${legend()}</section>`;
+  html += `<div class="gauges" role="tablist" aria-label="三個分數">${dims.map(([k, name]) => gaugeTab(k, S[k], name, k === pick)).join("")}</div>${legend()}${lossesHtml(ev)}</section>`;
   html += `<section class="sec" id="detail"><div class="sec-h"><h2 id="detail-h">${esc(NAMES[pick])}細項</h2><span class="small">點上面的分數切換</span></div>${dims.map(([k]) => panel(ev, m, k, k === pick)).join("")}</section>`;
   return html;
 }

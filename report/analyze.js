@@ -601,6 +601,65 @@ ev.cocosAdvice = cocosAdvice();
 ev.findingRows = findingRows();
 ev.todo = todo();
 ev.fps = fpsTable();
+ev.losses = losses();
+
+// Where the points went: each scored item's share of 100 minus the score, with the scorer's own
+// weight normalization (unmeasured items left out), so a score's losses add up to 100 minus its
+// uncapped score. The three largest across the three scores, each with the stage it comes from
+// and the slot-perf-drill tool that answers it, when one does. A fatal cap is stated beside them.
+function losses() {
+  const { groups: groupsOf } = require("./findings");
+  const gs = groupsOf(ev.stages || []);
+  const gameGroup = (g) => !["loading", "enter", "boot", "splash", "gap"].includes(g.group);
+  const out = [];
+  const caps = [];
+  ["loading", "smooth", "memory"].forEach((key) => {
+    const part = ev.score[key];
+    if (!part || part.score == null) return;
+    const scored = part.items.filter((i) => i.score != null);
+    const got = scored.reduce((a, i) => a + i.weight, 0);
+    if (!got) return;
+    const exact = scored.map((i) => ({ i, lost: (i.weight * (100 - i.score)) / got }));
+    // Whole points that add up to 100 minus the uncapped score (largest remainder).
+    const uncapped = Math.round(scored.reduce((a, i) => a + i.weight * i.score, 0) / got);
+    let left = 100 - uncapped - exact.reduce((a, x) => a + Math.floor(x.lost), 0);
+    exact.slice().sort((a, b) => (b.lost % 1) - (a.lost % 1)).forEach((x) => {
+      x.pts = Math.floor(x.lost) + (left > 0 ? 1 : 0);
+      if (left > 0) left -= 1;
+    });
+    exact.filter((x) => x.pts >= 1).forEach((x) => out.push(lossRow(key, x.i, x.pts, gs, gameGroup)));
+    if (part.fatal && part.fatal.length && part.score < uncapped) caps.push({ category: key, cap: part.score, uncapped, fatal: part.fatal.map((f) => f.id) });
+  });
+  out.sort((a, b) => b.points - a.points);
+  return { top: out.slice(0, 3), all: out, caps };
+}
+
+function lossRow(key, item, points, gs, gameGroup) {
+  const lastSnap = ((ev.cocos && ev.cocos.snapshots) || []).slice(-1)[0] || {};
+  const spineCached = lastSnap.spine && (lastSnap.spine.sharedCache || 0) + (lastSnap.spine.privateCache || 0) > 0;
+  const row = { category: key, id: item.id, label: item.label, points, value: item.value, unit: item.unit, stage: item.stage || null, tool: null };
+  // The stage behind items that carry none: the game group that fell furthest below its expected FPS.
+  const byFps = (f) => gs.filter((g) => gameGroup(g) && f(g) != null).sort((a, b) => f(a) - f(b))[0];
+  if (key === "smooth" && (item.id === "steady" || item.id === "feature")) {
+    // Shortfall times time spent: a short menu at 40 FPS weighs less than the spins at 50.
+    const g = item.id === "feature" ? gs.find((x) => x.group === "feature") : byFps((x) => (x.fps ? -Math.max(0, (x.expectedFps || 60) - x.fps) * (x.frames / x.fps) : null));
+    if (g) row.stage = g.group;
+    // Lessons from drilling: low FPS with little engine CPU per frame is fill rate; with a busy
+    // frame, which subtree draws the most.
+    row.tool = g && g.cpuP95 != null && g.cpuP95 >= 1000 / 60 / 2 ? "drawcalls" : g && g.cpuP95 != null ? "fill rate" : "drawcalls, fill rate";
+  } else if (key === "smooth" && item.id === "low") {
+    const g = byFps((x) => x.fpsLow);
+    if (g) row.stage = g.group;
+  } else if (key === "smooth" && item.id === "cpu") row.tool = "drawcalls";
+  else if (key === "smooth" && item.id === "gpu") row.tool = "fill rate";
+  else if (key === "smooth" && item.id === "stallRate") {
+    const g = gs.filter((x) => gameGroup(x) && x.hitchCount).sort((a, b) => b.hitchCount - a.hitchCount)[0];
+    if (g) row.stage = g.group;
+  } else if (key === "memory" && ["heap", "growth", "panelResidue"].includes(item.id)) row.tool = spineCached ? "spineCache, heap" : "heap";
+  else if (key === "loading") row.stage = row.stage || "loading";
+  if (row.stage) row.stage = String(row.stage);
+  return row;
+}
 
 // One row per stage group for the FPS table, in the order the run visits them.
 function fpsTable() {

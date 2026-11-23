@@ -400,5 +400,17 @@ const cc3 = global.cc;
   assert.ok(!ev.findings.some((f) => f.id === "worse-from-spin"), "flat run has no step");
 }
 
+// Where the points went: each score's losses add up to 100 minus its uncapped score.
+{
+  const sumOf = (e, k) => e.losses.all.filter((r) => r.category === k).reduce((a, r) => a + r.points, 0);
+  ["loading", "smooth", "memory"].forEach((k) => assert.strictEqual(sumOf(ev, k), 100 - ev.score[k].score, "losses add up for " + k));
+  assert.ok(ev.losses.top.length <= 3 && ev.losses.top[0].points >= ev.losses.top[ev.losses.top.length - 1].points, "top three, largest first");
+  const steady = ev.losses.all.find((r) => r.id === "steady");
+  assert.ok(!steady || (steady.stage === "spin" && steady.tool === "fill rate"), "low FPS with little engine CPU points to fill rate");
+  assert.ok(fs.readFileSync(path.join(runDir, "report.html"), "utf8").includes("扣最多分的地方"), "losses on the first screen");
+  const cap = leakEv.losses.caps.find((c) => c.category === "memory");
+  assert.ok(cap && cap.cap === leakEv.score.memory.score && cap.fatal.includes("leak-suspected") && sumOf(leakEv, "memory") === 100 - cap.uncapped, "a fatal cap is stated beside the losses");
+}
+
 console.log(digest.trim());
 console.log(`\nok ${ticks} ticks, run at ${runDir}`);
