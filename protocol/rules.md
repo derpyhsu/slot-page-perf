@@ -32,6 +32,12 @@
 - `render`：引擎繪製時間扣掉上傳和 shader 後仍過半，而且有 draw call 數。
 - `layout`：重疊的 LoAF 樣式與版面時間過半。
 - `script`：重疊的 LoAF 裡最長的腳本過半，檔案不是引擎檔，也不是引擎每幀的 rAF 回呼。函式名可讀才寫函式名；呼叫來源（事件、回呼、Promise、腳本載入）一併寫。
+- 下面三項是「容器」：裡面的工作上面各項可能已經量到。上面沒有一項過半時才當原因；有的話，過半的容器寫在原因的 `inside`，報告接在原因後面（「發生在…裡」），由外到內。
+  - `activate`：`director._nodeActivator.activateNode`（`node.active` 切換、節點加到啟用中的父節點下，連同整棵子樹的 onEnable、onDisable）時間過半。只算最外層。寫啟用、停用各幾次，同一幀內同一個節點切回去的次數（關了又開、開了又關），最慢一次的節點路徑。
+  - `handler`：編輯器綁定的回呼（`Component.EventHandler.prototype.emit`，按鈕 clickEvents 等）時間過半，名稱可讀。名稱是編輯器裡填的元件名加方法名；`customEventData` 不讀。
+  - `websocket`：WebSocket 訊息處理（`onmessage` 和 `addEventListener("message")`）時間過半。寫則數、時間、最慢一則的大小；訊息內容不讀不存。
+
+`activate`、`handler` 跟元件計時一起受 0.3 ms 上限管；`websocket` 一直量。
 
 原因不是 `label`、但 Label 時間佔該次 `dt` 四分之一以上時，finding 的 `labels` 寫同樣的明細，報告接在改法後面（「其中 Label 更新…」）。Label 計時跟元件計時一起受 0.3 ms 上限管，關掉就不量。
 

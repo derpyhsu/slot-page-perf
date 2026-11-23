@@ -89,6 +89,29 @@ Label.prototype._resetAssembler = function () { this._assembler = new TTF24(); }
 const node24 = node("lbl_jackpot", []);
 const lbl24 = Object.assign(new Label("88,888.00"), { node: node24, overflow: 0, fontSize: 30, cost: 60 });
 let slow24 = 0;
+// Work outside the engine tick: a WebSocket message (spin-4) whose handler switches a node off and
+// on again, and a button callback wired in the editor (spin-6) that lays out a label.
+class FakeWS extends EventTarget {
+  fire(data) {
+    const ev = Object.assign(new Event("message"), { data });
+    this.dispatchEvent(ev);
+    const f = this._om;
+    if (f) f.call(this, ev);
+  }
+}
+Object.defineProperty(FakeWS.prototype, "onmessage", { configurable: true, enumerable: true, get() { return this._om || null; }, set(f) { this._om = f; } });
+global.WebSocket = FakeWS;
+const between = [];
+const panelNode = node("PanelRoot", []);
+const activator = { activateNode(n) { now += n.cost || 0; } };
+class EventHandler {
+  constructor(component, handler, fn) { this.component = component; this.handler = handler; this.fn = fn; }
+  emit() { this.fn(); }
+}
+Component.EventHandler = EventHandler;
+const betNode = node("lbl_bet", []);
+const lblBet = Object.assign(new Label("1.00"), { node: betNode, overflow: 0, fontSize: 28, cost: 70 });
+betNode.components.push(lblBet);
 const listeners = {};
 global.cc = {
   ENGINE_VERSION: "3.8.2",
@@ -103,18 +126,32 @@ global.cc = {
   instantiate: (x) => x,
   deserialize: (x) => x,
   assetManager: { assets: { forEach: (f) => assets.forEach(f) } },
-  director: { on(e, f) { listeners[e] = f; }, tick() { ticks += 1; now += 2; reel.update(); if (slowLabel) { slowLabel = false; Label.Assembler.getAssembler(lblWin).updateRenderData(lblWin); } if (slowLoc) { slowLoc = false; new LocalizableLabel().onLoad(); } if (slow24 === 1) { lbl24._resetAssembler(); lbl24._assembler.updateRenderData(lbl24); } if (slow24 === 2) lbl24._assembler.updateRenderData(lbl24); slow24 = 0; (listeners.director_after_update || (() => {}))(); now += 1; }, mainLoop() { throw new Error("3.x never calls mainLoop"); }, getScene: () => scene },
+  director: { _nodeActivator: activator, on(e, f) { listeners[e] = f; }, tick() { ticks += 1; now += 2; reel.update(); if (slowLabel) { slowLabel = false; Label.Assembler.getAssembler(lblWin).updateRenderData(lblWin); } if (slowLoc) { slowLoc = false; new LocalizableLabel().onLoad(); } if (slow24 === 1) { lbl24._resetAssembler(); lbl24._assembler.updateRenderData(lbl24); } if (slow24 === 2) lbl24._assembler.updateRenderData(lbl24); slow24 = 0; (listeners.director_after_update || (() => {}))(); now += 1; }, mainLoop() { throw new Error("3.x never calls mainLoop"); }, getScene: () => scene },
   game: { frameRate: 60 },
   macro: {},
 };
 
 eval(src);
 const P = global.__slotPerf;
+// The page reads back the handler it set; a removed listener is not called.
+const sock = new FakeWS();
+const onMsg = function () { now += 50; };
+sock.onmessage = onMsg;
+assert.strictEqual(sock.onmessage, onMsg, "onmessage reads back the page's own handler");
+let heard = 0;
+const ear = () => { heard += 1; };
+sock.addEventListener("message", ear);
+sock.removeEventListener("message", ear);
+sock.onmessage = null;
+sock.fire("x");
+assert.strictEqual(heard, 0, "removed message listener not called");
+sock.onmessage = onMsg;
 
 function advance(ms) {
   const end = now + ms;
   while (now < end) {
     now += 13.67;
+    between.splice(0).forEach((f) => f());
     cc.director.tick(1 / 60);
     rafQ.splice(0).forEach((f) => f(now));
     intervals.forEach((i) => { while (i.next <= now) { i.f(); i.next += i.ms; } });
@@ -150,6 +187,8 @@ assert.strictEqual(P.live().gpuMb, 1, "deleted texture is freed");
 for (let i = 1; i <= 12; i += 1) {
   P.mark("spin-" + i);
   if (i === 3) { advance(500); slowUpdate = true; }
+  if (i === 4) { advance(500); between.push(() => sock.fire("y".repeat(3072))); sock.onmessage = function () { now += 10; panelNode.cost = 25; cc.director._nodeActivator.activateNode(panelNode, false); cc.director._nodeActivator.activateNode(panelNode, true); }; }
+  if (i === 6) { advance(500); between.push(() => new EventHandler("SpinPanel", "onClickBet", () => { now += 5; Label.Assembler.getAssembler(lblBet).updateRenderData(lblBet); }).emit()); }
   if (i === 5) { advance(500); slowLabel = true; }
   if (i === 7) { advance(500); slowLoc = true; }
   if (i === 9) { advance(500); slow24 = 1; }
@@ -233,6 +272,15 @@ for (const st of ["spin-9", "spin-11"]) {
   assert.ok(h24 && h24.cause && h24.cause.kind === "label" && h24.cause.top[0].path === "lbl_jackpot", "2.4 label assembler timed on " + st);
 }
 assert.ok(s.timeline.componentTiming.labelAssemblers >= 2, "3.x and 2.4 label assemblers wrapped");
+const wsHit = ev.findings.find((f) => f.stage === "spin-4" && /^hitch-/.test(f.id));
+assert.ok(wsHit && wsHit.cause && wsHit.cause.kind === "activate" && wsHit.cause.churn === 1 && wsHit.cause.n === 1 && wsHit.cause.off === 1 && wsHit.cause.top === "PanelRoot", "node activation inside the message handler is the cause");
+assert.ok(wsHit.cause.inside && wsHit.cause.inside[0].kind === "websocket" && wsHit.cause.inside[0].n === 1 && wsHit.cause.inside[0].topKb === 3, "message handler named as the container");
+const hdHit = ev.findings.find((f) => f.stage === "spin-6" && /^hitch-/.test(f.id));
+assert.ok(hdHit && hdHit.cause && hdHit.cause.kind === "label" && hdHit.cause.top[0].path === "lbl_bet", "label inside the callback is the cause");
+assert.ok(hdHit.cause.inside && hdHit.cause.inside[0].kind === "handler" && hdHit.cause.inside[0].name === "SpinPanel.onClickBet", "callback named from the editor strings");
+const { causeText } = require(path.join(root, "report", "findings.js"));
+assert.ok(/^節點啟用 1 次、停用 1 次.*同一幀內切回 1 次.*PanelRoot.*；發生在WebSocket 訊息處理（1 則，\d+ ms，最慢一則 3 KB）裡$/.test(causeText(wsHit.cause).fact), "activation text names the message handler: " + causeText(wsHit.cause).fact);
+assert.ok(/lbl_bet.*；發生在回呼 SpinPanel\.onClickBet（1 次，\d+ ms）裡$/.test(causeText(hdHit.cause).fact), "label text names the callback: " + causeText(hdHit.cause).fact);
 // A spin the autopilot saw not start is left out of the spins and named in the report.
 const runDir2 = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
 fs.writeFileSync(path.join(runDir2, "raw.json"), JSON.stringify(Object.assign({}, raw, { notStarted: ["spin-2"] })));

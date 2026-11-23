@@ -67,7 +67,7 @@
   };
 
   function newLedger() {
-    return { texN: 0, texBytes: 0, texMs: 0, texTopBytes: 0, texTop: "", dlDone: 0, dlNames: [], dlMax: 0, desN: 0, desMs: 0, shN: 0, shMs: 0, instN: 0, instMs: 0, instTop: "", instTopMs: 0, upd: 0, rnd: 0, ticks: 0, comps: {}, calls: 0, lblN: 0, lblMs: 0, lbl: null };
+    return { texN: 0, texBytes: 0, texMs: 0, texTopBytes: 0, texTop: "", dlDone: 0, dlNames: [], dlMax: 0, desN: 0, desMs: 0, shN: 0, shMs: 0, instN: 0, instMs: 0, instTop: "", instTopMs: 0, upd: 0, rnd: 0, ticks: 0, comps: {}, calls: 0, lblN: 0, lblMs: 0, lbl: null, wsN: 0, wsMs: 0, wsTopMs: 0, wsTopBytes: 0, actN: 0, actOff: 0, actMs: 0, churn: 0, actSeen: null, actTopMs: 0, actTopNode: null, hdN: 0, hdMs: 0, hdTop: "", hdTopMs: 0 };
   }
   state.fw = newLedger();
 
@@ -252,8 +252,14 @@
       desN: fw.desN, desMs: round(fw.desMs),
       shN: fw.shN, shMs: round(fw.shMs),
       instN: fw.instN, instMs: round(fw.instMs), instTop: fw.instTop || undefined,
-      lbl: state.compOff ? undefined : safeLabels(fw)
+      lbl: state.compOff ? undefined : safeLabels(fw),
+      ws: fw.wsN ? { n: fw.wsN, ms: round(fw.wsMs), topMs: round(fw.wsTopMs), topKb: round(fw.wsTopBytes / 1024) } : undefined,
+      act: fw.actN + fw.actOff && !state.compOff ? { n: fw.actN, off: fw.actOff, ms: round(fw.actMs), churn: fw.churn, top: safePath(fw.actTopNode), topMs: round(fw.actTopMs) } : undefined,
+      hd: fw.hdN && !state.compOff ? { n: fw.hdN, ms: round(fw.hdMs), top: fw.hdTop || undefined, topMs: round(fw.hdTopMs) } : undefined
     };
+  }
+  function safePath(node) {
+    try { return node ? groupPath(node) : undefined; } catch (e) { return undefined; }
   }
 
   function takeGpu() {
@@ -1078,6 +1084,132 @@
   }
   try { if (!JSON.parse.__slotDes) JSON.parse = timeInto(JSON.parse, "__slotDes"); } catch (e) {}
 
+  // WebSocket message handlers: time and count per frame, and the size of the slowest message.
+  // The payload is never read. Listeners added with addEventListener("message") and the onmessage
+  // property are both wrapped; the page reads back what it set.
+  var wsDepth = 0;
+  function wsTimed(fn, self, ev) {
+    if (wsDepth) return fn.call(self, ev);
+    wsDepth = 1;
+    var t0 = performance.now();
+    try { return fn.call(self, ev); } finally {
+      var ms = performance.now() - t0;
+      wsDepth = 0;
+      var fw = state.fw;
+      fw.wsN += 1;
+      fw.wsMs += ms;
+      fw.calls += 1;
+      if (ms > fw.wsTopMs) {
+        fw.wsTopMs = ms;
+        var d = ev && ev.data;
+        fw.wsTopBytes = d == null ? 0 : typeof d === "string" ? d.length : d.byteLength != null ? d.byteLength : d.size || 0;
+      }
+    }
+  }
+  function hookWebSocket() {
+    var WS = window.WebSocket;
+    var proto = WS && WS.prototype;
+    if (!proto || proto.__slotWs) return;
+    var wrapped = new WeakMap();
+    var wrap = function (l) {
+      if (typeof l !== "function" && !(l && typeof l.handleEvent === "function")) return l;
+      var w = wrapped.get(l);
+      if (w) return w;
+      w = function (ev) { return typeof l === "function" ? wsTimed(l, this, ev) : wsTimed(l.handleEvent, l, ev); };
+      w.__slotOrig = l;
+      wrapped.set(l, w);
+      return w;
+    };
+    var add = proto.addEventListener;
+    var remove = proto.removeEventListener;
+    if (typeof add !== "function" || typeof remove !== "function") return;
+    Object.defineProperty(proto, "addEventListener", { configurable: true, writable: true, value: function (type, l, opts) {
+      return add.call(this, type, type === "message" ? wrap(l) : l, opts);
+    } });
+    Object.defineProperty(proto, "removeEventListener", { configurable: true, writable: true, value: function (type, l, opts) {
+      return remove.call(this, type, (type === "message" && l && wrapped.get(l)) || l, opts);
+    } });
+    var d = Object.getOwnPropertyDescriptor(proto, "onmessage");
+    if (d && d.get && d.set && d.configurable) {
+      Object.defineProperty(proto, "onmessage", {
+        configurable: true,
+        enumerable: d.enumerable,
+        get: function () { var f = d.get.call(this); return (f && f.__slotOrig) || f; },
+        set: function (f) { d.set.call(this, typeof f === "function" ? wrap(f) : f); }
+      });
+    }
+    Object.defineProperty(proto, "__slotWs", { value: true });
+  }
+  try { hookWebSocket(); } catch (e) {}
+
+  // Node activation: every node.active change, and every node added under an active parent, goes
+  // through director._nodeActivator.activateNode(node, active), and from there onEnable/onDisable of
+  // the whole subtree. Only the outermost call is timed. churn counts a node switched back the
+  // other way within the same frame (off then on, or on then off).
+  var actDepth = 0;
+  function hookActivator(cc) {
+    var na = cc.director && cc.director._nodeActivator;
+    if (!na || typeof na.activateNode !== "function" || na.activateNode.__slotAct) return;
+    var orig = na.activateNode;
+    var w = function (node, active) {
+      if (state.compOff) return orig.apply(this, arguments);
+      var fw = state.fw;
+      fw.calls += 1;
+      if (active) fw.actN += 1; else fw.actOff += 1;
+      try {
+        var seen = fw.actSeen || (fw.actSeen = new Map());
+        var was = seen.get(node);
+        if (was !== undefined && was !== !!active) fw.churn += 1;
+        seen.set(node, !!active);
+      } catch (e) {}
+      if (actDepth) return orig.apply(this, arguments);
+      actDepth = 1;
+      var t0 = performance.now();
+      try { return orig.apply(this, arguments); } finally {
+        var ms = performance.now() - t0;
+        actDepth = 0;
+        var f = state.fw;
+        f.actMs += ms;
+        if (ms > f.actTopMs) { f.actTopMs = ms; f.actTopNode = node; }
+      }
+    };
+    w.__slotAct = true;
+    try { na.activateNode = w; } catch (e) {}
+  }
+
+  // Callbacks wired in the editor (Button clickEvents and the like) run through
+  // Component.EventHandler.prototype.emit. The name is the component and handler strings set in
+  // the editor; customEventData is never read.
+  var hdDepth = 0;
+  function hookHandlers(cc) {
+    var EH = (cc.Component && cc.Component.EventHandler) || cc.EventHandler;
+    var proto = EH && EH.prototype;
+    if (!proto || typeof proto.emit !== "function" || proto.emit.__slotHd) return;
+    var orig = proto.emit;
+    var w = function () {
+      if (hdDepth || state.compOff) return orig.apply(this, arguments);
+      hdDepth = 1;
+      var t0 = performance.now();
+      try { return orig.apply(this, arguments); } finally {
+        var ms = performance.now() - t0;
+        hdDepth = 0;
+        var fw = state.fw;
+        fw.hdN += 1;
+        fw.hdMs += ms;
+        fw.calls += 1;
+        if (ms > fw.hdTopMs) {
+          fw.hdTopMs = ms;
+          var comp = "";
+          try { comp = typeof this.component === "string" && this.component ? this.component : String(this._componentName || ""); } catch (e) {}
+          var h = typeof this.handler === "string" ? this.handler : "";
+          fw.hdTop = (comp + (h ? "." + h : "")).slice(0, 80);
+        }
+      }
+    };
+    w.__slotHd = true;
+    try { proto.emit = w; } catch (e) {}
+  }
+
   function watch() {
     var cc = window.cc;
     if (!cc) return;
@@ -1086,6 +1218,8 @@
     try { hookDeserialize(cc); } catch (e) {}
     try { hookInstantiate(cc); } catch (e) {}
     try { hookLabels(cc); } catch (e) {}
+    try { hookActivator(cc); } catch (e) {}
+    try { hookHandlers(cc); } catch (e) {}
     // Component timing must stay cheap; above 0.3 ms per frame it is switched off for the run.
     if (!state.compOff && state.compCallUs != null && state.compFramesSeen > 300 && (state.compCalls / state.compFramesSeen) * state.compCallUs / 1000 > 0.3) state.compOff = true;
     try {

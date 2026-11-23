@@ -190,6 +190,14 @@ function stallCause(h, loafs) {
     if (top && top[1] >= half && READABLE(top[0].replace(/\.(update|lateUpdate)$/, ""))) c.push({ kind: "component", ms: top[1], name: top[0] });
     const heavy = (w.texMs || 0) + (w.shMs || 0);
     if (w.rndMs != null && h.draws != null && w.rndMs - heavy >= half) c.push({ kind: "render", ms: w.rndMs, draws: h.draws });
+    // Containers: node activation, editor-wired callbacks and WebSocket message handlers hold the
+    // work above. They win only when nothing inside them is named; otherwise they go into inside.
+    const act = w.act;
+    if (act && act.ms >= half) c.push({ kind: "activate", ms: act.ms, n: act.n, off: act.off, churn: act.churn, top: act.top, topMs: act.topMs, rank: -1 });
+    const hd = w.hd;
+    if (hd && hd.ms >= half && READABLE(hd.top)) c.push({ kind: "handler", ms: hd.ms, n: hd.n, name: hd.top, rank: -2 });
+    const ws = w.ws;
+    if (ws && ws.ms >= half) c.push({ kind: "websocket", ms: ws.ms, n: ws.n, topMs: ws.topMs, topKb: ws.topKb, rank: -3 });
   }
   // A Long Animation Frame overlapping the stall: forced layout, or one script outside the engine.
   const lf = loafs.filter((l) => l[0] < h.t + dt && h.t < l[0] + l[1]).sort((a, b) => b[1] - a[1])[0];
@@ -205,9 +213,11 @@ function stallCause(h, loafs) {
   // A factor longer than the stall means the ledger spanned more than this frame; trust none of it.
   if (c.some((f) => f.ms > dt * 1.1)) return null;
   const best = c.sort((a, b) => (b.rank || 0) - (a.rank || 0) || b.ms - a.ms)[0];
-  delete best.rank;
+  const inside = c.filter((x) => x !== best && x.rank < 0).sort((a, b) => a.rank - b.rank);
+  c.forEach((x) => delete x.rank);
   best.ms = round(best.ms);
   best.share = round(best.ms / dt, 2);
+  if (inside.length) best.inside = inside.map((x) => Object.assign({}, x, { ms: round(x.ms) }));
   return best;
 }
 
@@ -316,10 +326,27 @@ function nodeGrowthText(g) {
 }
 
 // Text for a measured cause: what was measured, and where to look. Facts only.
+// A container a named cause ran inside, in short form for "inside".
+function insideText(c) {
+  switch (c.kind) {
+    case "activate": return `節點啟用 ${c.n}／停用 ${c.off} 次（${round(c.ms)} ms${c.churn ? `，同一幀內切回 ${c.churn} 次` : ""}）`;
+    case "handler": return `回呼 ${c.name}（${c.n} 次，${round(c.ms)} ms）`;
+    case "websocket": return `WebSocket 訊息處理（${c.n} 則，${round(c.ms)} ms${c.topKb != null ? `，最慢一則 ${c.topKb} KB` : ""}）`;
+  }
+  return "";
+}
 function causeText(c) {
   if (!c) return null;
+  const t = causeTextBase(c);
+  if (t && c.inside && c.inside.length) t.fact += `；發生在${c.inside.map(insideText).join("裡的")}裡`;
+  return t;
+}
+function causeTextBase(c) {
   const pct = `${Math.round(c.share * 100)}%`;
   switch (c.kind) {
+    case "activate": return { fact: `節點啟用 ${c.n} 次、停用 ${c.off} 次，花 ${c.ms} ms（佔 ${pct}）${c.churn ? `；同一幀內切回 ${c.churn} 次` : ""}${c.top ? `；最慢一次是 ${c.top}（${round(c.topMs)} ms）` : ""}`, look: c.top ? `從 ${c.top} 的 active 切換和它底下的 onEnable、onDisable 查` : "從這一刻切換 active 的節點查" };
+    case "handler": return { fact: `編輯器綁定的回呼 ${c.name} 花 ${c.ms} ms（佔 ${pct}${c.n > 1 ? `，共 ${c.n} 次回呼` : ""}）`, look: `從 ${c.name} 查` };
+    case "websocket": return { fact: `WebSocket 訊息處理 ${c.n} 則，花 ${c.ms} ms（佔 ${pct}）${c.topKb != null ? `；最慢一則 ${c.topKb} KB、${round(c.topMs)} ms` : ""}`, look: "從收到訊息後執行的處理查（訊息內容不讀）" };
     case "loading-burst": return {
       fact: `同時下載 ${c.inFlight} 個、這一幀收完 ${c.done} 個${c.names ? `（${c.names.join("、")}）` : ""}；解析 ${round(c.desMs || 0)} ms、貼圖上傳 ${c.texN || 0} 張${c.mb ? ` ${c.mb} MB` : ""} ${round(c.texMs || 0)} ms，合計 ${c.ms} ms（佔 ${pct}）${c.top && c.topMb >= 1 ? `；最大一張 ${c.top}（解碼後 ${c.topMb} MB）` : ""}`,
       look: "從同一時間收進來的這批資源查" };
