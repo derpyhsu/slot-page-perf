@@ -948,7 +948,235 @@
     made.byName = topCounts(byName, 40, function (a, b) { return (b.detached + b.destroyed) - (a.detached + a.destroyed) || b.inScene - a.inScene; });
     // paths: [folded path, nodes, active], most nodes first, at most 1000 groups.
     var groups = Object.keys(paths).length;
-    return { status: "ok", nodes: total, groups: groups, truncated: groups > 1000 || undefined, paths: topCounts(paths, 1000, function (a, b) { return b[1] - a[1]; }), made: made };
+    var inv;
+    try { inv = invisibleDrawn(cc, scene); } catch (e) { inv = { status: "error" }; }
+    return { status: "ok", nodes: total, groups: groups, truncated: groups > 1000 || undefined, paths: topCounts(paths, 1000, function (a, b) { return b[1] - a[1]; }), made: made, invisible: inv };
+  }
+
+  // Render nodes the engine still draws although nothing of them shows. Neither 2.x RenderFlow nor
+  // 3.x Batcher2D culls by position, so a node whose own box lies outside its camera's view (pool
+  // nodes parked far away) and a node whose box has no area because an ancestor is scaled to 0
+  // still fill buffers and draw. In 2.x, Spine attachments at alpha 0 are still meshed and drawn,
+  // and a skeleton with nothing to draw still breaks the batch around it. Both engines skip
+  // opacity-0 subtrees, so those are not counted (hidden Spine bones are cocos-spine-hidden).
+  // Only each node's own box is used, never the union with its children.
+  var INV_TOP = 8;
+  function invisibleDrawn(cc, scene) {
+    var v3 = !!(cc.UITransform || /^3\./.test(String(cc.ENGINE_VERSION || "")));
+    var out = { status: "ok", engine: v3 ? 3 : 2, offscreen: 0, scale0: 0, checked: 0, noView: 0, offscreenBy: {}, scale0By: {} };
+    if (!v3) out.spine = { skeletons: 0, transparent: 0, transparentScreens: 0, transparentBy: {}, empty: 0, emptyBy: {} };
+    var views = new Map();
+    var viewOf = function (node) {
+      var cam = null;
+      try {
+        if (v3) {
+          var cams = views.cams || (views.cams = scene.getComponentsInChildren(cc.Camera) || []);
+          for (var i = 0; i < cams.length; i += 1) if (cams[i].enabledInHierarchy !== false && (cams[i].visibility == null || (cams[i].visibility & node.layer))) { cam = cams[i]; break; }
+        } else if (cc.Camera && cc.Camera.findCamera) cam = cc.Camera.findCamera(node);
+      } catch (e) { cam = null; }
+      var k = cam || "none";
+      if (views.has(k)) return views.get(k);
+      var r = cameraView(cc, cam, v3);
+      views.set(k, r);
+      return r;
+    };
+    var visit = function (node, opacity) {
+      if (!node || node.activeInHierarchy === false || node._activeInHierarchy === false) return;
+      var op = opacity;
+      if (v3) {
+        var up = node._uiProps;
+        var rc3 = up && up.uiComp;
+        var a = rc3 && rc3.color && typeof rc3.color.a === "number" ? rc3.color.a / 255 : 1;
+        op = opacity * a * (up && typeof up.localOpacity === "number" ? up.localOpacity : 1);
+        if (op <= 0.0001) return;
+        if (rc3 && rc3.enabledInHierarchy !== false) checkNode(node, rc3);
+      } else {
+        if (node._opacity === 0 || node.opacity === 0) return;
+        var rc = node._renderComponent;
+        if (rc && rc.enabledInHierarchy !== false && rc._enabled !== false) checkNode(node, rc);
+      }
+      var kids = node._children || node.children || [];
+      for (var i = 0; i < kids.length; i += 1) visit(kids[i], op);
+    };
+    var checkNode = function (node, comp) {
+      var name = className(comp);
+      if (/Skeleton|dragonBones|Armature/i.test(name)) {
+        if (!v3 && /Skeleton/.test(name)) spineSlots(comp, node);
+        return;
+      }
+      if (!v3 && cc.RenderFlow && cc.RenderFlow.FLAG_RENDER && typeof node._renderFlag === "number" && !(node._renderFlag & cc.RenderFlow.FLAG_RENDER)) return;
+      var box = ownBox(node, v3);
+      if (!box) return;
+      out.checked += 1;
+      var path = groupPath(node);
+      if (box.area === 0) {
+        out.scale0 += 1;
+        out.scale0By[path] = (out.scale0By[path] || 0) + 1;
+        return;
+      }
+      var view = viewOf(node);
+      if (!view) { out.noView += 1; return; }
+      if (box.x1 < view.x0 || box.x0 > view.x1 || box.y1 < view.y0 || box.y0 > view.y1) {
+        out.offscreen += 1;
+        out.offscreenBy[path] = (out.offscreenBy[path] || 0) + 1;
+      }
+    };
+    // 2.x realtime Spine: renderable attachments (they have uvs) at alpha 0, and skeletons with
+    // none left to draw. Cached skeletons draw from baked frames and are not read here.
+    var spineSlots = function (comp, node) {
+      if (comp._cacheMode) return;
+      var sk = comp._skeleton;
+      var order = sk && sk.drawOrder;
+      if (!order || typeof order.length !== "number") return;
+      var sp = out.spine;
+      sp.skeletons += 1;
+      var path = groupPath(node);
+      var skA = sk.color && typeof sk.color.a === "number" ? sk.color.a : 1;
+      var drawn = 0, clear = 0, area = 0;
+      for (var i = 0; i < order.length; i += 1) {
+        var slot = order[i];
+        if (!slot || (slot.bone && slot.bone.active === false)) continue;
+        var att = typeof slot.getAttachment === "function" ? slot.getAttachment() : slot.attachment;
+        if (!att || !att.uvs) continue;
+        var a = skA * (slot.color && typeof slot.color.a === "number" ? slot.color.a : 1) * (att.color && typeof att.color.a === "number" ? att.color.a : 1);
+        if (a > 0) { drawn += 1; continue; }
+        clear += 1;
+        area += attachmentArea(att, slot);
+      }
+      if (clear) {
+        sp.transparent += clear;
+        var g = sp.transparentBy[path] || (sp.transparentBy[path] = [0, 0]);
+        g[0] += clear;
+        var view = viewOf(node);
+        var m = worldAffine(node, false);
+        if (view && m && area > 0) {
+          var screens = area * Math.abs(m.a * m.d - m.b * m.c) / view.area;
+          sp.transparentScreens += screens;
+          g[1] += screens;
+        }
+      }
+      if (!drawn) {
+        sp.empty += 1;
+        sp.emptyBy[path] = (sp.emptyBy[path] || 0) + 1;
+      }
+    };
+    var roots = scene._children || scene.children || [];
+    for (var r = 0; r < roots.length; r += 1) visit(roots[r], 1);
+    var top = function (by) {
+      return Object.keys(by).map(function (k) { return [k, by[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, INV_TOP);
+    };
+    out.offscreenBy = top(out.offscreenBy);
+    out.scale0By = top(out.scale0By);
+    if (out.spine) {
+      var sp = out.spine;
+      sp.transparentScreens = round(sp.transparentScreens, 2);
+      sp.transparentBy = Object.keys(sp.transparentBy).map(function (k) { var g = sp.transparentBy[k]; return [k, g[0], round(g[1], 2)]; })
+        .sort(function (a, b) { return b[2] - a[2] || b[1] - a[1]; }).slice(0, INV_TOP);
+      sp.emptyBy = top(sp.emptyBy);
+    }
+    return out;
+  }
+
+  // The affine part of a node's world matrix: x' = a*x + c*y + tx, y' = b*x + d*y + ty.
+  function worldAffine(node, v3) {
+    if (v3) {
+      var w = node.worldMatrix || (node.getWorldMatrix && node.getWorldMatrix());
+      return w ? { a: w.m00, b: w.m01, c: w.m04, d: w.m05, tx: w.m12, ty: w.m13 } : null;
+    }
+    if (typeof node._updateWorldMatrix === "function") node._updateWorldMatrix();
+    var m = node._worldMatrix && node._worldMatrix.m;
+    return m ? { a: m[0], b: m[1], c: m[4], d: m[5], tx: m[12], ty: m[13] } : null;
+  }
+
+  // A node's own box in world space from its content size and anchor, without its children.
+  // null when it has no size to test (empty containers, labels with no text yet).
+  function ownBox(node, v3) {
+    var size, anchor;
+    if (v3) {
+      var ui = node._uiProps && node._uiProps.uiTransformComp;
+      if (!ui) return null;
+      size = ui.contentSize || ui._contentSize;
+      anchor = ui.anchorPoint || ui._anchorPoint;
+    } else {
+      size = node._contentSize;
+      anchor = node._anchorPoint;
+    }
+    if (!size || !(size.width > 0) || !(size.height > 0)) return null;
+    var m = worldAffine(node, v3);
+    if (!m) return null;
+    var ax = anchor ? anchor.x : 0.5, ay = anchor ? anchor.y : 0.5;
+    var xs = [-ax * size.width, (1 - ax) * size.width];
+    var ys = [-ay * size.height, (1 - ay) * size.height];
+    var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (var i = 0; i < 2; i += 1) for (var j = 0; j < 2; j += 1) {
+      var x = m.a * xs[i] + m.c * ys[j] + m.tx;
+      var y = m.b * xs[i] + m.d * ys[j] + m.ty;
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    if (!isFinite(x0) || !isFinite(y0) || !isFinite(x1) || !isFinite(y1)) return null;
+    return { x0: x0, x1: x1, y0: y0, y1: y1, area: Math.abs(m.a * m.d - m.b * m.c) * size.width * size.height };
+  }
+
+  // What a camera sees, as a world-space rectangle. 2D orthographic cameras only; a camera that
+  // renders into a texture, or that cannot be read, gives null and its nodes are not judged.
+  function cameraView(cc, cam, v3) {
+    try {
+      if (v3) {
+        if (!cam || cam.targetTexture) return null;
+        var canvas = cc.game && cc.game.canvas;
+        if (!canvas || !cc.Vec3) return null;
+        var old = /^3\.[0-3]\./.test(String(cc.ENGINE_VERSION || ""));
+        var corner = function (x, y) {
+          var o = new cc.Vec3();
+          if (old) cam.screenToWorld(o, new cc.Vec3(x, y, 0)); else cam.screenToWorld(new cc.Vec3(x, y, 0), o);
+          return o;
+        };
+        return rectOf(corner(0, 0), corner(canvas.width, canvas.height));
+      }
+      var vs = cc.view && cc.view.getVisibleSize && cc.view.getVisibleSize();
+      if (!vs) return null;
+      if (cam) {
+        if (cam.targetTexture || cam.ortho === false) return null;
+        if (typeof cam.getScreenToWorldPoint === "function") return rectOf(cam.getScreenToWorldPoint(cc.v2(0, 0)), cam.getScreenToWorldPoint(cc.v2(vs.width, vs.height)));
+      }
+      var vo = cc.view.getVisibleOrigin ? cc.view.getVisibleOrigin() : { x: 0, y: 0 };
+      return rectOf({ x: vo.x, y: vo.y }, { x: vo.x + vs.width, y: vo.y + vs.height });
+    } catch (e) {
+      return null;
+    }
+  }
+  function rectOf(p, q) {
+    if (!p || !q || !isFinite(p.x) || !isFinite(q.x) || !isFinite(p.y) || !isFinite(q.y)) return null;
+    var r = { x0: Math.min(p.x, q.x), x1: Math.max(p.x, q.x), y0: Math.min(p.y, q.y), y1: Math.max(p.y, q.y) };
+    r.area = (r.x1 - r.x0) * (r.y1 - r.y0);
+    return r.area > 0 ? r : null;
+  }
+
+  // Area of one Spine attachment in skeleton space, from its world vertices (spine-ts 3.x API).
+  var spineVerts = null;
+  function attachmentArea(att, slot) {
+    try {
+      var n, tris;
+      if (att.triangles && att.worldVerticesLength) {
+        n = att.worldVerticesLength;
+        spineVerts = spineVerts && spineVerts.length >= n ? spineVerts : new Float32Array(Math.max(n, 64));
+        att.computeWorldVertices(slot, 0, n, spineVerts, 0, 2);
+        tris = att.triangles;
+      } else if (att.offset) {
+        spineVerts = spineVerts && spineVerts.length >= 8 ? spineVerts : new Float32Array(64);
+        att.computeWorldVertices(slot.bone, spineVerts, 0, 2);
+        tris = [0, 1, 2, 2, 3, 0];
+      } else return 0;
+      var sum = 0;
+      for (var i = 0; i + 2 < tris.length; i += 3) {
+        var p = tris[i] * 2, q = tris[i + 1] * 2, r = tris[i + 2] * 2;
+        sum += Math.abs((spineVerts[q] - spineVerts[p]) * (spineVerts[r + 1] - spineVerts[p + 1]) - (spineVerts[r] - spineVerts[p]) * (spineVerts[q + 1] - spineVerts[p + 1])) / 2;
+      }
+      return isFinite(sum) ? sum : 0;
+    } catch (e) {
+      return 0;
+    }
   }
 
   // Label text layout and drawing. Every path that rebuilds a label's text, onEnable and the render

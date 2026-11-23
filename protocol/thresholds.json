@@ -76,7 +76,10 @@
     "spineUnused": 20,
     "imageStencil": 1,
     "camerasActive": 1,
-    "renderTextureMb": 8
+    "renderTextureMb": 8,
+    "invisibleNodes": 20,
+    "spineTransparent": 10,
+    "spineEmpty": 3
   },
   "network": { "hostRequests": 30, "queuedToFire": 8, "duplicate": 3, "importJson": 30, "loadImages": 100, "coldCachedShare": 0.1 },
   "canvasPixels": 2073600,

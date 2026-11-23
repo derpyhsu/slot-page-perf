@@ -183,6 +183,7 @@ autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每�
 | `cocos-spine-realtime` | 畫面上的 realtime Spine 多於 `spineRealtimeActive`。若已觸發 `cocos-spine-retained` 就不再列這條 | CPU：每幀都在算骨骼 |
 | `cocos-spine-retained` | 最後一次快照比待機多出 `spineCopiesRetained` 個即時 Spine，或骨頭多出 `spineBonesRetained` | 面板關掉後符號骨架還留在場景裡 |
 | `cocos-spine-hidden` | 某次快照裡 active、沒暫停的 realtime Spine，自己或父節點透明度 0、顏色 alpha 0 或縮放 0，個數達到 `spineHiddenRealtime`。依去掉數字的節點路徑加 skeletonData 分組 | CPU：畫不出來仍每幀算骨骼 |
+| `cocos-invisible-drawn` | 間隔時的節點普查（`census[].invisible`）裡，畫面外與縮放 0 的繪製節點合計達到 `invisibleNodes`，或 2.x realtime Spine 裡 alpha 0 的附件達到 `spineTransparent`，或沒有東西可畫的骨架達到 `spineEmpty`。取合計最多的那次普查，寫各類個數、透明附件約佔幾屏、依去掉數字的節點路徑分組的前三組。畫面外只看節點自己的內容框（不含子節點）是否整個落在它的相機視野外；透明度 0 的子樹引擎本來就跳過，不算；看不見的 Spine 骨骼另見 `cocos-spine-hidden`。不計分 | draw call 與填色：看不見仍組頂點、送 draw call、打斷合批 |
 | `cocos-spine-unused` | 最後一次快照裡，整輪每次取樣（探針每 500 ms 走一次場景）都沒能畫出來的 Spine 達到 `spineUnused`。只陳述這輪的現況，不推論用不到；改不改由工程師決定 | 記憶體與載入：建好沒用的骨架 |
 | `cocos-mask-stencil` | 畫面上的 `IMAGE_STENCIL` 達到 `imageStencil`。個數沒超過 `masksActive` 也要列，因為類型本身比矩形遮罩貴 | draw call 與填色 |
 | `cocos-extra-camera` | 同時在畫的相機多於 `camerasActive`。快照沒有這個欄位時不觸發 | 每台相機多清一次畫面 |

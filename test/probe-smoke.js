@@ -314,5 +314,69 @@ assert.ok(ng && ng.spins === 7 && ng.paths[0].path === "coin_layer/Coin" && ng.p
 assert.deepStrictEqual(ng.made.byName[0], { name: "WinFx", detached: [3, 10], destroyed: [1, 1], inScene: [0, 0] }, "detached instantiated nodes by source name");
 assert.ok(html.includes("coin_layer/Coin 2 → 11") && html.includes("WinFx（不在場景也沒 destroy 3 → 10"), "report shows node growth");
 assert.ok(fs.readFileSync(path.join(runDir, "report.html"), "utf8").includes("SlotReelController.update"), "report shows the cause");
+
+// Invisible but drawn, on a 2.4-shaped scene: census reads window.cc when called.
+const cc3 = global.cc;
+{
+  class Sprite24 {}
+  class Skel24 {}
+  const names24 = new Map([[Sprite24, "cc.Sprite"], [Skel24, "sp.Skeleton"]]);
+  const mat = (a, d, tx, ty) => { const m = new Float32Array(16); m[0] = a; m[5] = d; m[10] = 1; m[15] = 1; m[12] = tx; m[13] = ty; return { m }; };
+  // Each node carries its world transform as (scale, x, y), already composed.
+  const n24 = (name, opts = {}, kids = []) => {
+    const sc = opts.scale == null ? 1 : opts.scale;
+    const n = { name, _activeInHierarchy: true, activeInHierarchy: true, _opacity: opts.opacity == null ? 255 : opts.opacity, _children: kids, _contentSize: { width: opts.w || 0, height: opts.h || 0 }, _anchorPoint: { x: 0.5, y: 0.5 }, _worldMatrix: mat(sc, sc, opts.x || 0, opts.y || 0), _updateWorldMatrix() {} };
+    if (opts.comp) { n._renderComponent = opts.comp; opts.comp.node = n; opts.comp.enabledInHierarchy = true; }
+    kids.forEach((k) => { k.parent = n; });
+    return n;
+  };
+  const spr = () => new Sprite24();
+  // A region attachment covering 640x360 skeleton units: a quarter of the 1280x720 view.
+  const region = () => ({ uvs: new Float32Array(8), offset: new Float32Array(8), color: { a: 1 }, computeWorldVertices(bone, v) { v.set([0, 0, 640, 0, 640, 360, 0, 360]); } });
+  const slot = (att, a) => ({ color: { a }, bone: { active: true }, getAttachment: () => att });
+  const skel = (slots, mode) => Object.assign(new Skel24(), { _cacheMode: mode || 0, _skeleton: { color: { a: 1 }, drawOrder: slots } });
+  const pool = n24("pool", {}, Array.from({ length: 30 }, (_, i) => n24(`sym_${i + 1}`, { comp: spr(), w: 100, h: 100, x: -100000, y: -100000 })));
+  const portrait = n24("portrait", { scale: 0 }, Array.from({ length: 5 }, (_, i) => n24(`btn_${i}`, { comp: spr(), w: 80, h: 80, scale: 0, x: 640, y: 360 })));
+  const faded = n24("faded", { opacity: 0 }, [n24("far", { comp: spr(), w: 100, h: 100, x: -5000, y: 0 })]);
+  const fxRt = n24("fx_rt", { comp: skel([slot(region(), 0), slot(region(), 0), slot(region(), 1)]), x: 640, y: 360 });
+  const fxEmpty = n24("fx_empty", { comp: skel([slot(null, 1), slot(null, 1)]), x: 640, y: 360 });
+  const fxCached = n24("fx_cached", { comp: skel([slot(region(), 0)], 1), x: 640, y: 360 });
+  const canvas24 = n24("Canvas", {}, [n24("bg", { comp: spr(), w: 1280, h: 720, x: 640, y: 360 }), pool, portrait, faded, fxRt, fxEmpty, fxCached]);
+  const scene24 = { name: "scene", _children: [canvas24], activeInHierarchy: false };
+  canvas24.parent = scene24;
+  const cam24 = { getScreenToWorldPoint: (p) => ({ x: p.x, y: p.y }) };
+  global.cc = {
+    ENGINE_VERSION: "2.4.9",
+    js: { getClassName: (o) => names24.get(o && o.constructor) || "Other" },
+    v2: (x, y) => ({ x, y }),
+    view: { getVisibleSize: () => ({ width: 1280, height: 720 }), getVisibleOrigin: () => ({ x: 0, y: 0 }) },
+    Camera: { findCamera: () => cam24 },
+    director: { getScene: () => scene24 },
+  };
+  const inv = P.census().invisible;
+  global.cc = cc3;
+  assert.strictEqual(inv.status, "ok");
+  assert.strictEqual(inv.offscreen, 30, "parked pool nodes counted, opacity-0 subtree skipped");
+  assert.deepStrictEqual(inv.offscreenBy[0], ["Canvas/pool/sym_*", 30], "grouped by folded path");
+  assert.strictEqual(inv.scale0, 5, "scale-0 children counted");
+  assert.strictEqual(inv.spine.transparent, 2, "alpha-0 attachments on a realtime skeleton");
+  assert.strictEqual(inv.spine.transparentScreens, 0.5, "two quarter-screen attachments");
+  assert.strictEqual(inv.spine.empty, 1, "skeleton with nothing to draw");
+  assert.deepStrictEqual(inv.spine.emptyBy[0], ["Canvas/fx_empty", 1]);
+  assert.strictEqual(inv.spine.skeletons, 2, "cached skeletons not read");
+
+  // Through the report: one cocos row with the counts and the paths.
+  const dI = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+  const cInv = Object.assign({}, c2, { invisible: inv });
+  fs.writeFileSync(path.join(dI, "raw.json"), JSON.stringify(Object.assign({}, raw, { census: [c1, cInv] })));
+  execFileSync(process.execPath, [path.join(root, "report", "build.js"), dI], { encoding: "utf8" });
+  const evI = JSON.parse(fs.readFileSync(path.join(dI, "evidence.json"), "utf8"));
+  const row = evI.todo.find((t) => t.rule === "cocos-invisible-drawn");
+  assert.ok(row, "invisible-but-drawn row listed");
+  assert.ok(/30/.test(row.title) && row.fix.includes("Canvas/pool/sym_*") && row.fix.includes("Canvas/fx_empty"), "row names counts and paths: " + row.title + " / " + row.fix);
+  assert.ok(!ev.todo.some((t) => t.rule === "cocos-invisible-drawn"), "no row without the census field");
+  assert.strictEqual(JSON.stringify(evI.score), JSON.stringify(ev.score), "not scored");
+}
+
 console.log(digest.trim());
 console.log(`\nok ${ticks} ticks, run at ${runDir}`);
