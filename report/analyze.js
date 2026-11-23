@@ -268,9 +268,9 @@ function total(items, cap) {
   const weight = items.reduce((a, i) => a + i.weight, 0);
   const got = scored.reduce((a, i) => a + i.weight, 0);
   if (!got) return { score: null, coverage: 0, provisional: true };
-  let score = Math.round((100 * scored.reduce((a, i) => a + i.weight * i.score, 0)) / got);
-  if (cap != null) score = Math.min(score, cap);
-  return { score, coverage: Math.round((100 * got) / weight), provisional: got < weight };
+  const uncapped = Math.round((100 * scored.reduce((a, i) => a + i.weight * i.score, 0)) / got);
+  const score = cap != null ? Math.min(uncapped, cap) : uncapped;
+  return { score, uncapped: score !== uncapped ? uncapped : undefined, coverage: Math.round((100 * got) / weight), provisional: got < weight };
 }
 
 const S = cfg.smooth;
@@ -621,12 +621,13 @@ function losses() {
     if (!got) return;
     const exact = scored.map((i) => ({ i, lost: (i.weight * (100 - i.score)) / got }));
     // Whole points that add up to 100 minus the uncapped score (largest remainder).
-    const uncapped = Math.round(scored.reduce((a, i) => a + i.weight * i.score, 0) / got);
+    // Item scores are already whole numbers here; the target comes from the scorer itself.
+    const uncapped = part.uncapped != null ? part.uncapped : part.score;
     let left = 100 - uncapped - exact.reduce((a, x) => a + Math.floor(x.lost), 0);
-    exact.slice().sort((a, b) => (b.lost % 1) - (a.lost % 1)).forEach((x) => {
-      x.pts = Math.floor(x.lost) + (left > 0 ? 1 : 0);
-      if (left > 0) left -= 1;
-    });
+    exact.forEach((x) => { x.pts = Math.floor(x.lost); });
+    const byRest = exact.slice().sort((a, b) => (b.lost % 1) - (a.lost % 1));
+    for (let j = 0; left > 0 && byRest.length; j = (j + 1) % byRest.length, left -= 1) byRest[j].pts += 1;
+    for (let j = byRest.length - 1; left < 0 && j >= 0; j -= 1) if (byRest[j].pts > 0) { byRest[j].pts -= 1; left += 1; }
     exact.filter((x) => x.pts >= 1).forEach((x) => out.push(lossRow(key, x.i, x.pts, gs, gameGroup)));
     if (part.fatal && part.fatal.length && part.score < uncapped) caps.push({ category: key, cap: part.score, uncapped, fatal: part.fatal.map((f) => f.id) });
   });

@@ -128,6 +128,8 @@ autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每�
 
 從第 k 轉切開，前面至少 `worseFrom.minBefore` 轉、後面至少 `minAfter` 轉。draw call 與節點：後面每一轉都比前面每一轉多，最少的那轉比最多的那轉多超過 `abs` 和前面最多值 × `rel` 兩者較大的那個；FPS：後面最高的比前面最低的低超過 `abs`。有多個切點時取差距最大的。同一串、同一轉起的幾個量合成一列，寫前後兩段的極值與中位數。只陳述現況，不計分。
 
+這條抓的是台階，以及每轉漲幅都大於門檻的上升。每轉只多一點的緩慢上升不會列，節點看 `nodeGrowth`、記憶體看增長項。第 1 轉就出現、之後一直在的（例如第一轉後停在畫面外的池子節點）也不會列，那類看 `cocos-invisible-drawn`。
+
 ## panel-heavier
 
 `history-before`、`history-after` 或 `rules` 的穩態，相對 `idle`：FPS 下降超過 10，或 draw call 平均增加超過三成，或尖峰窗出現 `hitchMs` 以上的幀。證據寫明減掉待機之後的差。
