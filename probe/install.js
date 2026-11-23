@@ -989,7 +989,8 @@
         var a = rc3 && rc3.color && typeof rc3.color.a === "number" ? rc3.color.a / 255 : 1;
         op = opacity * a * (up && typeof up.localOpacity === "number" ? up.localOpacity : 1);
         if (op <= 0.0001) return;
-        if (rc3 && rc3.enabledInHierarchy !== false) checkNode(node, rc3);
+        // _renderFlag is false when the component has nothing it can draw (a sprite without a frame).
+        if (rc3 && rc3.enabledInHierarchy !== false && rc3._renderFlag !== false) checkNode(node, rc3);
       } else {
         if (node._opacity === 0 || node.opacity === 0) return;
         var rc = node._renderComponent;
