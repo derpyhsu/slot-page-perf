@@ -25,11 +25,24 @@ On the game page, once it shows the state the finding is about (idle, a panel op
 
 ## Which tool
 
+Start from the report's first screen: 扣最多分的地方 lists the three items that cost the most points, the stage each comes from, and the tool below that answers it. Drill the first one before the others.
+
 | Finding or symptom | Tool |
 | --- | --- |
 | Many draw calls: `stall`/`fps` rows with high draw calls, `panel-heavier`, `panel-left-open` (draw call), `cocos-mask-*`, `cocos-label-no-cache`, `cocos-dynamic-atlas-off` | `drawcalls` |
 | `leak-suspected` or `heap-step` where `nodeGrowth` shows no group growing (the heap grows, the node count does not) | `spineCache` first when the scene has Spine in a cache mode, then `heap` |
 | Low FPS while engine CPU per frame is low | fill rate |
+
+By symptom, in the order to check them:
+
+| Symptom in the report | What to do |
+| --- | --- |
+| A stage loses FPS while its engine CPU p95 is low (idle often) | fill rate. If FPS comes back at a quarter of the pixels, `drawcalls` on that state lists the big subtrees and `offscreenDrawn`; hide them one by one by hand (2.x `opacity = 0`) and read `__slotDrill.fps(4000)` each time. |
+| A stage has high engine CPU p95 | `drawcalls` on that state: draw calls per subtree, where batches break, and groups drawn off screen. A subtree whose box is much larger than the screen is a long list or something parked outside. |
+| Long frames of 50 ms or more while the main loop takes 1-2 ms | Read the stall row's cause first: `websocket`, `activate` and `handler` (and `inside` on other causes) say whether the time went to a WebSocket message handler, node activation (with same-frame switch-backs) or an editor-wired callback. None of the page tools measures this further. |
+| `worse-from-spin`: a level that steps at one spin and stays | What was added is still there after the spins. `drawcalls` on the screen after the run shows which subtree draws it; if `nodeGrowth` names a growing group, start there. A one-off animation left on its last transparent frame shows up as a group that costs draw calls with nothing visible. |
+| `cocos-invisible-drawn` | `drawcalls` on the state the census was taken in (its `offscreenDrawn` and the cut per group confirm what the census counted); `batchBreaks` on a subtree with empty skeletons shows the break they cause. |
+| Win effects or cascades that cost only while they play | Measure while they play: run `drawcalls` during the effect. `moving: true` means cuts within `noise` may be the animation itself. |
 
 ### drawcalls
 
