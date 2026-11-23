@@ -511,6 +511,22 @@
         log("map refused on spin " + onSpin.join(","));
         continue;
       }
+      // With a menu, history and rules usually live inside it. A point with no button under it on the
+      // main screen is then likely a guess at where the menu item will be: pressing it on the closed
+      // menu changes nothing and the idle wait lands in the panel stage. Refuse once; the same point
+      // sent again is taken as a real main-screen button the engine does not name.
+      var inMenu = m.menu ? ["history", "rules"].filter(function (k) {
+        if (!m[k] || nodeNear(m[k])) return false;
+        var prev = st.mapAsked && st.mapAsked[k];
+        return !(prev && Math.abs(prev.x - m[k].x) <= 10 && Math.abs(prev.y - m[k].y) <= 10);
+      }) : [];
+      if (inMenu.length) {
+        st.mapAsked = st.mapAsked || {};
+        inMenu.forEach(function (k) { st.mapAsked[k] = m[k]; });
+        note = "refused " + inMenu.join(", ") + ": no button there on the main screen. If it is inside the menu, pass null now; it is asked for at needs \"menu\" after the menu opens. If it really is on the main screen, send the same point again. " + note;
+        log("map refused in-menu " + inMenu.join(","));
+        continue;
+      }
       // buy is the one point allowed on a buy control, and only on one: a named node there must read like buy.
       var bn = m.buy && nodeNear(m.buy);
       if (bn && !hit(bn, B.buy)) {
