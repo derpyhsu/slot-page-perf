@@ -122,6 +122,12 @@ autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每�
 
 `panel-left-open` 那一列另外寫 `idle` 到 `after-rules` 之間多出的組（`panelNodes`），附顯示中的個數。
 
+## worse-from-spin
+
+某一轉起變差、之後每一轉都沒回來。看三個量：每轉 draw call 的中位數、每轉轉完時顯示中的節點數（autopilot 在間隔記的 `spinNodes`）、每轉 FPS。一般 spin 和加速 spin 各算一串，每串第一轉不算（第一次載入）。
+
+從第 k 轉切開，前面至少 `worseFrom.minBefore` 轉、後面至少 `minAfter` 轉。draw call 與節點：後面每一轉都比前面每一轉多，最少的那轉比最多的那轉多超過 `abs` 和前面最多值 × `rel` 兩者較大的那個；FPS：後面最高的比前面最低的低超過 `abs`。有多個切點時取差距最大的。同一串、同一轉起的幾個量合成一列，寫前後兩段的極值與中位數。只陳述現況，不計分。
+
 ## panel-heavier
 
 `history-before`、`history-after` 或 `rules` 的穩態，相對 `idle`：FPS 下降超過 10，或 draw call 平均增加超過三成，或尖峰窗出現 `hitchMs` 以上的幀。證據寫明減掉待機之後的差。

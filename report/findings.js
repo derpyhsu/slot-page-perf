@@ -363,6 +363,44 @@ function causeTextBase(c) {
   return null;
 }
 
+// A level that steps at one spin and never comes back in any later spin: draw calls (median of
+// the spin) and active nodes after it settled going up, FPS going down. Every spin after the step
+// must be worse than every spin before it, by more than the margin. Normal and turbo spins are
+// separate series and the first of each is left out (first-time loading). Ranked by the jump.
+function worseFrom(ev, T) {
+  const W = T.worseFrom || {};
+  const minBefore = W.minBefore || 2;
+  const minAfter = W.minAfter || 3;
+  const nodesAt = new Map(ev.spinNodes || []);
+  const out = [];
+  ["spin", "turbo"].forEach((kind) => {
+    const re = new RegExp(`^${kind}-(\\d+)$`);
+    const spins = (ev.stages || []).filter((s) => re.test(s.name)).map((s) => ({ n: Number(s.name.match(re)[1]), s })).sort((a, b) => a.n - b.n).slice(1);
+    const metrics = [
+      { metric: "draws", up: true, of: (x) => (x.s.draws && x.s.draws.p50 > 0 ? x.s.draws.p50 : null), abs: (W.draws || {}).abs || 5, rel: (W.draws || {}).rel || 0.15 },
+      { metric: "nodes", up: true, of: (x) => (nodesAt.has(x.s.name) ? nodesAt.get(x.s.name) : null), abs: (W.nodes || {}).abs || 20, rel: (W.nodes || {}).rel || 0.05 },
+      { metric: "fps", up: false, of: (x) => (x.s.fps != null ? x.s.fps : null), abs: (W.fps || {}).abs || 3, rel: 0 },
+    ];
+    metrics.forEach((m) => {
+      const pts = spins.map((x) => ({ n: x.n, v: m.of(x) })).filter((p) => p.v != null);
+      let best = null;
+      for (let k = minBefore; k <= pts.length - minAfter; k += 1) {
+        const before = pts.slice(0, k).map((p) => p.v);
+        const after = pts.slice(k).map((p) => p.v);
+        const edge = m.up ? Math.max(...before) : Math.min(...before);
+        const far = m.up ? Math.min(...after) : Math.max(...after);
+        const jump = m.up ? far - edge : edge - far;
+        const margin = Math.max(m.abs, m.rel * Math.abs(edge));
+        if (jump > margin && (!best || jump > best.jump)) best = { k, jump, before, after, edge, far };
+      }
+      if (!best) return;
+      const med = (xs) => { const s = xs.slice().sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+      out.push({ id: "worse-from-spin", stage: kind, metric: m.metric, from: pts[best.k].n, spins: [pts[0].n, pts[pts.length - 1].n], before: { edge: round(best.edge), median: round(med(best.before)), n: best.before.length }, after: { edge: round(best.far), median: round(med(best.after)), n: best.after.length } });
+    });
+  });
+  return out;
+}
+
 function findings(ev, T) {
   const out = [];
   const stages = ev.stages || [];
@@ -438,6 +476,8 @@ function findings(ev, T) {
     // No major GC in the run: the rise may still be reclaimable. Suspected, not confirmed.
     out.push({ id: "leak-suspected", status: "no-major-gc", from: fit.from, to: fit.to, delta: fit.growthMb, slopeMb: fit.slopeMb, tailSlopeMb: fit.tailSlopeMb, featureSpins: fit.featureSpins });
   }
+
+  worseFrom(ev, T).forEach((f) => out.push(f));
 
   const idle = g("idle");
   ["history-before", "rules", "history-after"].forEach((p) => {

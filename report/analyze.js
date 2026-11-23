@@ -753,6 +753,24 @@ function findingRows() {
   const step = found.find((f) => f.id === "heap-step");
   if (step) rows.push({ rule: "heap-step", level: "yellow", title: `暖機後 JS heap 多了 ${Math.round(step.delta)} MB，只在其中一半增加`, area: "記憶體", fix: `${halvesText(step)}。只有一半在增加，不算持續增長，也不封頂；要知道多出來的是什麼，用 slot-perf-drill 的 heap 工具。` + nodeNote, stage: null, t: null });
 
+  // A level that stepped at one spin and stayed: one row per series and starting spin.
+  const METRIC = { draws: ["draw call 中位數", "", "變多"], nodes: ["顯示中的節點", " 個", "變多"], fps: ["FPS", "", "變低"] };
+  const worse = found.filter((f) => f.id === "worse-from-spin");
+  const worseKeys = [...new Set(worse.map((f) => `${f.stage}|${f.from}`))];
+  worseKeys.forEach((key) => {
+    const fs = worse.filter((f) => `${f.stage}|${f.from}` === key);
+    const f0 = fs[0];
+    const word = f0.stage === "turbo" ? "加速第" : "第";
+    const title = `從${word} ${f0.from} 轉起，${fs.map((f) => `${METRIC[f.metric][0]}${METRIC[f.metric][2]}`).join("、")}，之後沒有回來`;
+    const facts = fs.map((f) => {
+      const [label, unit] = METRIC[f.metric];
+      const worst = f.metric === "fps" ? "最高" : "最少";
+      const prev = f.metric === "fps" ? "最低" : "最多";
+      return `${label}：第 ${f.spins[0]}–${f.from - 1} 轉${prev} ${f.before.edge}${unit}（中位數 ${f.before.median}），第 ${f.from}–${f.spins[1]} 轉${worst} ${f.after.edge}${unit}（中位數 ${f.after.median}）`;
+    });
+    rows.push({ rule: "worse-from-spin", level: "yellow", title, area: fs.some((f) => f.metric === "draws") ? "draw call" : fs.some((f) => f.metric === "fps") ? "FPS" : "CPU", fix: `${facts.join("；")}（第 1 轉不算）。之後每一轉都比之前每一轉差，轉完時也還在；要找多出來的是什麼，在轉完的畫面上用 slot-perf-drill 的 drawcalls 看哪個子樹畫最多。` + nodeNote, stage: f0.stage, t: null });
+  });
+
   const idle = grp("idle");
   const labelCount = (snap) => (snap && snap.labels ? (snap.labels.noCacheTtf != null ? snap.labels.noCacheTtf : snap.labels.noCache) : null);
   const panelFix = (stage) => {

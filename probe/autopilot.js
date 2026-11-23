@@ -26,6 +26,7 @@
     clearRef: null,
     coverBase: null,
     spinTimes: [],
+    spinNodes: [],
     longAsks: 0,
     entryPressed: {},
     gc: [],
@@ -664,6 +665,8 @@
     st.spinTimes.push(took);
     if (took > 12000) log(name + " long " + took + "ms (feature or big win?)");
     st.spins += 1;
+    // Active nodes once the spin has settled, for a level that steps up at one spin and stays.
+    try { st.spinNodes.push([name, P.live(true).activeNodes]); } catch (e) {}
     await sleep(300);
     return true;
   }
@@ -984,7 +987,7 @@
     // At needs "buy": do not buy (the balance is short, or the screen is not a plain buy).
     skip: function () { return resume({ skip: true }); },
     result: function () {
-      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, notStarted: st.notStarted, feature: st.feature || null, log: st.log };
+      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, notStarted: st.notStarted, spinNodes: st.spinNodes, feature: st.feature || null, log: st.log };
     }
   };
 

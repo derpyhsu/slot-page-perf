@@ -54,6 +54,7 @@
   "leakMb": 15,
   "leakTailSpins": 10,
   "census": { "minNodes": 5 },
+  "worseFrom": { "minBefore": 2, "minAfter": 3, "draws": { "abs": 5, "rel": 0.15 }, "nodes": { "abs": 20, "rel": 0.05 }, "fps": { "abs": 3 } },
   "heap": { "featureFactor": 5, "floorWindowMs": 10000, "majorGcDropMb": 8, "tailSlopeMb": 0.3 },
   "timeline": {
     "bucketMs": 250,

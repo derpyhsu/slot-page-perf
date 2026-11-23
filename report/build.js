@@ -91,6 +91,7 @@ const ev = {
   entry: raw.entry,
   gc: raw.gc || [],
   census: raw.census || undefined,
+  spinNodes: raw.spinNodes && raw.spinNodes.length ? raw.spinNodes : undefined,
   feature: raw.feature || undefined,
   coverage,
   findings: [],

@@ -378,5 +378,27 @@ const cc3 = global.cc;
   assert.strictEqual(JSON.stringify(evI.score), JSON.stringify(ev.score), "not scored");
 }
 
+// A level that steps up at spin 6 and stays: draw calls and active nodes, one row.
+{
+  const dW = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+  const sW = JSON.parse(JSON.stringify(s));
+  const spinNodes = [];
+  sW.stages.forEach((x) => {
+    const m = x.name.match(/^spin-(\d+)$/);
+    if (!m) return;
+    const n = Number(m[1]);
+    x.draws.p50 = n === 1 ? 200 : n < 6 ? 40 + n : 100 + n;
+    spinNodes.push([x.name, n < 6 ? 500 : 800]);
+  });
+  fs.writeFileSync(path.join(dW, "raw.json"), JSON.stringify(Object.assign({}, raw, { summary: sW, spinNodes })));
+  execFileSync(process.execPath, [path.join(root, "report", "build.js"), dW], { encoding: "utf8" });
+  const evW = JSON.parse(fs.readFileSync(path.join(dW, "evidence.json"), "utf8"));
+  const wf = evW.findings.filter((f) => f.id === "worse-from-spin");
+  assert.deepStrictEqual(wf.map((f) => [f.metric, f.from]).sort(), [["draws", 6], ["nodes", 6]], "draw calls and nodes step at spin 6, spin 1 left out");
+  const wr = evW.todo.filter((t) => t.rule === "worse-from-spin");
+  assert.ok(wr.length === 1 && wr[0].title.includes("從第 6 轉起") && wr[0].fix.includes("第 2–5 轉最多 45") && wr[0].fix.includes("第 6–12 轉最少 106"), "one row with both levels: " + (wr[0] && wr[0].fix));
+  assert.ok(!ev.findings.some((f) => f.id === "worse-from-spin"), "flat run has no step");
+}
+
 console.log(digest.trim());
 console.log(`\nok ${ticks} ticks, run at ${runDir}`);
