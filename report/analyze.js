@@ -18,7 +18,7 @@ const cfg = thresholds.scoring;
 const ev = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
 
 const { stageFrames } = require("./frames");
-const { heapFit, gcHalves, causeText, labelText, nodeGrowth, nodeGrowthText, panelNodes } = require("./findings");
+const { heapFit, gcHalves, causeText, canvasText, labelText, nodeGrowth, nodeGrowthText, panelNodes } = require("./findings");
 
 const NOT_GAME = new Set(["boot", "loading", "splash", "enter", "game-ready", "settle", "gap"]);
 const stages = ev.stages || [];
@@ -607,6 +607,53 @@ ev.findingRows = findingRows();
 ev.todo = todo();
 ev.fps = fpsTable();
 ev.losses = losses();
+ev.stalls = stallTable();
+ev.longSpins = longSpins();
+
+// Every stall in the run, in time order, with its cause in a few words and how many times the
+// 卡頓頻率 item counted it. That item counts every hitch entry of the play stages, so a long task
+// that overlaps a frame stall is counted again (shown as 2).
+function stallWord(c) {
+  if (!c) return null;
+  const W = { "loading-burst": "同時收完多個下載", "texture-upload": "貼圖上傳", deserialize: "資源解析", "shader-compile": "shader 編譯", instantiate: "建立節點", label: "Label 排版繪字", component: "元件", render: "繪製", layout: "樣式與版面", script: "腳本", activate: "節點啟用／停用", handler: "編輯器回呼", websocket: "WebSocket 訊息處理", "spine-build": "Spine 骨架資料解析" };
+  const name = c.kind === "component" || c.kind === "handler" || c.kind === "instantiate" || c.kind === "spine-build" ? c.name : c.kind === "script" ? c.file : c.kind === "label" ? (c.top || [])[0] && c.top[0].path : c.kind === "activate" ? c.top : null;
+  let w = `${W[c.kind] || c.kind}${name ? ` ${name}` : ""}`;
+  if (c.inside && c.inside.length) w += `（在${c.inside.map((x) => W[x.kind] || x.kind).join("、")}裡）`;
+  return w;
+}
+function stallTable() {
+  const counted = new Set(baseStages.map((s) => s.name));
+  const hitchF = (ev.findings || []).filter((f) => /^hitch-/.test(f.id));
+  const rows = [];
+  stages.forEach((s) => {
+    if (["splash", "gap", "boot"].includes(s.name)) return;
+    const hs = s.hitches || [];
+    const overlap = (a, b) => a.t < b.t + b.dt && b.t < a.t + a.dt;
+    hs.forEach((h) => {
+      if (h.source === "longtask" && hs.some((o) => o !== h && o.source !== "longtask" && overlap(o, h))) return;
+      const f = hitchF.find((x) => x.stage === s.name && x.t === h.t && x.value === h.dt);
+      const again = h.source === "longtask" ? 0 : hs.filter((o) => o.source === "longtask" && overlap(o, h)).length;
+      const cv = f && f.canvas;
+      rows.push({ t: h.t, stage: s.name, dt: h.dt, cause: f ? stallWord(f.cause) : null, canvasShare: cv ? round(cv.ms / h.dt, 2) : undefined, counted: counted.has(s.name) ? 1 + again : 0 });
+    });
+  });
+  return rows.sort((a, b) => a.t - b.t);
+}
+// Spins far longer than the others in their series (a feature, a big win): what the frames did.
+// Facts only; nothing here says what the spin was.
+function longSpins() {
+  const out = [];
+  ["spin", "turbo"].forEach((kind) => {
+    const list = spinStages.filter((s) => s.name.startsWith(kind + "-") && s.wallMs > 0);
+    if (list.length < 3) return;
+    const sorted = list.map((s) => s.wallMs).sort((a, b) => a - b);
+    const med = sorted[Math.floor(sorted.length / 2)];
+    list.filter((s) => s.wallMs > med * ((thresholds.longSpinFactor) || 3)).forEach((s) => {
+      out.push({ stage: s.name, sec: round(s.wallMs / 1000, 1), medianSec: round(med / 1000, 1), fps: s.fps, fpsLow: s.fpsLow, drawsMax: s.draws ? s.draws.max : null, stalls: (s.hitches || []).length, worstMs: (s.hitches || []).reduce((a, h) => Math.max(a, h.dt), 0) || undefined });
+    });
+  });
+  return out;
+}
 
 // Where the points went: each scored item's share of 100 minus the score, with the scorer's own
 // weight normalization (unmeasured items left out), so a score's losses add up to 100 minus its
@@ -721,7 +768,8 @@ function findingRows() {
   // same time; it is reported that way, not as the cause.
   const stallFix = (worst) => {
     const lt = worst.labels ? `其中${labelText(worst.labels, worst.value)}。` : "";
-    return stallBase(worst) + lt;
+    const ct = worst.canvas && !(worst.cause && worst.cause.kind === "texture-upload") ? `其中${canvasText(worst.canvas, worst.value)}。` : "";
+    return stallBase(worst) + lt + ct;
   };
   const stallBase = (worst) => {
     const ct = causeText(worst.cause);
@@ -836,6 +884,15 @@ function findingRows() {
     rows.push({ rule: "worse-from-spin", level: "yellow", title, area: fs.some((f) => f.metric === "draws") ? "draw call" : fs.some((f) => f.metric === "fps") ? "FPS" : "CPU", fix: `${facts.join("；")}（第 1 轉不算）。之後每一轉都比之前每一轉差，轉完時也還在；要找多出來的是什麼，在轉完的畫面上用 slot-perf-drill 的 drawcalls 看哪個子樹畫最多。` + nodeNote, stage: f0.stage, t: null });
   });
 
+  // Labels drawn again with unchanged text: one row, stages with the most first.
+  const redraw = found.filter((f) => f.id === "label-redraw").sort((a, b) => b.sameMb - a.sameMb || b.same - a.same);
+  if (redraw.length) {
+    const r0 = redraw[0];
+    const via = (g) => [g.enable ? `啟用時 ${g.enable}` : "", g.render ? `繪製時 ${g.render}` : "", g.component ? `元件裡 ${g.component}` : ""].filter(Boolean).join("、");
+    const where = redraw.slice(0, 3).map((f) => `${stageName(f.stage) || f.stage}：${f.same} 次 ${f.sameMb} MB（${f.top.slice(0, 3).map((g) => `${g.path} ${g.labels} 個，重畫 ${g.same} 次${via(g) ? `，上傳在${via(g)}` : ""}`).join("；")}）`).join("。");
+    rows.push({ rule: "label-redraw", level: r0.sameMb >= 5 ? "orange" : "yellow", title: `Label 文字沒變卻又畫了一次再上傳：${stageName(r0.stage) || r0.stage}最多，${r0.same} 次、${r0.sameMb} MB`, area: "卡頓", fix: `同一段裡，同一個系統字或 TTF Label 在文字相同時又上傳了一次貼圖，每次都要重畫整張文字再送進 GPU。${where}。`, stage: r0.stage, t: null });
+  }
+
   const idle = grp("idle");
   const labelCount = (snap) => (snap && snap.labels ? (snap.labels.noCacheTtf != null ? snap.labels.noCacheTtf : snap.labels.noCache) : null);
   const panelFix = (stage) => {
@@ -846,6 +903,14 @@ function findingRows() {
       return `這一頁有 ${n} 個沒開快取的系統字，每個自己一張貼圖，不能跟圖集合批。固定文字改 BitmapFont 或 BITMAP，常變的數字用 CHAR。${samples ? `例如 ${samples}。` : ""}`;
     }
     return "這頁的圖合成圖集，被面板蓋住的層關掉。";
+  };
+  const uploadNote = (stage) => {
+    const list = stages.filter((s) => s.name === stage || s.name === stage + "-spike");
+    const sum = (k) => list.reduce((a, s) => { const u = s.uploads && s.uploads[k]; return u ? { n: a.n + u.n, mb: a.mb + u.mb } : a; }, { n: 0, mb: 0 });
+    const c = sum("canvas");
+    const im = sum("image");
+    if (!c.n && !im.n) return "";
+    return `打開時上傳貼圖：系統字 ${c.n} 次 ${round(c.mb, 1)} MB、圖片 ${im.n} 張 ${round(im.mb, 1)} MB。`;
   };
   const heavy = found.filter((f) => f.id === "panel-heavier" && f.drawRatio != null && f.drawRatio > 0.3 && grp(f.stage) && idle);
   const hist = heavy.filter((f) => f.stage === "history-before" || f.stage === "history-after");
@@ -858,12 +923,12 @@ function findingRows() {
     const title = other
       ? `下注紀錄開了 ${ranked.length} 次，較重的一次每幀畫 ${Math.round(top.g.draws)} 次，是待機的 ${round(ratio, 1)} 倍（另一次 ${Math.round(other.g.draws)} 次）`
       : `下注紀錄每一幀畫 ${Math.round(top.g.draws)} 次，是待機的 ${round(ratio, 1)} 倍`;
-    rows.push({ rule: "panel-history", level: ratio >= 2 ? "orange" : "yellow", title, area: "draw call", fix: panelFix(top.f.stage), stage: top.f.stage, t: null });
+    rows.push({ rule: "panel-history", level: ratio >= 2 ? "orange" : "yellow", title, area: "draw call", fix: panelFix(top.f.stage) + uploadNote(top.f.stage), stage: top.f.stage, t: null });
   }
   rest.forEach((f) => {
     const x = grp(f.stage);
     const ratio = x.draws / idle.draws;
-    rows.push({ rule: `panel-${f.stage}`, level: ratio >= 2 ? "orange" : "yellow", title: `${stageName(f.stage)}每一幀畫 ${Math.round(x.draws)} 次，是待機的 ${round(ratio, 1)} 倍`, area: "draw call", fix: panelFix(f.stage), stage: f.stage, t: null });
+    rows.push({ rule: `panel-${f.stage}`, level: ratio >= 2 ? "orange" : "yellow", title: `${stageName(f.stage)}每一幀畫 ${Math.round(x.draws)} 次，是待機的 ${round(ratio, 1)} 倍`, area: "draw call", fix: panelFix(f.stage) + uploadNote(f.stage), stage: f.stage, t: null });
   });
   if (found.some((f) => f.id === "panel-left-open")) rows.push({ rule: "panel-left-open", level: "orange", title: "關掉面板後，畫面工作量沒回到待機", area: "draw call", fix: "關面板時把節點設成不啟用或銷毀，不要只是移出畫面。" + panelNodeNote(), stage: "idle-after-rules", t: null });
 

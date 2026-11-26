@@ -52,6 +52,17 @@ if (todo.length) {
   todo.forEach((r) => lines.push(`| ${dot[r.level] || dot.red} ${r.n} | ${cell(r.title)}${r.parts && r.parts.length ? `（含：${cell(r.parts.map((x) => x.title).join("；"))}）` : ""} | ${cell(r.area)} | ${cell(r.fix)} |`));
 }
 
+const stalls = ev.stalls || [];
+if (stalls.length) {
+  lines.push("");
+  lines.push(`## 每一次停頓（${stalls.length} 次，卡頓頻率算了 ${stalls.reduce((a, r) => a + r.counted, 0)} 次）`);
+  lines.push("");
+  lines.push("| 時間 | 段 | 長度 | 原因 | 算進頻率 |");
+  lines.push("| --- | --- | --- | --- | --- |");
+  const clk = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+  stalls.forEach((r) => lines.push(`| ${clk(r.t)} | ${cell(r.stage)} | ${Math.round(r.dt)} ms | ${cell(r.cause || "沒量到")}${r.canvasShare != null ? `；系統字貼圖 ${Math.round(r.canvasShare * 100)}%` : ""} | ${r.counted || "—"} |`));
+}
+
 lines.push("");
 lines.push("## 目前狀況");
 lines.push("");

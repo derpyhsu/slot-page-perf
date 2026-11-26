@@ -70,7 +70,7 @@
   };
 
   function newLedger() {
-    return { texN: 0, texBytes: 0, texMs: 0, texTopBytes: 0, texTop: "", dlDone: 0, dlNames: [], dlMax: 0, desN: 0, desMs: 0, shN: 0, shMs: 0, instN: 0, instMs: 0, instTop: "", instTopMs: 0, upd: 0, rnd: 0, ticks: 0, comps: {}, calls: 0, lblN: 0, lblMs: 0, lbl: null, wsN: 0, wsMs: 0, wsTopMs: 0, wsTopBytes: 0, actN: 0, actOff: 0, actMs: 0, churn: 0, actSeen: null, actTopMs: 0, actTopNode: null, hdN: 0, hdMs: 0, hdTop: "", hdTopMs: 0 };
+    return { texN: 0, texBytes: 0, texMs: 0, texTopBytes: 0, texTop: "", dlDone: 0, dlNames: [], dlMax: 0, desN: 0, desMs: 0, shN: 0, shMs: 0, instN: 0, instMs: 0, instTop: "", instTopMs: 0, upd: 0, rnd: 0, ticks: 0, comps: {}, calls: 0, lblN: 0, lblMs: 0, lbl: null, wsN: 0, wsMs: 0, wsTopMs: 0, wsTopBytes: 0, actN: 0, actOff: 0, actMs: 0, churn: 0, actSeen: null, actTopMs: 0, actTopNode: null, hdN: 0, hdMs: 0, hdTop: "", hdTopMs: 0, texCanvasN: 0, texCanvasBytes: 0, texCanvasMs: 0, texLbl: null, spN: 0, spMs: 0, spTop: "", spTopMs: 0 };
   }
   state.fw = newLedger();
 
@@ -161,6 +161,9 @@
       gpus: [],
       draws: [],
       hitches: [],
+      // Texture uploads by source: [count, bytes, ms]. lblUp: per label component, its uploads.
+      up: { canvas: [0, 0, 0], image: [0, 0, 0], data: [0, 0, 0] },
+      lblUp: null,
       heapStart: heapMb(),
       texStart: state.texBytes,
       gpuStart: gpuTotal(),
@@ -180,6 +183,8 @@
     s.gpuEnd = gpuTotal();
     s.vsyncMs = vsyncMs();
     s.capFps = frameCap();
+    s.upLabels = labelUploads(s.lblUp);
+    s.lblUp = null;
     state.stages.push(s);
     state.stage = null;
   }
@@ -256,6 +261,8 @@
       desN: fw.desN, desMs: round(fw.desMs),
       shN: fw.shN, shMs: round(fw.shMs),
       instN: fw.instN, instMs: round(fw.instMs), instTop: fw.instTop || undefined,
+      texCanvas: fw.texCanvasN ? { n: fw.texCanvasN, mb: round(fw.texCanvasBytes / 1048576), ms: round(fw.texCanvasMs), top: safeTexLabels(fw) } : undefined,
+      sp: fw.spN ? { n: fw.spN, ms: round(fw.spMs), top: fw.spTop || undefined, topMs: round(fw.spTopMs) } : undefined,
       lbl: state.compOff ? undefined : safeLabels(fw),
       ws: fw.wsN ? { n: fw.wsN, ms: round(fw.wsMs), topMs: round(fw.wsTopMs), topKb: round(fw.wsTopBytes / 1024) } : undefined,
       act: fw.actN + fw.actOff && !state.compOff ? { n: fw.actN, off: fw.actOff, ms: round(fw.actMs), churn: fw.churn, top: safePath(fw.actTopNode), topMs: round(fw.actTopMs) } : undefined,
@@ -463,10 +470,12 @@
         } catch (e) {}
         state.texBytes += bytes;
         if (bytes >= SETTLE_UPLOAD_BYTES) state.lastBigUploadAt = t0;
+        var srcArg = arguments[arguments.length - 1];
         var ret = orig.apply(this, arguments);
         state.fw.texN += 1;
         state.fw.texBytes += bytes;
         state.fw.texMs += performance.now() - t0;
+        try { noteUpload(srcArg, bytes, performance.now() - t0); } catch (e) {}
         if (bytes > state.fw.texTopBytes) {
           state.fw.texTopBytes = bytes;
           var desc = "";
@@ -1186,6 +1195,118 @@
     }
   }
 
+  // Where an uploaded texture came from. A canvas is text drawn by a system-font or TTF label (or
+  // another canvas the game draws); an image or bitmap is a picture file; typed data is a
+  // compressed or raw texture. Canvases are matched to the label that owns them; a canvas upload
+  // made while a label is being laid out is put on that label.
+  var labelCanvas = typeof WeakMap === "function" ? new WeakMap() : null;
+  function srcKind(src) {
+    if (!src || typeof src !== "object") return "data";
+    if (src.byteLength != null) return "data";
+    if (typeof src.getContext === "function") return "canvas";
+    return "image";
+  }
+  function noteLabelCanvas(comp) {
+    try {
+      var d = comp._assemblerData || comp.assemblerData;
+      if (labelCanvas && d && d.canvas) labelCanvas.set(d.canvas, comp);
+    } catch (e) {}
+  }
+  function strHash(str) {
+    var h = 2166136261;
+    for (var i = 0; i < str.length; i += 1) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function noteUpload(src, bytes, ms) {
+    var kind = srcKind(src);
+    var s = state.stage;
+    if (s) { var u = s.up[kind]; u[0] += 1; u[1] += bytes; u[2] += ms; }
+    if (kind !== "canvas") return;
+    var fw = state.fw;
+    fw.texCanvasN += 1;
+    fw.texCanvasBytes += bytes;
+    fw.texCanvasMs += ms;
+    var comp = (labelCanvas && labelCanvas.get(src)) || state.curLabel;
+    if (!comp || typeof Map !== "function") return;
+    var m = fw.texLbl || (fw.texLbl = new Map());
+    var t = m.get(comp) || [0, 0];
+    t[0] += 1; t[1] += bytes;
+    m.set(comp, t);
+    if (!s) return;
+    // The same label uploaded again with the same text means the text was drawn again for nothing.
+    var lm = s.lblUp || (s.lblUp = new Map());
+    var r = lm.get(comp);
+    if (!r) { r = { n: 0, bytes: 0, same: 0, sameBytes: 0, enable: 0, render: 0, component: 0, hash: null }; lm.set(comp, r); }
+    var hash = typeof comp.string === "string" ? strHash(comp.string) : null;
+    if (r.n && hash != null && hash === r.hash) { r.same += 1; r.sameBytes += bytes; }
+    r.hash = hash;
+    r.n += 1;
+    r.bytes += bytes;
+    if (actDepth) r.enable += 1; else if (compDepth) r.component += 1; else r.render += 1;
+  }
+  // Per stage: label uploads grouped by folded node path, most bytes first. Text is never kept.
+  function labelUploads(lm) {
+    if (!lm) return null;
+    var groups = {};
+    lm.forEach(function (r, comp) {
+      var k = "?";
+      try { k = comp.node ? groupPath(comp.node) : "?"; } catch (e) {}
+      var g = groups[k] || (groups[k] = { path: k, labels: 0, n: 0, bytes: 0, same: 0, sameBytes: 0, enable: 0, render: 0, component: 0 });
+      g.labels += 1; g.n += r.n; g.bytes += r.bytes; g.same += r.same; g.sameBytes += r.sameBytes;
+      g.enable += r.enable; g.render += r.render; g.component += r.component;
+    });
+    var all = Object.keys(groups).map(function (k) { return groups[k]; });
+    var tot = all.reduce(function (a, g) { a.labels += g.labels; a.same += g.same; a.sameBytes += g.sameBytes; return a; }, { labels: 0, same: 0, sameBytes: 0 });
+    var top = all.sort(function (a, b) { return b.bytes - a.bytes; }).slice(0, 5).map(function (g) {
+      return { path: g.path, labels: g.labels, n: g.n, mb: round(g.bytes / 1048576), same: g.same || undefined, sameMb: g.same ? round(g.sameBytes / 1048576) : undefined, enable: g.enable || undefined, render: g.render || undefined, component: g.component || undefined };
+    });
+    return { labels: tot.labels, same: tot.same, sameMb: round(tot.sameBytes / 1048576), top: top };
+  }
+  function uploadsOf(s) {
+    var u = s.up;
+    if (!u) return undefined;
+    var f = function (x) { return x[0] ? { n: x[0], mb: round(x[1] / 1048576), ms: round(x[2]) } : undefined; };
+    if (!u.canvas[0] && !u.image[0] && !u.data[0]) return undefined;
+    return { canvas: f(u.canvas), image: f(u.image), data: f(u.data), labels: s.upLabels || (s.lblUp ? labelUploads(s.lblUp) : undefined) || undefined };
+  }
+  function safeTexLabels(fw) {
+    try {
+      if (!fw.texLbl) return undefined;
+      var groups = {};
+      fw.texLbl.forEach(function (t, comp) {
+        var k = comp.node ? groupPath(comp.node) : "?";
+        var g = groups[k] || (groups[k] = { path: k, n: 0, bytes: 0 });
+        g.n += t[0]; g.bytes += t[1];
+      });
+      return Object.keys(groups).map(function (k) { return groups[k]; }).sort(function (a, b) { return b.bytes - a.bytes; }).slice(0, 3).map(function (g) { return { path: g.path, n: g.n, mb: round(g.bytes / 1048576) }; });
+    } catch (e) { return undefined; }
+  }
+
+  // Spine skeleton data parsed on first use: SkeletonData.getRuntimeData builds the runtime data
+  // from JSON or binary the first time a skeleton needs it, and caches it.
+  function hookSpineBuild(cc) {
+    var SD = null;
+    try { SD = (window.sp && window.sp.SkeletonData) || (cc.js && cc.js.getClassByName && cc.js.getClassByName("sp.SkeletonData")); } catch (e) {}
+    var proto = SD && SD.prototype;
+    if (!proto || typeof proto.getRuntimeData !== "function" || proto.getRuntimeData.__slotSp) return;
+    var orig = proto.getRuntimeData;
+    var w = function () {
+      if (this._skeletonCache) return orig.apply(this, arguments);
+      var t0 = performance.now();
+      var ret = orig.apply(this, arguments);
+      var ms = performance.now() - t0;
+      if (this._skeletonCache) {
+        var fw = state.fw;
+        fw.spN += 1;
+        fw.spMs += ms;
+        if (ms > fw.spTopMs) { fw.spTopMs = ms; fw.spTop = String(this.name || this._name || "").slice(0, 60); }
+      }
+      return ret;
+    };
+    w.__slotSp = true;
+    try { proto.getRuntimeData = w; } catch (e) {}
+  }
+
   // Label text layout and drawing. Every path that rebuilds a label's text, onEnable and the render
   // flow alike, ends in its assembler's updateRenderData(comp): 2.4 Label._applyFontTexture and
   // RenderFlow._updateRenderData, 3.x Label/UIRenderer.updateRenderData. The assembler is wrapped
@@ -1201,18 +1322,27 @@
     if (typeof orig !== "function" || orig.__slotLbl) return;
     var L = cc.Label;
     var w = function (comp) {
-      if (lblDepth || state.compOff || !L || !(comp instanceof L)) return orig.apply(this, arguments);
-      lblDepth = 1;
-      var t0 = performance.now();
-      try { return orig.apply(this, arguments); } finally {
-        var ms = performance.now() - t0;
-        lblDepth = 0;
-        var fw = state.fw;
-        fw.lblMs += ms;
-        fw.lblN += 1;
-        fw.calls += 1;
-        var m = fw.lbl || (fw.lbl = new Map());
-        m.set(comp, (m.get(comp) || 0) + ms);
+      if (!L || !(comp instanceof L)) return orig.apply(this, arguments);
+      noteLabelCanvas(comp);
+      var prev = state.curLabel;
+      state.curLabel = comp;
+      try {
+        if (lblDepth || state.compOff) return orig.apply(this, arguments);
+        lblDepth = 1;
+        var t0 = performance.now();
+        try { return orig.apply(this, arguments); } finally {
+          var ms = performance.now() - t0;
+          lblDepth = 0;
+          var fw = state.fw;
+          fw.lblMs += ms;
+          fw.lblN += 1;
+          fw.calls += 1;
+          var m = fw.lbl || (fw.lbl = new Map());
+          m.set(comp, (m.get(comp) || 0) + ms);
+        }
+      } finally {
+        state.curLabel = prev;
+        noteLabelCanvas(comp);
       }
     };
     w.__slotLbl = true;
@@ -1236,6 +1366,16 @@
       };
       g.__slotLbl = true;
       try { A.getAssembler = g; } catch (e) {}
+    }
+    var apply = L.prototype._applyFontTexture;
+    if (typeof apply === "function" && !apply.__slotLbl) {
+      var a2 = function () {
+        var prev = state.curLabel;
+        state.curLabel = this;
+        try { return apply.apply(this, arguments); } finally { state.curLabel = prev; noteLabelCanvas(this); }
+      };
+      a2.__slotLbl = true;
+      try { L.prototype._applyFontTexture = a2; } catch (e) {}
     }
     var reset = L.prototype._resetAssembler;
     if (typeof reset === "function" && !reset.__slotLbl) {
@@ -1456,6 +1596,7 @@
     try { hookActivator(cc); } catch (e) {}
     try { state.capMs = 1000 / frameCap(); } catch (e) {}
     try { hookHandlers(cc); } catch (e) {}
+    try { hookSpineBuild(cc); } catch (e) {}
     // Component timing must stay cheap; above 0.3 ms per frame it is switched off for the run.
     if (!state.compOff && state.compCallUs != null && state.compFramesSeen > 300 && (state.compCalls / state.compFramesSeen) * state.compCallUs / 1000 > 0.3) state.compOff = true;
     try {
@@ -1538,6 +1679,7 @@
       heapStartMb: s.heapStart,
       heapEndMb: s.heapEnd == null ? heapMb() : s.heapEnd,
       texUploadMb: round((s.texEnd - s.texStart) / 1048576),
+      uploads: uploadsOf(s),
       // What reached the screen. capFps is cc.game's frame cap when the stage closed.
       presented: { frames: s.pres.n, hist: s.pres.hist, wasted: s.pres.wasted, vsyncMs: s.vsyncMs != null ? s.vsyncMs : vsyncMs(), capFps: s.capFps != null ? s.capFps : frameCap() }
     };

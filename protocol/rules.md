@@ -28,6 +28,7 @@
 - `deserialize`：資源解析時間過半。
 - `shader-compile`：shader 編譯與連結時間過半。
 - `instantiate`：`cc.instantiate` 時間過半；來源名稱可讀才寫名稱。
+- `spine-build`：Spine 骨架資料第一次解析（`SkeletonData.getRuntimeData` 從 JSON 或二進位建出執行用資料）時間過半。它包在 instantiate 和 onLoad 裡，所以排在它們前面。寫份數、時間、最慢那份的名稱。
 - `component`：單一元件類別的 `update`、`lateUpdate`、`onLoad`、`start`、`onEnable` 時間過半，類別名可讀（不是一兩個字母、不是 uuid）。巢狀呼叫只算最外層。元件計時每幀額外成本超過 0.3 ms 就自動關掉（`componentTiming.status` 為 `off-overhead`）。
 - `render`：引擎繪製時間扣掉上傳和 shader 後仍過半，而且有 draw call 數。
 - `layout`：重疊的 LoAF 樣式與版面時間過半。
@@ -38,6 +39,8 @@
   - `websocket`：WebSocket 訊息處理（`onmessage` 和 `addEventListener("message")`）時間過半。寫則數、時間、最慢一則的大小；訊息內容不讀不存。
 
 `activate`、`handler` 跟元件計時一起受 0.3 ms 上限管；`websocket` 一直量。
+
+系統字或 TTF Label 的貼圖上傳（來源是 canvas）佔該次 `dt` 四分之一以上、而原因不是 `texture-upload` 時，finding 的 `canvas` 寫上傳次數、MB、時間，以及依節點路徑分組的前三組，報告接在改法後面（「其中系統字貼圖上傳…」）。canvas 依它屬於哪個 Label 對回節點；Label 排版途中上傳的 canvas 也算那個 Label。
 
 原因不是 `label`、但 Label 時間佔該次 `dt` 四分之一以上時，finding 的 `labels` 寫同樣的明細，報告接在改法後面（「其中 Label 更新…」）。Label 計時跟元件計時一起受 0.3 ms 上限管，關掉就不量。
 
@@ -121,6 +124,14 @@ autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每�
 `nodeGrowth` 是 `after-warmup` 到 `end` 之間多出 `census.minNodes` 個以上的組，前五名，附每轉多幾個。`leak-suspected` 那一列和記憶體表的「節點」列照實寫出來。不在場景的節點可能是物件池（`cc.NodePool`）刻意留著的，所以只寫數字，不說是洩漏。
 
 `panel-left-open` 那一列另外寫 `idle` 到 `after-rules` 之間多出的組（`panelNodes`），附顯示中的個數。
+
+## label-redraw
+
+同一段裡，同一個系統字或 TTF Label 文字沒變卻又上傳了一次貼圖（探針對每次上傳時的文字算雜湊比對，不存文字）。整段合計達到 `labelRedraw.minSame` 次或 `labelRedraw.minMb` MB 才列。報告只列一列，寫最多的那段和前三段，各段依節點路徑分組，附上傳發生在啟用時（onEnable，節點啟用途中）、繪製時，還是元件的程式裡。
+
+## 停頓表
+
+報告把每一次停頓依時間列出：時間、段、長度、原因的簡稱（同上面的歸因，外層容器括號附上），以及系統字貼圖佔的比例。「算進頻率」是卡頓頻率那一項數了幾次：載入、開始畫面不算；和畫面停頓重疊的 long task 也被數了一次，寫 2。另外列出比同一串 spin 中位數長 3 倍（`longSpinFactor`）以上的轉：秒數、FPS、1% low、最多 draw call、停頓次數。只陳述，不判斷那一轉是什麼。
 
 ## worse-from-spin
 

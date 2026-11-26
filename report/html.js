@@ -74,6 +74,26 @@ ${parts ? `<div class="k">包含</div><ul class="parts">${parts}</ul>` : ""}
 </div>
 </details>`;
 }
+// Every stall, then spins far longer than the rest. Collapsed: the rows above already name the worst.
+function stallsHtml() {
+  const st = ev.stalls || [];
+  const ls = ev.longSpins || [];
+  if (!st.length && !ls.length) return "";
+  let h = "";
+  if (st.length) {
+    const n = st.reduce((a, r) => a + r.counted, 0);
+    h += `<details><summary>每一次停頓（${st.length} 次，卡頓頻率算了 ${n} 次）</summary><div class="scroll"><table><tr><th>時間</th><th>段</th><th class=num>長度</th><th>原因</th><th class=num>算進頻率</th></tr>` +
+      st.map((r) => `<tr><td class=num>${clock(r.t)}</td><td>${esc(stageLabel(r.stage))}${/-spike$/.test(r.stage) ? "（剛打開）" : ""}</td><td class=num>${Math.round(r.dt)} ms</td><td>${esc(r.cause || "沒量到")}${r.canvasShare != null ? esc(`；系統字貼圖 ${Math.round(r.canvasShare * 100)}%`) : ""}</td><td class=num>${r.counted ? r.counted : "—"}</td></tr>`).join("") +
+      `</table></div><p class="small">算進頻率是「卡頓頻率」這一項數了幾次：載入與開始畫面不算；和畫面停頓重疊的長任務會再算一次，寫 2。</p></details>`;
+  }
+  if (ls.length) {
+    h += `<details><summary>特別長的 spin（${ls.length} 轉，超過同一串中位數 3 倍）</summary><div class="scroll"><table><tr><th>轉</th><th class=num>秒數</th><th class=num>FPS</th><th class=num>1% low</th><th class=num>最多 draw</th><th class=num>停頓</th></tr>` +
+      ls.map((r) => `<tr><td>${esc(stageLabel(r.stage))}</td><td class=num>${r.sec}（中位數 ${r.medianSec}）</td><td class=num>${r.fps == null ? "—" : Math.round(r.fps)}</td><td class=num>${r.fpsLow == null ? "—" : Math.round(r.fpsLow)}</td><td class=num>${r.drawsMax == null ? "—" : r.drawsMax}</td><td class=num>${r.stalls}${r.worstMs ? `，最長 ${Math.round(r.worstMs)} ms` : ""}</td></tr>`).join("") +
+      `</table></div></details>`;
+  }
+  return h;
+}
+
 function todoHtml() {
   const rows = (ev.todo || []).filter((r) => !r.note);
   if (!rows.length) return '<p class="small">沒有要處理的地方。</p>';
@@ -325,6 +345,7 @@ ${readoutHtml(ev)}
 <section class="sec" id="todo-sec">
 <div class="sec-h"><h2>可優化項目</h2></div>
 ${todoHtml()}
+${stallsHtml()}
 </section>
 
 <section class="sec" id="timeline-h">

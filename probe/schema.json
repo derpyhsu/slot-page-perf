@@ -16,7 +16,7 @@
         "urlPath": { "type": "string", "description": "Path only. Never include the query string." }
       }
     },
-    "timeline": { "type": "object", "description": "Time series from summary().timeline. Bucket and long task field names are listed inside. loafs are Long Animation Frames (fields in loafFields, loafScriptFields); componentTiming says whether component update timing ran. Stage hitches carry work: per-frame update/render split, top components, texture, shader and instantiate time, lbl: label layout time with the top label groups by folded node path, font and settings (never the text), act: node activations (on, off, same-frame switch-backs, slowest node path), hd: editor-wired callbacks (component.handler of the slowest), ws: WebSocket message handlers (count, time, size of the slowest; never the payload)." },
+    "timeline": { "type": "object", "description": "Time series from summary().timeline. Bucket and long task field names are listed inside. loafs are Long Animation Frames (fields in loafFields, loafScriptFields); componentTiming says whether component update timing ran. Stage hitches carry work: per-frame update/render split, top components, texture, shader and instantiate time, lbl: label layout time with the top label groups by folded node path, font and settings (never the text), texCanvas: canvas texture uploads (system-font and TTF labels) with the top label groups, sp: Spine skeleton data parsed on first use, act: node activations (on, off, same-frame switch-backs, slowest node path), hd: editor-wired callbacks (component.handler of the slowest), ws: WebSocket message handlers (count, time, size of the slowest; never the payload)." },
     "cocos": {
       "type": "object",
       "properties": { "snapshots": { "type": "array", "description": "Results of __slotPerf.cocos() in stage order." } }
@@ -69,7 +69,7 @@
     "conditions": { "type": "object" },
     "channels": { "type": "object" },
     "sceneLog": { "type": "array" },
-    "stages": { "type": "array" },
+    "stages": { "type": "array", "description": "Probe stages. uploads: texture uploads by source (canvas = system-font and TTF labels, image, data) and labels: label uploads by folded node path, with same (re-uploads with unchanged text) and when they happened (enable, render, component)." },
     "spins": { "type": "array" },
     "memory": { "type": "object" },
     "resources": { "type": "object", "description": "Compact resource timing. Paths have no query string. `load` counts requests that started before game-ready, by kind. Missing on older runs." },
@@ -79,6 +79,8 @@
     "findings": { "type": "array" },
     "coverage": { "type": "object" },
     "gc": { "type": "array", "description": "Heap floor right after a forced full GC (heap snapshot): after-warmup, mid (halfway through the spins after warm-up), end, and after-feature when a free game was bought", "items": { "type": "object" } },
+    "stalls": { "type": "array", "description": "Written by report/analyze.js. Every stall in time order: t, stage, dt, cause (a few words), canvasShare, counted (how many times the 卡頓頻率 item counted it)." },
+    "longSpins": { "type": "array", "description": "Written by report/analyze.js. Spins over longSpinFactor times their series median: seconds, FPS, 1% low, max draw calls, stalls." },
     "spinNodes": { "type": "array", "description": "From the autopilot: [spin stage name, active nodes] taken in the gap after each spin settled (worse-from-spin rule).", "items": { "type": "array" } },
     "census": { "type": "array", "description": "Probe census after idle, after the panels (after-rules) and after each forced GC (after-warmup, mid, end): nodes, paths as [folded path, nodes, active] (at most 1000), made: instantiated nodes still referenced, by source name, split into inScene, detached and destroyed, and invisible: render nodes still drawn though nothing shows (own box outside the camera view, scale-0 boxes; in 2.x realtime Spine alpha-0 attachments with their area in screens, and skeletons with nothing to draw), each grouped by folded path. Counts only.", "items": { "type": "object" } },
     "nodeGrowth": { "type": "object", "description": "Written by report/analyze.js: scene groups and instantiated nodes that grew from after-warmup to end." },

@@ -183,6 +183,9 @@ function stallCause(h, loafs) {
     }
     if (w.shMs >= half && w.shN) c.push({ kind: "shader-compile", ms: w.shMs, n: w.shN });
     if (w.instMs >= half && w.instN) c.push({ kind: "instantiate", ms: w.instMs, n: w.instN, name: READABLE(w.instTop) ? w.instTop : undefined });
+    // Spine data parsed on first use sits inside instantiate or onLoad, so it outranks them.
+    const sp = w.sp;
+    if (sp && sp.ms >= half) c.push({ kind: "spine-build", ms: sp.ms, n: sp.n, name: READABLE(sp.top) ? sp.top : undefined, topMs: sp.topMs, rank: 1 });
     // Label time sits inside component and render time, so it outranks them: it names the nodes.
     const lb = w.lbl;
     if (lb && lb.ms >= half && lb.top && lb.top.length) c.push({ kind: "label", ms: lb.ms, n: lb.n, top: lb.top, rank: 1 });
@@ -219,6 +222,17 @@ function stallCause(h, loafs) {
   best.share = round(best.ms / dt, 2);
   if (inside.length) best.inside = inside.map((x) => Object.assign({}, x, { ms: round(x.ms) }));
   return best;
+}
+
+// System-font and TTF label textures uploaded in a stall, when they took a quarter of it or more.
+function canvasNote(h) {
+  const tc = h.work && h.work.texCanvas;
+  if (!tc || !(h.dt > 0) || tc.ms < h.dt * 0.25 || tc.ms > h.dt * 1.1) return undefined;
+  return tc;
+}
+function canvasText(tc, dt) {
+  const who = (tc.top || []).map((g) => `${g.path} ${g.n} 次 ${g.mb} MB`).join("、");
+  return `系統字貼圖上傳 ${tc.n} 次、${tc.mb} MB、${round(tc.ms)} ms（佔這次停頓 ${Math.round((tc.ms / dt) * 100)}%）${who ? `：${who}` : ""}`;
 }
 
 // Labels a stall spent time on, as measured: folded node path, how many, time, font and settings.
@@ -346,6 +360,7 @@ function causeTextBase(c) {
   switch (c.kind) {
     case "activate": return { fact: `節點啟用 ${c.n} 次、停用 ${c.off} 次，花 ${c.ms} ms（佔 ${pct}）${c.churn ? `；同一幀內切回 ${c.churn} 次` : ""}${c.top ? `；最慢一次是 ${c.top}（${round(c.topMs)} ms）` : ""}`, look: c.top ? `從 ${c.top} 的 active 切換和它底下的 onEnable、onDisable 查` : "從這一刻切換 active 的節點查" };
     case "handler": return { fact: `編輯器綁定的回呼 ${c.name} 花 ${c.ms} ms（佔 ${pct}${c.n > 1 ? `，共 ${c.n} 次回呼` : ""}）`, look: `從 ${c.name} 查` };
+    case "spine-build": return { fact: `Spine 骨架資料第一次解析 ${c.n} 份，花 ${c.ms} ms（佔 ${pct}）${c.name ? `；最慢的是 ${c.name}（${round(c.topMs)} ms）` : ""}`, look: c.name ? `從 ${c.name} 第一次用到的地方查（可提早解析，或改用二進位格式）` : "從這一刻第一次出現的 Spine 查" };
     case "websocket": return { fact: `WebSocket 訊息處理 ${c.n} 則，花 ${c.ms} ms（佔 ${pct}）${c.topKb != null ? `；最慢一則 ${c.topKb} KB、${round(c.topMs)} ms` : ""}`, look: "從收到訊息後執行的處理查（訊息內容不讀）" };
     case "loading-burst": return {
       fact: `同時下載 ${c.inFlight} 個、這一幀收完 ${c.done} 個${c.names ? `（${c.names.join("、")}）` : ""}；解析 ${round(c.desMs || 0)} ms、貼圖上傳 ${c.texN || 0} 張${c.mb ? ` ${c.mb} MB` : ""} ${round(c.texMs || 0)} ms，合計 ${c.ms} ms（佔 ${pct}）${c.top && c.topMb >= 1 ? `；最大一張 ${c.top}（解碼後 ${c.topMb} MB）` : ""}`,
@@ -422,7 +437,8 @@ function findings(ev, T) {
       else if (h.source === "longtask" || (h.cpu != null && h.cpu >= 0.8 * h.dt)) id = "hitch-main-thread";
       const cause = stallCause(h, loafs);
       const labels = cause && cause.kind === "label" ? undefined : labelNote(h);
-      out.push({ id, stage: s.name, t: h.t, value: h.dt, cpu: h.cpu == null ? null : h.cpu, urls: h.urls && h.urls.length ? h.urls : undefined, cause: cause || undefined, labels, work: h.work || undefined });
+      const canvas = canvasNote(h);
+      out.push({ id, stage: s.name, t: h.t, value: h.dt, cpu: h.cpu == null ? null : h.cpu, urls: h.urls && h.urls.length ? h.urls : undefined, cause: cause || undefined, labels, canvas, work: h.work || undefined });
     });
   });
 
@@ -478,6 +494,15 @@ function findings(ev, T) {
   }
 
   worseFrom(ev, T).forEach((f) => out.push(f));
+
+  // The same label uploaded again with unchanged text, within one stage: drawn again for nothing.
+  const R = T.labelRedraw || {};
+  stages.forEach((s) => {
+    const lb = s.uploads && s.uploads.labels;
+    if (!lb || !lb.same) return;
+    if (lb.same < (R.minSame || 3) && lb.sameMb < (R.minMb || 1)) return;
+    out.push({ id: "label-redraw", stage: s.name, same: lb.same, sameMb: lb.sameMb, labels: lb.labels, top: lb.top.filter((g) => g.same) });
+  });
 
   const idle = g("idle");
   ["history-before", "rules", "history-after"].forEach((p) => {
@@ -556,4 +581,4 @@ function findings(ev, T) {
   return { findings: out, groups: gs, softwareGpu: soft };
 }
 
-module.exports = { findings, gcHalves, stallCause, causeText, labelText, nodeGrowth, nodeGrowthText, panelNodes, groups, groupOf, heapFit, SOFTWARE_GPU };
+module.exports = { findings, gcHalves, stallCause, causeText, canvasText, labelText, nodeGrowth, nodeGrowthText, panelNodes, groups, groupOf, heapFit, SOFTWARE_GPU };

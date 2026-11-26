@@ -70,7 +70,9 @@ const reel = new SlotReelController();
 names.set(SlotReelController, "SlotReelController");
 // Label text layout through a 3.x-style assembler. spin-5: the label itself takes most of a frame.
 // spin-7: a localisation component's onLoad takes most of it, a smaller part being label layout.
-const ttfAsm = { updateRenderData(comp) { now += comp.cost || 0; } };
+const ttfAsm = { updateRenderData(comp) { now += comp.cost || 0; if (comp.upload) gl.texImage2D(0x0de1, 0, 0x1908, 0x1908, 0x1401, comp._assemblerData.canvas); } };
+// Uploading a canvas takes 30 ms here, inside the upload call as in a browser.
+WebGLRenderingContext.prototype.texImage2D = function () { const src = arguments[arguments.length - 1]; if (src && typeof src.getContext === "function") now += 30; return null; };
 Label.Assembler = { getAssembler: () => ttfAsm };
 const lblNode = node("lbl_win", []);
 const lblWin = Object.assign(new Label("PLAYER-8848"), { node: lblNode, overflow: 2, fontSize: 40, useSystemFont: true, fontFamily: "Arial", cost: 90 });
@@ -89,6 +91,14 @@ Label.prototype._resetAssembler = function () { this._assembler = new TTF24(); }
 const node24 = node("lbl_jackpot", []);
 const lbl24 = Object.assign(new Label("88,888.00"), { node: node24, overflow: 0, fontSize: 30, cost: 60 });
 let slow24 = 0;
+// spin-8: a TTF label drawn and uploaded twice with the same text in one frame (R1).
+// spin-10: Spine skeleton data parsed on first use (R2 cause).
+const ruleNode = node("txt_rule_3", []);
+const lblRule = Object.assign(new Label("Rules"), { node: ruleNode, overflow: 0, fontSize: 24, cost: 5, upload: 30, _assemblerData: { canvas: { width: 1024, height: 512, getContext() { return null; } } } });
+ruleNode.components.push(lblRule);
+let ruleTwice = false;
+class SkeletonData { getRuntimeData() { if (!this._skeletonCache) { now += this.cost; this._skeletonCache = {}; } return this._skeletonCache; } }
+let spineFirst = false;
 // Work outside the engine tick: a WebSocket message (spin-4) whose handler switches a node off and
 // on again, and a button callback wired in the editor (spin-6) that lays out a label.
 class FakeWS extends EventTarget {
@@ -119,14 +129,14 @@ global.cc = {
   UITransform,
   Camera,
   Vec3,
-  js: { getClassName: (o) => names.get(o) || names.get(o && o.constructor) || "Other", _registeredClassNames: { SlotReelController, LocalizableLabel } },
+  js: { getClassName: (o) => names.get(o) || names.get(o && o.constructor) || "Other", getClassByName: (n) => (n === "sp.SkeletonData" ? SkeletonData : null), _registeredClassNames: { SlotReelController, LocalizableLabel } },
   Component,
   Label,
   Director: { EVENT_AFTER_UPDATE: "director_after_update" },
   instantiate: (x) => x,
   deserialize: (x) => x,
   assetManager: { assets: { forEach: (f) => assets.forEach(f) } },
-  director: { _nodeActivator: activator, on(e, f) { listeners[e] = f; }, tick() { ticks += 1; now += 2; reel.update(); if (slowLabel) { slowLabel = false; Label.Assembler.getAssembler(lblWin).updateRenderData(lblWin); } if (slowLoc) { slowLoc = false; new LocalizableLabel().onLoad(); } if (slow24 === 1) { lbl24._resetAssembler(); lbl24._assembler.updateRenderData(lbl24); } if (slow24 === 2) lbl24._assembler.updateRenderData(lbl24); slow24 = 0; (listeners.director_after_update || (() => {}))(); now += 1; }, mainLoop() { throw new Error("3.x never calls mainLoop"); }, getScene: () => scene },
+  director: { _nodeActivator: activator, on(e, f) { listeners[e] = f; }, tick() { ticks += 1; now += 2; reel.update(); if (slowLabel) { slowLabel = false; Label.Assembler.getAssembler(lblWin).updateRenderData(lblWin); } if (slowLoc) { slowLoc = false; new LocalizableLabel().onLoad(); } if (slow24 === 1) { lbl24._resetAssembler(); lbl24._assembler.updateRenderData(lbl24); } if (slow24 === 2) lbl24._assembler.updateRenderData(lbl24); slow24 = 0; if (ruleTwice) { ruleTwice = false; Label.Assembler.getAssembler(lblRule).updateRenderData(lblRule); Label.Assembler.getAssembler(lblRule).updateRenderData(lblRule); } if (spineFirst) { spineFirst = false; Object.assign(new SkeletonData(), { name: "bigwin_fx", cost: 70 }).getRuntimeData(); } (listeners.director_after_update || (() => {}))(); now += 1; }, mainLoop() { throw new Error("3.x never calls mainLoop"); }, getScene: () => scene },
   game: { frameRate: 60 },
   macro: {},
 };
@@ -191,6 +201,8 @@ for (let i = 1; i <= 12; i += 1) {
   if (i === 6) { advance(500); between.push(() => new EventHandler("SpinPanel", "onClickBet", () => { now += 5; Label.Assembler.getAssembler(lblBet).updateRenderData(lblBet); }).emit()); }
   if (i === 5) { advance(500); slowLabel = true; }
   if (i === 7) { advance(500); slowLoc = true; }
+  if (i === 8) { advance(500); ruleTwice = true; }
+  if (i === 10) { advance(500); spineFirst = true; }
   if (i === 9) { advance(500); slow24 = 1; }
   if (i === 11) { advance(500); slow24 = 2; }
   advance(2000);
@@ -410,6 +422,26 @@ const cc3 = global.cc;
   assert.ok(fs.readFileSync(path.join(runDir, "report.html"), "utf8").includes("扣最多分的地方"), "losses on the first screen");
   const cap = leakEv.losses.caps.find((c) => c.category === "memory");
   assert.ok(cap && cap.cap === leakEv.score.memory.score && cap.fatal.includes("leak-suspected") && sumOf(leakEv, "memory") === 100 - cap.uncapped, "a fatal cap is stated beside the losses");
+}
+
+// R1, R2. Label textures by owner, the same text uploaded twice, Spine parse, every stall listed.
+{
+  const st8 = s.stages.find((x) => x.name === "spin-8");
+  assert.ok(st8.uploads && st8.uploads.canvas.n === 2 && st8.uploads.canvas.mb === 4, "canvas uploads counted per stage");
+  assert.deepStrictEqual((({ path, labels, n, same }) => ({ path, labels, n, same }))(st8.uploads.labels.top[0]), { path: "txt_rule_*", labels: 1, n: 2, same: 1 }, "label owner and same-text re-upload");
+  const h8 = ev.findings.find((f) => f.stage === "spin-8" && /^hitch-/.test(f.id));
+  assert.ok(h8 && h8.work.texCanvas.n === 2 && h8.work.texCanvas.top[0].path === "txt_rule_*", "stall carries the label uploads");
+  const rd = ev.findings.find((f) => f.id === "label-redraw" && f.stage === "spin-8");
+  assert.ok(rd && rd.same === 1 && rd.sameMb === 2, "same text uploaded again is a finding");
+  const rr = ev.todo.find((t) => t.rule === "label-redraw");
+  assert.ok(rr && rr.fix.includes("txt_rule_*") && rr.fix.includes("繪製時 2"), "row names the label and when: " + (rr && rr.fix));
+  const h10 = ev.findings.find((f) => f.stage === "spin-10" && /^hitch-/.test(f.id));
+  assert.ok(h10 && h10.cause && h10.cause.kind === "spine-build" && h10.cause.name === "bigwin_fx", "Spine parse named as the cause");
+  assert.ok(ev.stalls.length >= 8 && ev.stalls.every((r, i) => !i || r.t >= ev.stalls[i - 1].t), "every stall listed in time order");
+  assert.ok(ev.stalls.find((r) => r.stage === "spin-10").cause.startsWith("Spine 骨架資料解析 bigwin_fx"), "short cause in the stall table");
+  assert.ok(ev.stalls.filter((r) => r.stage === "spin-8")[0].canvasShare > 0.5, "stall table shows the label texture share");
+  const html1 = fs.readFileSync(path.join(runDir, "report.html"), "utf8");
+  assert.ok(html1.includes("每一次停頓") && html1.includes("算進頻率"), "stall table in the report");
 }
 
 // R9. A stall in the settle wait counts in the loading stall item, never as a loading fatal, and
