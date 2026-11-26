@@ -216,7 +216,7 @@
     var b = nodeNear(p);
     var ready = b ? b.interactable !== false : !st.spinKey;
     if (b && st.spinKey && key(b) !== st.spinKey) ready = false;
-    return { point: p, ready: ready, texts: (P.entry(CFG.entry).texts || []).join("|") };
+    return { point: p, ready: ready, sig: b ? b.sig : null, texts: (P.entry(CFG.entry).texts || []).join("|") };
   }
 
   async function entryLoop() {
@@ -396,7 +396,8 @@
     await sleep(600);
     if (st.menuAsked) return;
     st.menuAsked = true;
-    var r = await ask("menu", "the menu should be open: screenshot it, then auto.map({history, rules, close}) with points inside it (close shuts the menu), null where absent");
+    var r = st.pendingMenu ? { map: st.pendingMenu } : await ask("menu", "the menu should be open: screenshot it, then auto.map({history, rules, close}) with points inside it (close shuts the menu), null where absent");
+    st.pendingMenu = null;
     var mm = (r && r.map) || {};
     ["history", "rules"].forEach(function (k) {
       if (mm[k] && !m[k]) {
@@ -514,7 +515,12 @@
     };
     var note = "screenshot the game, read the bet and the balance, and if the balance covers the planned spins call auto.map({spin, menu, history, rules, turbo, buy}) with screenshot points (null where absent). buy is a button that buys a free game or feature on the main screen; it is pressed once, after everything else. Do not ask the user. Stop only if the bet or balance cannot be read, or the balance is short. guess is what node names suggest";
     for (var tries = 0; tries < 4; tries += 1) {
-      var r = await ask("map", note, { bet: betCandidates(), guess: guesses });
+      var r;
+      if (st.pendingMap) {
+        r = st.pendingMap;
+        st.pendingMap = null;
+        log("map sent earlier, used now");
+      } else r = await ask("map", note, { bet: betCandidates(), guess: guesses });
       var m = (r && r.map) || {};
       if (!m.spin) {
         note = "the spin point is required. " + note;
@@ -566,11 +572,26 @@
       st.map = m;
       var sn = nodeNear(m.spin);
       st.spinKey = sn ? key(sn) : null;
+      await sampleSpinSigs();
       if (r.spins != null) st.plan = Math.min(r.spins, CFG.maxSpins || 30);
       log("map " + JSON.stringify(m).slice(0, 100));
       return true;
     }
     return false;
+  }
+
+  // What the spin button shows while idle, sampled for 2 s so an idle glow that toggles children
+  // is not taken for busy later.
+  async function sampleSpinSigs() {
+    st.spinIdleSigs = null;
+    if (!st.spinKey) return;
+    var seen = {};
+    for (var i = 0; i < 8; i += 1) {
+      var s = spinState();
+      if (s.sig != null) seen[s.sig] = true;
+      await sleep(250);
+    }
+    if (Object.keys(seen).length) st.spinIdleSigs = seen;
   }
 
   function betCandidates() {
@@ -606,7 +627,12 @@
       b = spinState();
     }
     if (!b.ready || covered()) {
-      var r = await ask("screen", (b.ready ? "something covers the game before " : "spin button is not ready before ") + name);
+      var ent = P.entry(CFG.entry);
+      var near = nodeNear(b.point);
+      var why = !b.ready ? (near ? (near.interactable === false ? "the spin node is not interactable" : "the node at the spin point changed to " + (near.name || near.text)) : "no button at the spin point") : "";
+      var over = cover();
+      var pops = ent.dismiss.filter(function (x) { return x.interactable && x.point; }).slice(0, 3).map(function (x) { return (x.text || x.name) + " @" + x.point.x + "," + x.point.y; });
+      var r = await ask("screen", (b.ready ? "something covers the game before " : "spin button is not ready before ") + name + (why ? " (" + why + ")" : "") + (over ? "; over the canvas: " + over : "") + (pops.length ? "; close candidates: " + pops.join(", ") : "") + ". Screenshot: auto.click(x, y) on what closes it, or auto.resume()", { texts: ent.texts });
       if (r && r.click) click(r.click.x, r.click.y);
       await sleep(1000);
       b = spinState();
@@ -634,10 +660,20 @@
     var lastChange = now();
     var lastDraws = null;
     var lastDrawChange = now();
+    var sigSince = 0;
     while (true) {
       await sleep(S.pollMs || 250);
       var el = now() - t0;
       var sb = spinState();
+      if (sb.ready && st.spinIdleSigs && sb.sig != null && !st.spinIdleSigs[sb.sig]) {
+        // Pressable but showing something it never showed while idle (a stop label): busy. If that
+        // lasts sigGiveUpMs with the button otherwise ready, take it as a new idle look.
+        if (!sigSince) sigSince = now();
+        if (now() - sigSince > (S.sigGiveUpMs || 30000)) {
+          st.spinIdleSigs[sb.sig] = true;
+          log("spin button look kept as idle: " + sb.sig.slice(0, 60));
+        } else sb.ready = false;
+      } else sigSince = 0;
       if (sb.texts !== lastTexts) {
         lastTexts = sb.texts;
         lastChange = now();
@@ -1005,6 +1041,16 @@
     map: function (m, spins) {
       var out = {};
       Object.keys(m || {}).forEach(function (k) { out[k] = toLocal(m[k]); });
+      if (st.needs !== "map" && st.needs !== "menu") {
+        // Sent ahead of its stop (while loading, or at another question): keep it for that stop.
+        // Whatever the driver is waiting on now still needs its own answer.
+        if (out.spin) st.pendingMap = { map: out, spins: spins == null ? null : spins };
+        else st.pendingMenu = out;
+        log("map kept for the " + (out.spin ? "map" : "menu") + " stop");
+        var s = status();
+        s.kept = "map kept for the " + (out.spin ? "map" : "menu") + " stop" + (st.needs ? "; this stop (" + st.needs + ") still needs its own answer" : "");
+        return s;
+      }
       return resume({ map: out, spins: spins == null ? null : spins });
     },
     // The panel the driver could not see is open.

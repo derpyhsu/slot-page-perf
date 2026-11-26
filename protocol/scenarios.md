@@ -18,7 +18,7 @@
 5. 截一張遊戲畫面，標出 spin、功能列表、下注紀錄、遊戲規則、加速的位置，有購買免費遊戲（Feature Buy）鈕時也標出來（見下面「按鈕位置」）。同時讀畫面上的押注和餘額。餘額夠這一次的 spin 就繼續，不改押注，也不問使用者。讀不到押注或餘額，或餘額不夠，才停下來說明。
 6. `history-before`：打開下注紀錄。先記 `panelSpikeSeconds` 的尖峰，再記 `panelSteadySeconds` 的穩態，然後關閉。功能列表只負責打開，不單獨成結論。
 7. `rules`：打開遊戲規則，同樣先尖峰再穩態，然後關閉。關閉後再量一段短待機，記進 `idle-after-rules`。
-8. 一般 spin `normalSpins` 次。每一次 `mark("spin-N")` 開始，停穩後結束。從按下到停穩，spin 鍵沒變忙、畫面文字和 draw call 也都沒變，就是這一下沒轉起來（例如被中獎線輪播吃掉）：不補按，記在 `notStarted`，報告把那一段當 gap、不算進 spin，並寫在「這次沒量到」。
+8. 一般 spin `normalSpins` 次。每一次 `mark("spin-N")` 開始，停穩後結束。轉動中仍可按的 spin 鍵：標完座標後先看 2 秒 spin 鍵底下顯示中的子節點（待機時的樣子）；按下後只要它顯示的子節點組合是待機時沒出現過的（例如換成停止字樣），就算忙碌，回到待機時的樣子才算停。同一個樣子持續 `settle.sigGiveUpMs` 而按鍵本身可按，就當成新的待機樣子。從按下到停穩，spin 鍵沒變忙、畫面文字和 draw call 也都沒變，就是這一下沒轉起來（例如被中獎線輪播吃掉）：不補按，記在 `notStarted`，報告把那一段當 gap、不算進 spin，並寫在「這次沒量到」。
 9. 有加速鈕時，接著 `turboSpins` 次，mark 名為 `turbo-N`。沒有加速鈕就繼續一般 spin，直到 `maxSpins`。
 10. `history-after`：轉完後再打開一次下注紀錄，量法與第 6 步相同。
 11. `idle-end`：最後待機 `idleSeconds`。

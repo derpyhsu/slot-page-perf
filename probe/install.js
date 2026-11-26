@@ -2000,7 +2000,7 @@
       // A generic name such as HitArea says nothing; its parent (SpinButtonView) does.
       var name = node.name || "";
       if (GENERIC_NAME.test(name) && node.parent && node.parent !== root) name = (node.parent.name || "") + "/" + name;
-      list.push({ kind: btn ? "button" : "touch", name: name, text: nodeText(node), interactable: btn ? btn.interactable !== false : true, node: node });
+      list.push({ kind: btn ? "button" : "touch", name: name, text: nodeText(node), interactable: btn ? btn.interactable !== false : true, node: node, sigNode: name !== (node.name || "") ? node.parent : node });
     });
     return list;
   }
@@ -2010,7 +2010,25 @@
     return clickables(200)
       .filter(function (b) { return !match.length || hits((b.name + " " + b.text).toLowerCase(), match); })
       .slice(0, 30)
-      .map(function (b) { return { kind: b.kind, name: b.name, text: b.text, interactable: b.interactable, point: screenPoint(b.node) }; });
+      .map(function (b) { return { kind: b.kind, name: b.name, text: b.text, interactable: b.interactable, point: screenPoint(b.node), sig: activeSig(b.sigNode) }; });
+  }
+
+  // Which descendants of a button are showing, by name. A spin button that stays pressable while
+  // the reels turn often shows a stop label or icon instead; the autopilot compares this with what
+  // it saw while idle.
+  function activeSig(node) {
+    var out = [];
+    var walk = function (n, depth) {
+      var kids = (n && (n._children || n.children)) || [];
+      for (var i = 0; i < kids.length && out.length < 40; i += 1) {
+        var k = kids[i];
+        if (!k || k.activeInHierarchy === false || k.active === false) continue;
+        out.push(depth + ":" + (k.name || ""));
+        if (depth < 3) walk(k, depth + 1);
+      }
+    };
+    try { walk(node, 1); } catch (e) { return null; }
+    return out.join("|");
   }
 
   function domCandidates(words) {

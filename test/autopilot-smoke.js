@@ -12,18 +12,22 @@ global.window = global;
 global.document = { elementFromPoint: () => null, getElementsByTagName: () => [], querySelector: () => null };
 
 function btn(name, x, y) {
-  return { kind: "button", name, text: "", point: { x, y }, interactable: true };
+  return { kind: "button", name, text: "", point: { x, y }, interactable: true, sig: "" };
 }
 
 // One fresh driver. buttons: what the engine can name on the main screen.
-function load(buttons, live, quiet, entry) {
+let onMark = null;
+function load(buttons, live, quiet, entry, extra) {
+  // Earlier drivers keep running in the background; each one has its own marks.
+  const myMarks = [];
+  const myOnMark = onMark;
   const P = {
     quiet: quiet || (() => ({ badMs: 99999, longMs: 99999, uploadMs: 99999 })),
     entry: () => ({ spinReady: true, spin: buttons.filter((b) => /spin/i.test(b.name)), start: [], dismiss: [], dom: [], texts: [] }),
     buttons: () => ({ buttons: buttons }),
     live: () => Object.assign({ draws: 10, activeNodes: 100, heapMb: 50, stage: "idle", fps: 60 }, live && live()),
     summary: () => ({ channels: {} }),
-    mark: () => {},
+    mark: (n) => { myMarks.push([n, Date.now()]); if (myOnMark) myOnMark(n); },
     cocos: () => ({}),
     census: () => ({ total: 100 })
   };
@@ -35,7 +39,9 @@ function load(buttons, live, quiet, entry) {
     buttons: { menu: ["menu"], history: ["history"], rules: ["rules"], turbo: ["turbo"], buy: ["buy"], bet: ["bet"] },
     entry: entry || {}
   };
+  Object.assign(window.__slotPerfThresholds, extra || {});
   new Function(src)();
+  P.auto.marks = myMarks;
   return P.auto;
 }
 
@@ -99,7 +105,54 @@ async function settleCase() {
   assert.ok(r2 && !r2.timedOut && r2.ms >= 400 && r2.ms < 1500, "settle ends once quiet: " + JSON.stringify(r2));
 }
 
+// R16. A map sent before its stop is kept for it; the stop then does not ask.
+async function earlyMapCase() {
+  const t0 = Date.now();
+  const sp = btn("btn_spin", 500, 600);
+  const auto = load([sp], null, () => ({ badMs: 99999, longMs: 99999, uploadMs: Date.now() - t0 - 400 }), { settleQuietMs: 300, settleMaxSeconds: 5 });
+  auto.start();
+  const k = auto.map({ spin: sp.point });
+  assert.ok(/map kept for the map stop/.test(k.kept), "early map kept: " + JSON.stringify(k));
+  let asked = false;
+  const end = Date.now() + 4000;
+  while (Date.now() < end) {
+    const s = auto.status();
+    if (s.needs === "map") asked = true;
+    if (s.phase === "panels" || s.phase === "spins") break;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.ok(!asked && ["panels", "spins"].includes(auto.status().phase), "map stop used the kept map without asking");
+}
+
+// R16. A spin button that stays pressable while the reels turn but shows a stop child: the spin
+// lasts until the button looks as it did while idle again.
+async function spinFor(showStop) {
+  const sp = btn("btn_spin", 500, 600);
+  onMark = (n) => {
+    if (n !== "spin-1" || !showStop) return;
+    sp.sig = "1:StopText";
+    setTimeout(() => { sp.sig = ""; }, 1500);
+  };
+  const auto = load([sp], null, null, null, { maxSpins: 1, normalSpins: 1, settle: { pollMs: 50, minMs: 200, confirmMs: 200, stablePolls: 2, quietMs: 60000, nudgeAfterMs: 60000 } });
+  auto.start();
+  await until(auto, (s) => s.needs === "map");
+  auto.map({ spin: sp.point }, 1);
+  await until(auto, (s) => s.needs === "gc", 15000);
+  onMark = null;
+  const marks = auto.marks;
+  const i = marks.findIndex((m) => m[0] === "spin-1");
+  const g = marks.slice(i + 1).find((m) => m[0] === "gap");
+  return g[1] - marks[i][1];
+}
+async function busyCase() {
+  const plain = await spinFor(false);
+  const stop = await spinFor(true);
+  assert.ok(plain < 1200 && stop >= 1500, `spin waits for the stop child to go: plain ${plain} ms, with stop ${stop} ms`);
+}
+
 (async () => {
+  await earlyMapCase();
+  await busyCase();
   await settleCase();
   await mapCase();
   console.log("autopilot smoke ok");
