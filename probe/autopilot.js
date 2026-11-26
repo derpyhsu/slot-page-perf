@@ -296,6 +296,34 @@
     return false;
   }
 
+  // Right after the game is up, the browser is often still uploading textures and running one-off
+  // work. Wait until bad frames, long tasks and large uploads have all been quiet for quietMs (at
+  // most maxSeconds) before the first measured stage. Otherwise a game that loads faster is
+  // measured while still digesting, and one that loads slower gets that time for free.
+  async function settle() {
+    var E = CFG.entry || {};
+    var quietMs = E.settleQuietMs || 5000;
+    var maxMs = (E.settleMaxSeconds || 30) * 1000;
+    P.mark("settle");
+    var t0 = now();
+    var q = null;
+    var done = false;
+    while (now() - t0 < maxMs) {
+      await sleep(250);
+      q = P.quiet ? P.quiet() : null;
+      if (!q) { done = true; break; }
+      if (Math.min(q.badMs, q.longMs, q.uploadMs) >= quietMs) { done = true; break; }
+    }
+    var still = [];
+    if (!done && q) {
+      if (q.badMs < quietMs) still.push("bad frames");
+      if (q.longMs < quietMs) still.push("long tasks");
+      if (q.uploadMs < quietMs) still.push("texture uploads");
+    }
+    st.settle = { ms: Math.round(now() - t0), timedOut: !done || undefined, still: still.length ? still : undefined };
+    log("settled after " + Math.round((now() - t0) / 100) / 10 + "s" + (done ? "" : " (cap; still " + still.join(", ") + ")"));
+  }
+
   async function idle(name, seconds, snapLabel) {
     P.mark(name);
     var draws = [];
@@ -864,8 +892,9 @@
         return;
       }
     }
+    st.phase = "settle";
+    await settle();
     st.phase = "idle";
-    await sleep(500);
     await idle("idle", CFG.idleSeconds || 8, "idle");
     st.coverBase = cover();
     var ch = P.summary().channels;
@@ -987,7 +1016,7 @@
     // At needs "buy": do not buy (the balance is short, or the screen is not a plain buy).
     skip: function () { return resume({ skip: true }); },
     result: function () {
-      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, notStarted: st.notStarted, spinNodes: st.spinNodes, feature: st.feature || null, log: st.log };
+      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, notStarted: st.notStarted, spinNodes: st.spinNodes, settle: st.settle, feature: st.feature || null, log: st.log };
     }
   };
 

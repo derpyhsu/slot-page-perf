@@ -26,7 +26,7 @@ const data = JSON.stringify(ev).replace(/</g, "\\u003c");
 const title = (ev.game.displayName || ev.game.title || "slot").replace(/</g, "&lt;");
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-const STAGE_NAMES = { feature: "購買免費遊戲", "idle-after-feature": "免費遊戲後待機", loading: "載入", splash: "開始畫面", enter: "進遊戲", idle: "待機", menu: "功能列表", "history-before": "下注紀錄", rules: "遊戲規則", "idle-after-rules": "規則後待機", "history-after": "轉後下注紀錄", "idle-end": "最後待機", "game-ready": "進到遊戲", boot: "開機" };
+const STAGE_NAMES = { feature: "購買免費遊戲", "idle-after-feature": "免費遊戲後待機", loading: "載入", splash: "開始畫面", enter: "進遊戲", settle: "進遊戲後穩定期", idle: "待機", menu: "功能列表", "history-before": "下注紀錄", rules: "遊戲規則", "idle-after-rules": "規則後待機", "history-after": "轉後下注紀錄", "idle-end": "最後待機", "game-ready": "進到遊戲", boot: "開機" };
 const stageLabel = (n) => (!n ? "" : /^spin-\d+$/.test(n) ? `第 ${n.slice(5)} 轉` : /^turbo-\d+$/.test(n) ? `加速第 ${n.slice(6)} 轉` : STAGE_NAMES[n.replace(/-spike$/, "")] || n);
 const clock = (ms) => {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -294,7 +294,7 @@ const crit = (S.loading ? [["載入階段", S.loading]] : []).concat([["幀率�
 $("criteria").innerHTML = '<p class="small">每項在滿分與零分之間內插。沒量到的項目不計入，分數標暫定。有致命漏洞時該分數最高 49。90 以上綠、70 以上黃、50 以上橘、其餘紅。</p>' +
   '<div class="scroll"><table><tr><th></th><th>看什麼</th><th class=num>權重</th><th class=num>這次</th><th class=num>滿分</th><th class=num>零分</th><th class=num>得分</th></tr>' +
   crit.map(([g, i]) => "<tr><td>" + g + "</td><td>" + esc(i.label) + "</td><td class=num>" + i.weight + "</td><td class=num>" + (i.value == null ? "沒量到" : (i.approx ? "約 " : "") + i.value + " " + i.unit) + "</td><td class=num>" + esc(i.full) + "</td><td class=num>" + esc(i.zero) + '</td><td class=num style="color:' + COLOR[scoreLevel(i.score)] + ';font-weight:600">' + (i.score == null ? "不計" : i.score) + "</td></tr>").join("") + "</table></div>";
-const SN = { feature: "購買免費遊戲", "idle-after-feature": "免費遊戲後待機", loading: "載入", splash: "開始畫面", enter: "進遊戲", idle: "待機", menu: "功能列表", "history-before": "下注紀錄", rules: "遊戲規則", "idle-after-rules": "規則後待機", "history-after": "轉後下注紀錄", "idle-end": "最後待機", "game-ready": "進到遊戲", boot: "開機" };
+const SN = { feature: "購買免費遊戲", "idle-after-feature": "免費遊戲後待機", loading: "載入", splash: "開始畫面", enter: "進遊戲", settle: "進遊戲後穩定期", idle: "待機", menu: "功能列表", "history-before": "下注紀錄", rules: "遊戲規則", "idle-after-rules": "規則後待機", "history-after": "轉後下注紀錄", "idle-end": "最後待機", "game-ready": "進到遊戲", boot: "開機" };
 const gname = (n) => /^spin-\\d+$/.test(n) ? "spin " + n.slice(5) : /^turbo-\\d+$/.test(n) ? "加速 spin " + n.slice(6) : (SN[n.replace(/-spike$/, "")] || n) + (n.endsWith("-spike") ? "（剛打開）" : "");
 const clock = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 $("stages").innerHTML = "<table><tr><th>階段</th><th class=num>開始</th><th class=num>FPS</th><th class=num>CPU p95</th><th class=num>每幀畫的次數</th><th class=num>GPU 記憶體</th><th class=num>JS heap</th><th class=num>最長停頓</th></tr>" +

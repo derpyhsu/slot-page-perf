@@ -4,6 +4,9 @@
   var HITCH_MS = 50;
   var BUCKET_MS = 250;
   var BAD_FRAME_MS = 33;
+  // Uploads at least this large count as loading still going on (settle wait). Glyph and small
+  // label updates stay under it.
+  var SETTLE_UPLOAD_BYTES = 256 * 1024;
   var HEAP_SAMPLE_MS = 1000;
   var TEXTURE_SAMPLE_MS = 5000;
   var SPINE_SAMPLE_MS = 500;
@@ -197,6 +200,7 @@
       openStage("loading");
     }
     var now = performance.now();
+    if (dt > Math.max(BAD_FRAME_MS, 1.5 * (state.capMs || 1000 / 60))) state.lastBadAt = now;
     state.lastDraws = draws;
     bucketFrame(now, dt, cpu, draws);
     var s = state.stage;
@@ -458,6 +462,7 @@
           else if (src && src.width && src.height) bytes = src.width * src.height * 4;
         } catch (e) {}
         state.texBytes += bytes;
+        if (bytes >= SETTLE_UPLOAD_BYTES) state.lastBigUploadAt = t0;
         var ret = orig.apply(this, arguments);
         state.fw.texN += 1;
         state.fw.texBytes += bytes;
@@ -548,6 +553,7 @@
   try {
     var po = new PerformanceObserver(function (list) {
       list.getEntries().forEach(function (entry) {
+        state.lastLongAt = Math.max(state.lastLongAt || 0, entry.startTime + entry.duration);
         if (state.longTasks.length < SERIES_CAP) {
           state.longTasks.push([Math.round(entry.startTime - state.t0), round(entry.duration), state.active.size]);
         }
@@ -1448,6 +1454,7 @@
     try { hookInstantiate(cc); } catch (e) {}
     try { hookLabels(cc); } catch (e) {}
     try { hookActivator(cc); } catch (e) {}
+    try { state.capMs = 1000 / frameCap(); } catch (e) {}
     try { hookHandlers(cc); } catch (e) {}
     // Component timing must stay cheap; above 0.3 ms per frame it is switched off for the run.
     if (!state.compOff && state.compCallUs != null && state.compFramesSeen > 300 && (state.compCalls / state.compFramesSeen) * state.compCallUs / 1000 > 0.3) state.compOff = true;
@@ -2140,6 +2147,13 @@
     // Node counts by folded scene path, and instantiated nodes still referenced. After a forced GC.
     census: function () {
       try { return census(); } catch (e) { return { status: "error", note: String(e && e.message || e).slice(0, 80) }; }
+    },
+    // Milliseconds since the last bad frame (over 1.5 frame lengths at the cap), the last long task
+    // and the last large texture upload. The autopilot waits on these before the first stage.
+    quiet: function () {
+      var t = performance.now();
+      var since = function (at) { return Math.round(t - (at || state.t0)); };
+      return { badMs: since(state.lastBadAt), longMs: since(state.lastLongAt), uploadMs: since(state.lastBigUploadAt) };
     },
     // Clickable Cocos nodes, optionally only those whose name or text contains one of words.
     // quietMs is how long since the last texture upload, a sign that loading has settled.

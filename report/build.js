@@ -92,6 +92,7 @@ const ev = {
   gc: raw.gc || [],
   census: raw.census || undefined,
   spinNodes: raw.spinNodes && raw.spinNodes.length ? raw.spinNodes : undefined,
+  settle: raw.settle || undefined,
   feature: raw.feature || undefined,
   coverage,
   findings: [],

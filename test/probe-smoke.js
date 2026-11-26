@@ -412,5 +412,24 @@ const cc3 = global.cc;
   assert.ok(cap && cap.cap === leakEv.score.memory.score && cap.fatal.includes("leak-suspected") && sumOf(leakEv, "memory") === 100 - cap.uncapped, "a fatal cap is stated beside the losses");
 }
 
+// R9. A stall in the settle wait counts in the loading stall item, never as a loading fatal, and
+// stays out of smoothness. P.quiet reports the long task the page just had.
+{
+  assert.ok(P.quiet().longMs >= 0 && typeof P.quiet().uploadMs === "number", "quiet() reports times");
+  const dS = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+  const sS = JSON.parse(JSON.stringify(s));
+  const idleSt = sS.stages.find((x) => x.name === "idle");
+  const settleSt = Object.assign(JSON.parse(JSON.stringify(idleSt)), { name: "settle", startMs: idleSt.startMs - 6000, wallMs: 6000, hitches: [{ t: idleSt.startMs - 3000, dt: 1500, cpu: 1500, draws: 10, inFlight: 0, urls: [] }] });
+  sS.stages.splice(sS.stages.indexOf(idleSt), 0, settleSt);
+  fs.writeFileSync(path.join(dS, "raw.json"), JSON.stringify(Object.assign({}, raw, { summary: sS, settle: { ms: 6000 } })));
+  execFileSync(process.execPath, [path.join(root, "report", "build.js"), dS], { encoding: "utf8" });
+  const evS = JSON.parse(fs.readFileSync(path.join(dS, "evidence.json"), "utf8"));
+  const item = (k, id) => evS.score[k].items.find((i) => i.id === id);
+  assert.ok(item("loading", "stall").value === 1500 && item("loading", "stall").stage === "settle", "settle stall in the loading stall item");
+  assert.ok(!evS.score.loading.fatal.length, "settle stall is not a loading fatal");
+  assert.ok(item("smooth", "stall").value !== 1500, "settle stall stays out of smoothness");
+  assert.ok(fs.readFileSync(path.join(dS, "report.html"), "utf8").includes("進遊戲後等穩定"), "report says how long it waited");
+}
+
 console.log(digest.trim());
 console.log(`\nok ${ticks} ticks, run at ${runDir}`);

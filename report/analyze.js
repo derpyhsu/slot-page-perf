@@ -20,7 +20,7 @@ const ev = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
 const { stageFrames } = require("./frames");
 const { heapFit, gcHalves, causeText, labelText, nodeGrowth, nodeGrowthText, panelNodes } = require("./findings");
 
-const NOT_GAME = new Set(["boot", "loading", "splash", "enter", "game-ready", "gap"]);
+const NOT_GAME = new Set(["boot", "loading", "splash", "enter", "game-ready", "settle", "gap"]);
 const stages = ev.stages || [];
 const gameStages = stages.filter((s) => !NOT_GAME.has(s.name) && s.frames > 0);
 // The bought free game or feature (scenarios.md 購買免費遊戲) is scored in its own item. Its seconds
@@ -34,6 +34,9 @@ function inFeature(t, B) {
 }
 const spinStages = stages.filter((s) => /^(spin|turbo)-\d+$/.test(s.name));
 const loadStages = stages.filter((s) => (s.name === "loading" || s.name === "enter") && s.frames > 0);
+// The wait right after entering the game until it is quiet (scenarios.md 進遊戲後穩定期). Its stalls
+// count in the loading stall items; it never sets a loading fatal and is not part of smoothness.
+const settleStages = stages.filter((s) => s.name === "settle" && s.frames > 0);
 
 function round(n, d = 1) {
   const k = Math.pow(10, d);
@@ -364,11 +367,12 @@ ev.panelNodes = panelNodes(ev, thresholds) || undefined;
 
 const L = cfg.loading;
 const loadStable = loadingStableShare();
-const loadStall = worstStall(loadStages);
+const loadStall = worstStall(loadStages.concat(settleStages));
+const loadStallFatal = worstStall(loadStages);
 const inLoad = (t0, t1) => loadStages.reduce((a, s) => a + Math.max(0, Math.min(t1, s.startMs + s.wallMs) - Math.max(t0, s.startMs)), 0);
 const loadWall = loadStages.reduce((a, s) => a + s.wallMs, 0);
 // Every stall of 50 ms or more while loading, added up.
-const loadStallTotal = loadStages.length ? loadStages.reduce((a, s) => a + (s.hitches || []).reduce((b, h) => b + h.dt, 0), 0) : null;
+const loadStallTotal = loadStages.length ? loadStages.concat(settleStages).reduce((a, s) => a + (s.hitches || []).reduce((b, h) => b + h.dt, 0), 0) : null;
 // Share of loading wall time inside long tasks: the main thread was blocked.
 const longTasks = (ev.timeline && ev.timeline.longTasks) || [];
 const loadLongShare = loadWall ? longTasks.reduce((a, l) => a + inLoad(l[0], l[0] + l[1]), 0) / loadWall : null;
@@ -506,7 +510,7 @@ function lowFps(s) {
 const smoothFatal = [];
 const memoryFatal = [];
 const loadingFatal = [];
-if (loadStall.dt > F.stallMs) loadingFatal.push({ id: "stall", stage: loadStall.stage, t: loadStall.t, value: round(loadStall.dt, 0) });
+if (loadStallFatal.dt > F.stallMs) loadingFatal.push({ id: "stall", stage: loadStallFatal.stage, t: loadStallFatal.t, value: round(loadStallFatal.dt, 0) });
 loadStages.forEach((s) => {
   if (lowFps(s)) loadingFatal.push({ id: "low-fps", stage: s.name, value: lowFps(s) });
 });
@@ -578,6 +582,7 @@ const STAGE_NAMES = {
   loading: "載入",
   splash: "開始畫面",
   enter: "進遊戲",
+  settle: "進遊戲後穩定期",
   idle: "待機",
   menu: "功能列表",
   "history-before": "下注紀錄",
@@ -610,7 +615,7 @@ ev.losses = losses();
 function losses() {
   const { groups: groupsOf } = require("./findings");
   const gs = groupsOf(ev.stages || []);
-  const gameGroup = (g) => !["loading", "enter", "boot", "splash", "gap"].includes(g.group);
+  const gameGroup = (g) => !["loading", "enter", "settle", "boot", "splash", "gap"].includes(g.group);
   const out = [];
   const caps = [];
   ["loading", "smooth", "memory"].forEach((key) => {
@@ -665,7 +670,7 @@ function lossRow(key, item, points, gs, gameGroup) {
 // One row per stage group for the FPS table, in the order the run visits them.
 function fpsTable() {
   const { groups } = require("./findings");
-  const ORDER = ["loading", "enter", "idle", "menu", "history-before", "rules", "idle-after-rules", "spin", "turbo", "history-after", "idle-end", "feature", "idle-after-feature"];
+  const ORDER = ["loading", "enter", "settle", "idle", "menu", "history-before", "rules", "idle-after-rules", "spin", "turbo", "history-after", "idle-end", "feature", "idle-after-feature"];
   const F = thresholds.fps || {};
   return groups(stages)
     .filter((g) => ORDER.includes(g.group) && g.frames >= 30)
@@ -745,7 +750,7 @@ function findingRows() {
   byGroup.forEach((hs, g) => {
     const worst = hs.reduce((a, b) => (b.value > a.value ? b : a));
     const name = stageName(g);
-    const loading = g === "loading" || g === "enter";
+    const loading = g === "loading" || g === "enter" || g === "settle";
     const title = loading
       ? `${name}時頓了 ${hs.length} 次，最長 ${sec(worst.value)}`
       : hs.length > 1 ? `${name}時畫面停了 ${hs.length} 次，最長 ${sec(worst.value)}` : `${name}時畫面停 ${sec(worst.value)}`;
@@ -932,7 +937,7 @@ function findingRows() {
 // Which score a row belongs to, so the report can list it under that gauge.
 // todo() runs before module-level consts below it exist, so this is a function.
 function isLoadStage(name) {
-  return ["boot", "loading", "splash", "enter"].includes(String(name || "").replace(/-spike$/, ""));
+  return ["boot", "loading", "splash", "enter", "settle"].includes(String(name || "").replace(/-spike$/, ""));
 }
 function dimOf(r) {
   if (r.note) return "other";

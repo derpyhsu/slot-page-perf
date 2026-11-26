@@ -27,6 +27,7 @@ const NAMES = {
   loading: "載入",
   splash: "開始畫面",
   enter: "進遊戲",
+  settle: "進遊戲後穩定期",
   idle: "待機",
   menu: "功能列表",
   "history-before": "下注紀錄",

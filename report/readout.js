@@ -124,6 +124,7 @@ const STAGE = {
   "idle-after-feature": "免費遊戲後待機",
   loading: "載入",
   enter: "進遊戲",
+  settle: "進遊戲後穩定期",
 };
 function whereLabel(stage) {
   const spin = spinWhere(stage);
@@ -493,6 +494,7 @@ function loadingContext(ev) {
     ["打開到能轉", sec(total)],
     ["其中載入", sec(wall("loading"))],
     ["其中進遊戲", sec(wall("enter"))],
+    ["進遊戲後等穩定", ev.settle ? `${sec(ev.settle.ms) || "0 秒"}${ev.settle.timedOut ? `，等滿上限仍未穩定（${(ev.settle.still || []).map((k) => ({ "bad frames": "掉幀", "long tasks": "長任務", "texture uploads": "貼圖上傳" })[k] || k).join("、")}）` : ""}，這段的卡頓算進載入，之後才開始量待機` : null],
     ["進遊戲", entry],
     ["載入請求", ld ? `${ld.count} 個 · JSON ${ld.json}（import ${ld.importJson}）· 圖 ${ld.images} · 音效 ${ld.audio} · 腳本 ${ld.scripts}` : null],
     ["載入下載量", ld ? `${round(ld.transferMb, 1)} MB · 解碼後 ${round(ld.decodedMb, 1)} MB${ld.queued ? ` · 排隊超過 80 ms 的 ${ld.queued} 個` : ""}` : null],
@@ -557,7 +559,7 @@ function panel(ev, m, key, selected) {
 }
 
 // The three items that cost the most points, with stage and the drill tool that answers them.
-const STAGE_WORD = { spin: "spin", turbo: "加速 spin", idle: "待機", "idle-after-rules": "規則後待機", "idle-end": "結束待機", menu: "選單", "history-before": "轉前紀錄", "history-after": "轉後紀錄", rules: "規則", feature: "免費遊戲", loading: "載入", enter: "進遊戲" };
+const STAGE_WORD = { settle: "進遊戲後穩定期", spin: "spin", turbo: "加速 spin", idle: "待機", "idle-after-rules": "規則後待機", "idle-end": "結束待機", menu: "選單", "history-before": "轉前紀錄", "history-after": "轉後紀錄", rules: "規則", feature: "免費遊戲", loading: "載入", enter: "進遊戲" };
 function stageWord(name) {
   const m = name.match(/^(spin|turbo)-(\d+)$/);
   if (m) return `${m[1] === "turbo" ? "加速" : ""}第 ${m[2]} 轉`;

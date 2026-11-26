@@ -16,8 +16,9 @@ function btn(name, x, y) {
 }
 
 // One fresh driver. buttons: what the engine can name on the main screen.
-function load(buttons, live) {
+function load(buttons, live, quiet, entry) {
   const P = {
+    quiet: quiet || (() => ({ badMs: 99999, longMs: 99999, uploadMs: 99999 })),
     entry: () => ({ spinReady: true, spin: buttons.filter((b) => /spin/i.test(b.name)), start: [], dismiss: [], dom: [], texts: [] }),
     buttons: () => ({ buttons: buttons }),
     live: () => Object.assign({ draws: 10, activeNodes: 100, heapMb: 50, stage: "idle", fps: 60 }, live && live()),
@@ -32,7 +33,7 @@ function load(buttons, live) {
     maxSpins: 15,
     neverPress: ["buy", "bet"],
     buttons: { menu: ["menu"], history: ["history"], rules: ["rules"], turbo: ["turbo"], buy: ["buy"], bet: ["bet"] },
-    entry: {}
+    entry: entry || {}
   };
   new Function(src)();
   return P.auto;
@@ -82,7 +83,24 @@ async function mapCase() {
   assert.strictEqual(s.phase, "panels", "no menu, point accepted");
 }
 
+async function settleCase() {
+  // R9. Large uploads still going: the first stage waits, up to the cap, and says why.
+  let auto = load([spin], null, () => ({ badMs: 99999, longMs: 99999, uploadMs: 0 }), { settleQuietMs: 300, settleMaxSeconds: 0.6 });
+  auto.start();
+  await until(auto, (s) => s.needs === "map");
+  const r1 = auto.result().settle;
+  assert.ok(r1 && r1.timedOut && r1.ms >= 550 && r1.still.join() === "texture uploads", "settle waits up to the cap and names what was still busy: " + JSON.stringify(r1));
+  // Quiet once uploads stop: it ends as soon as everything has been quiet long enough.
+  const t0 = Date.now();
+  auto = load([spin], null, () => ({ badMs: 99999, longMs: 99999, uploadMs: Date.now() - t0 - 200 }), { settleQuietMs: 300, settleMaxSeconds: 5 });
+  auto.start();
+  await until(auto, (s) => s.needs === "map");
+  const r2 = auto.result().settle;
+  assert.ok(r2 && !r2.timedOut && r2.ms >= 400 && r2.ms < 1500, "settle ends once quiet: " + JSON.stringify(r2));
+}
+
 (async () => {
+  await settleCase();
   await mapCase();
   console.log("autopilot smoke ok");
   process.exit(0);
