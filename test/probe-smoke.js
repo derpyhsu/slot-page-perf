@@ -205,6 +205,7 @@ for (let i = 1; i <= 12; i += 1) {
   if (i === 7) { advance(500); slowLoc = true; }
   if (i === 8) { advance(500); ruleTwice = true; }
   if (i === 10) { advance(500); spineFirst = true; }
+  if (i === 12) sock.dispatchEvent(Object.assign(new Event("close"), { code: 1006, wasClean: false }));
   if (i === 9) { advance(500); slow24 = 1; }
   if (i === 11) { advance(500); slow24 = 2; }
   advance(2000);
@@ -305,7 +306,7 @@ execFileSync(process.execPath, [path.join(root, "report", "build.js"), runDir2],
 const ev2 = JSON.parse(fs.readFileSync(path.join(runDir2, "evidence.json"), "utf8"));
 assert.ok(!ev2.stages.some((x) => x.name === "spin-2") && ev2.fps.some((r) => r.group === "spin" && r.stages === 11), "unstarted spin left out of the spins");
 assert.ok(ev2.coverage.notStarted === "spin-2" && fs.readFileSync(path.join(runDir2, "report.html"), "utf8").includes("第 2 轉按下後畫面沒變"), "report names the unstarted spin");
-assert.ok(ev.missing === undefined, "nothing added to missing when every spin started");
+assert.ok((ev.missing || []).every((m) => /WebSocket/.test(m)), "only the socket note in missing when every spin started");
 // Three forced GCs: a rise in one half only is a step, not growth; a rise in both halves is.
 const gcRun = (mbs) => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
@@ -375,7 +376,9 @@ const cc3 = global.cc;
   const fxCached = n24("fx_cached", { comp: skel([slot(region(), 0)], 1), x: 640, y: 360 });
   // A reel window mask 500×300 at the centre; one symbol below it is inside the view but clipped away.
   const reelMask = n24("reel_mask", { comp: new Mask24(), w: 500, h: 300, x: 640, y: 360 }, [n24("sym_in", { comp: spr(), w: 100, h: 100, x: 640, y: 360 }), n24("sym_below", { comp: spr(), w: 100, h: 100, x: 640, y: 650 })]);
-  const canvas24 = n24("Canvas", {}, [n24("bg", { comp: spr(), w: 1280, h: 720, x: 640, y: 360 }), pool, portrait, faded, fxRt, fxEmpty, fxCached, reelMask]);
+  // A half-transparent full-screen dim on top, as a panel's backdrop.
+  const dim = n24("dim", { comp: spr(), w: 1280, h: 720, x: 640, y: 360, opacity: 128 });
+  const canvas24 = n24("Canvas", {}, [n24("bg", { comp: spr(), w: 1280, h: 720, x: 640, y: 360 }), pool, portrait, faded, fxRt, fxEmpty, fxCached, reelMask, dim]);
   const scene24 = { name: "scene", _children: [canvas24], activeInHierarchy: false };
   canvas24.parent = scene24;
   const cam24 = { getScreenToWorldPoint: (p) => ({ x: p.x, y: p.y }) };
@@ -401,7 +404,8 @@ const cc3 = global.cc;
   assert.strictEqual(inv.spine.skeletons, 2, "cached skeletons not read");
   // R15. Coverage: bg one screen, the drawn Spine slot a quarter, the mask box and the symbol in it.
   const cv = inv.coverage;
-  assert.ok(Math.abs(cv.screens - (1 + 0.25 + (500 * 300 + 100 * 100) / 921600)) < 0.01 && cv.full === 1, "coverage in screens: " + JSON.stringify(cv));
+  assert.ok(Math.abs(cv.screens - (2 + 0.25 + (500 * 300 + 100 * 100) / 921600)) < 0.01 && cv.full === 2, "coverage in screens: " + JSON.stringify(cv));
+  assert.deepStrictEqual(cv.cover, { path: "Canvas/dim", alpha: 0.5, under: 4, over: 0 }, "topmost full-screen node, its alpha and what is drawn under it");
   assert.deepStrictEqual(cv.groups[0], ["Canvas/bg", 1, 1], "grouped by the first levels of the path");
   assert.ok(cv.groups.some((g) => g[0] === "Canvas/fx_rt" && g[1] === 0.25) && cv.spineNoArea === 1, "Spine by slot; cached Spine not measured");
 
@@ -500,6 +504,22 @@ const cc3 = global.cc;
   const br = evL.todo.find((t) => t.rule === "image-bloated");
   assert.ok(br && br.fix.includes("786×608") && br.fix.includes("每像素 11.4 bytes"), "bloated picture row");
   assert.ok(fs.readFileSync(path.join(dL, "report.html"), "utf8").includes("載入時下載最久"), "loading files table");
+}
+
+// R6, R8. A WebSocket closed during play is noted; a translucent or opaque panel backdrop is a fact row.
+{
+  const dP = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+  const panels = { idle: { cover: { path: "Canvas/bg", alpha: 1, under: 0, over: 80 } }, rules: { cover: { path: "Canvas/RulePanel/mask_bg", alpha: 0.6, under: 113, over: 40 } }, "history-before": { cover: { path: "Canvas/History/bg", alpha: 1, under: 90, over: 30 } } };
+  fs.writeFileSync(path.join(dP, "raw.json"), JSON.stringify(Object.assign({}, raw, { panels })));
+  execFileSync(process.execPath, [path.join(root, "report", "build.js"), dP], { encoding: "utf8" });
+  const evP = JSON.parse(fs.readFileSync(path.join(dP, "evidence.json"), "utf8"));
+  const pr = evP.todo.find((t) => t.rule === "panel-cover-rules");
+  const ph = evP.todo.find((t) => t.rule === "panel-cover-history-before");
+  assert.ok(pr && pr.title.includes("不透明度 60%") && pr.title.includes("底下 113 個節點"), "translucent backdrop: " + (pr && pr.title));
+  assert.ok(ph && ph.title.includes("底下 90 個節點被蓋住仍在畫"), "opaque backdrop: " + (ph && ph.title));
+  assert.ok(s.ws && s.ws.some((e) => e.kind === "close" && e.code === 1006 && e.afterReady && e.stage === "spin-12") && !JSON.stringify(s.ws).includes("x.test"), "socket close recorded without the URL");
+  assert.ok((ev.missing || []).some((m) => m.includes("WebSocket 在第 12 轉斷線（code 1006）")), "report notes the close: " + JSON.stringify(ev.missing));
+  assert.deepStrictEqual(P.wsEvents(0).map((e) => e.code), [1006], "autopilot sees closes after game-ready");
 }
 
 // R9. A stall in the settle wait counts in the loading stall item, never as a loading fatal, and

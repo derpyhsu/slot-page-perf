@@ -937,6 +937,23 @@ function findingRows() {
     rows.push({ rule: "fill-layers", level: cv.screens >= (CV.orange || 8) ? "orange" : "yellow", title: `${at}每幀畫的面積約 ${cv.screens} 個螢幕`, area: "填充率", fix: `把每個在畫的節點在畫面內的面積加起來（Spine 依 slot 算），約等於整個畫面疊了 ${cv.screens} 層${cv.full ? `，其中 ${cv.full} 個節點幾乎蓋滿整個畫面` : ""}${cv.additiveScreens ? `，加色混合約 ${cv.additiveScreens} 層` : ""}。最多的是：${cv.groups.slice(0, 4).map((g) => `${g[0]} ${g[1]} 層（${g[2]} 個節點）`).join("；")}。${cv.spineNoArea ? `另有 ${cv.spineNoArea} 個快取模式或 3.x 的 Spine 沒算面積。` : ""}轉動中的畫面用 slot-perf-drill 的 coverage 量，關掉某一層的差別用 fps 的 hide。`, stage: covAt.at === "idle" ? "idle" : null, t: null });
   }
 
+  // A panel's topmost full-screen node: translucent, so the game under it still shows and draws;
+  // or opaque, so everything under it is drawn and then covered. Facts for both.
+  const PC = thresholds.panelCover || {};
+  const panels = ev.panels || {};
+  const idleCover = panels.idle && panels.idle.cover;
+  ["history-before", "rules", "history-after"].forEach((st) => {
+    const p = panels[st] && panels[st].cover;
+    if (!p || p.under < (PC.minUnder || 20) || (idleCover && idleCover.path === p.path)) return;
+    const name = stageName(st);
+    const pct = Math.round(p.alpha * 100);
+    const title = p.alpha < 0.99 ? `${name}最上層的全螢幕底圖不透明度 ${pct}%，底下 ${p.under} 個節點照畫也看得到` : `${name}整頁蓋住畫面，底下 ${p.under} 個節點被蓋住仍在畫`;
+    const fix = p.alpha < 0.99
+      ? `蓋滿畫面的是 ${p.path}，不透明度 ${pct}%，所以它底下的遊戲畫面每幀照畫，也看得到。要不要改成不透明，或打開時讓底下停畫，是畫面設計的取捨。`
+      : `蓋滿畫面的是 ${p.path}，完全不透明；它底下的 ${p.under} 個節點畫了也看不到。打開時把底下的層關掉或停畫可以省下這些。`;
+    rows.push({ rule: `panel-cover-${st}`, level: "yellow", title, area: "填充率", fix: fix + "用 slot-perf-drill 的 drawcalls 在這頁打開時量底下的層各佔多少。", stage: st, t: null });
+  });
+
   // Labels drawn again with unchanged text: one row, stages with the most first.
   const redraw = found.filter((f) => f.id === "label-redraw").sort((a, b) => b.sameMb - a.sameMb || b.same - a.same);
   if (redraw.length) {

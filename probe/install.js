@@ -62,6 +62,7 @@
     lblReg: null,
     made: [],
     pools: [],
+    wsEvents: [],
     progress: [],
     madeOff: false,
     compClassCount: -1,
@@ -1086,7 +1087,11 @@
     // Screen coverage: the area every drawn render node fills inside its camera's view (and inside
     // any ancestor mask), in screens. Many layers of full-screen art is what fill rate pays for.
     var cov = { screens: 0, full: 0, additive: 0, groups: {}, spineNoArea: 0 };
-    var addCov = function (grp, screens, additive, full) {
+    var drawn = 0;
+    var cover = null;
+    var addCov = function (grp, screens, additive, full, node, alpha) {
+      drawn += 1;
+      if (full) cover = { path: groupPath(node), alpha: round(alpha, 2), under: drawn - 1 };
       if (!(screens > 0)) return;
       cov.screens += screens;
       if (additive) cov.additive += screens;
@@ -1141,12 +1146,14 @@
         var a = rc3 && rc3.color && typeof rc3.color.a === "number" ? rc3.color.a / 255 : 1;
         op = opacity * a * (up && typeof up.localOpacity === "number" ? up.localOpacity : 1);
         if (op <= 0.0001) return;
+        if (rc3 && rc3.enabledInHierarchy !== false && rc3._renderFlag !== false) rc3.__slotOp = op;
         // _renderFlag is false when the component has nothing it can draw (a sprite without a frame).
         if (rc3 && rc3.enabledInHierarchy !== false && rc3._renderFlag !== false) checkNode(node, rc3, clip, grp);
       } else {
         if (node._opacity === 0 || node.opacity === 0) return;
+        op = opacity * (typeof node._opacity === "number" ? node._opacity / 255 : 1);
         var rc = node._renderComponent;
-        if (rc && rc.enabledInHierarchy !== false && rc._enabled !== false) checkNode(node, rc, clip, grp);
+        if (rc && rc.enabledInHierarchy !== false && rc._enabled !== false) { rc.__slotOp = op; checkNode(node, rc, clip, grp); }
       }
       var mb = maskBox(node);
       var sub = mb ? (clip ? { x0: Math.max(clip.x0, mb.x0), x1: Math.min(clip.x1, mb.x1), y0: Math.max(clip.y0, mb.y0), y1: Math.min(clip.y1, mb.y1) } : mb) : clip;
@@ -1181,7 +1188,8 @@
       } else {
         // The box is a rectangle through the node's transform; a rotated node's corners overcount a little.
         var shown = clipArea(box, view, clip) * Math.min(1, box.area / Math.max(1e-9, (box.x1 - box.x0) * (box.y1 - box.y0)));
-        addCov(grp, shown / view.area, isAdditive(comp), shown >= 0.9 * view.area);
+        var ca = comp.color && typeof comp.color.a === "number" ? comp.color.a / 255 : 1;
+        addCov(grp, shown / view.area, isAdditive(comp), shown >= 0.9 * view.area, node, (comp.__slotOp != null ? comp.__slotOp : 1) * (v3 ? 1 : ca));
       }
     };
     // 2.x realtime Spine: renderable attachments (they have uvs) at alpha 0, and skeletons with
@@ -1222,6 +1230,7 @@
         clear += 1;
         area += geo ? geo.area : 0;
       }
+      if (drawn) addCov(grp, 0, false, false, node, 1);
       if (shownScreens > 0) {
         cov.screens += shownScreens;
         cov.additive += addScreens;
@@ -1266,6 +1275,8 @@
       full: cov.full,
       additiveScreens: round(cov.additive, 2),
       spineNoArea: cov.spineNoArea || undefined,
+      // The last drawn node that covers 90% of the view, its alpha, and how many drawn nodes are under it.
+      cover: cover ? { path: cover.path, alpha: cover.alpha, under: cover.under, over: drawn - cover.under - 1 } : undefined,
       groups: Object.keys(cov.groups).map(function (k) { var g = cov.groups[k]; return [k, round(g[0], 2), g[1]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8)
     };
     return out;
@@ -1688,7 +1699,24 @@
     var add = proto.addEventListener;
     var remove = proto.removeEventListener;
     if (typeof add !== "function" || typeof remove !== "function") return;
+    // Every game listens for messages; a socket seen there also gets close and error listeners,
+    // once. Only the close code, whether it was clean, the stage and the seconds since it was seen
+    // are kept; never the URL.
+    var watched = typeof WeakMap === "function" ? new WeakMap() : null;
+    var watchSocket = function (ws) {
+      if (!watched || watched.has(ws)) return;
+      watched.set(ws, performance.now());
+      var note = function (kind, ev) {
+        if (state.wsEvents.length >= 40) return;
+        state.wsEvents.push({ t: rel(performance.now()), kind: kind, code: ev && ev.code != null ? ev.code : undefined, clean: ev && ev.wasClean != null ? ev.wasClean : undefined, stage: state.stage && state.stage.name, sec: round((performance.now() - watched.get(ws)) / 1000), afterReady: !!state.gameReady });
+      };
+      try {
+        add.call(ws, "close", function (ev) { note("close", ev); });
+        add.call(ws, "error", function (ev) { note("error", ev); });
+      } catch (e) {}
+    };
     Object.defineProperty(proto, "addEventListener", { configurable: true, writable: true, value: function (type, l, opts) {
+      if (type === "message") watchSocket(this);
       return add.call(this, type, type === "message" ? wrap(l) : l, opts);
     } });
     Object.defineProperty(proto, "removeEventListener", { configurable: true, writable: true, value: function (type, l, opts) {
@@ -1700,7 +1728,7 @@
         configurable: true,
         enumerable: d.enumerable,
         get: function () { var f = d.get.call(this); return (f && f.__slotOrig) || f; },
-        set: function (f) { d.set.call(this, typeof f === "function" ? wrap(f) : f); }
+        set: function (f) { if (typeof f === "function") watchSocket(this); d.set.call(this, typeof f === "function" ? wrap(f) : f); }
       });
     }
     Object.defineProperty(proto, "__slotWs", { value: true });
@@ -2519,6 +2547,10 @@
       var since = function (at) { return Math.round(t - (at || state.t0)); };
       return { badMs: since(state.lastBadAt), longMs: since(state.lastLongAt), uploadMs: since(state.lastBigUploadAt) };
     },
+    // WebSocket closes and errors after the game was ready, from index on. The autopilot asks at gaps.
+    wsEvents: function (from) {
+      return state.wsEvents.filter(function (e) { return e.afterReady; }).slice(from || 0);
+    },
     // Screen coverage of what is drawn now (census walk only). For slot-perf-drill coverage().
     coverage: function () {
       var cc = window.cc;
@@ -2606,6 +2638,7 @@
         },
         resources: resourceSummary(),
       progress: state.progress.length ? state.progress : undefined,
+      ws: state.wsEvents.length ? state.wsEvents : undefined,
         paint: paintSummary(),
         shaders: state.shaderN ? { status: "ok", ms: round(state.shaderMs), maxMs: round(state.shaderMax), count: state.shaderN, stalls: state.shaderStalls } : { status: "none", ms: 0, count: 0, stalls: [] },
         audio: state.audioN ? { status: "ok", pcmMb: round(state.audioPcm / 1048576), count: state.audioN, maxMs: round(state.audioMaxMs) } : { status: "none", pcmMb: 0, count: 0, maxMs: 0 }

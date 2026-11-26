@@ -492,6 +492,10 @@
     st.coverage[stage] = "ok";
     // Ask for the close point only after the steady stage, so thinking time is not measured.
     P.mark("gap");
+    try {
+      var cv = P.coverage && P.coverage();
+      if (cv && cv.cover) (st.panels || (st.panels = {}))[stage] = { cover: cv.cover, screens: cv.screens };
+    } catch (e) {}
     if (!(await closePanel(kind, [nodes, pre]))) {
       var r = await ask("screen", "could not close the " + kind + " panel: auto.click(x, y) on its close, or auto.resume() if it is closed");
       if (r && r.click) pressAt(r.click, kind + " close");
@@ -617,7 +621,23 @@
     return out;
   }
 
+  // A WebSocket closed or failed since the last look, after the game was ready: the server may be
+  // gone and what follows would not measure the game. Asked at gaps only, at most twice; after
+  // that closes are only recorded.
+  async function backendCheck(where) {
+    if (!P.wsEvents) return;
+    var evs = P.wsEvents(st.wsSeen || 0);
+    if (!evs.length) return;
+    st.wsSeen = (st.wsSeen || 0) + evs.length;
+    var e = evs[0];
+    log("websocket " + e.kind + (e.code != null ? " " + e.code : "") + " at " + e.stage);
+    if ((st.wsAsks || 0) >= 2) return;
+    st.wsAsks = (st.wsAsks || 0) + 1;
+    await ask("backend", "a WebSocket " + (e.kind === "close" ? "closed (code " + e.code + (e.clean ? ", clean" : "") + ")" : "failed") + " during " + e.stage + ", before " + where + ". Screenshot: if the game shows a disconnect, a reconnect loop or an error, stop here and do not save this run; if it reconnected and plays on, auto.resume()");
+  }
+
   async function oneSpin(name) {
+    await backendCheck(name);
     var S = CFG.settle || {};
     var wait = now() + 30000;
     var b = spinState();
@@ -946,6 +966,10 @@
     st.phase = "idle";
     await idle("idle", CFG.idleSeconds || 8, "idle");
     st.coverBase = cover();
+    try {
+      var cv0 = P.coverage && P.coverage();
+      if (cv0 && cv0.cover) (st.panels || (st.panels = {})).idle = { cover: cv0.cover, screens: cv0.screens };
+    } catch (e) {}
     var ch = P.summary().channels;
     st.channels = { frameLoop: ch.frameLoop, engineCpu: ch.engineCpu, gpuMemory: ch.gpuMemory, gpuTimer: ch.gpuTimer };
     if (!ch.engineCpu) st.coverage.cpu = "frameLoop " + ch.frameLoop + ": per-frame CPU unavailable";
@@ -1016,6 +1040,7 @@
     await waitCalm(180000);
     await gcPoint("end");
 
+    await backendCheck("history-after");
     st.phase = "history-after";
     await panel("history", "history-after", "history-after");
     await idle("idle-end", 5, "idle-end");
@@ -1076,7 +1101,7 @@
     // At needs "buy": do not buy (the balance is short, or the screen is not a plain buy).
     skip: function () { return resume({ skip: true }); },
     result: function () {
-      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, notStarted: st.notStarted, spinNodes: st.spinNodes, settle: st.settle, feature: st.feature || null, log: st.log };
+      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, notStarted: st.notStarted, spinNodes: st.spinNodes, settle: st.settle, panels: st.panels, feature: st.feature || null, log: st.log };
     }
   };
 

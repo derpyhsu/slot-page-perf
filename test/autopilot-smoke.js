@@ -20,7 +20,7 @@ function btn(name, x, y) {
 
 // One fresh driver. buttons: what the engine can name on the main screen.
 let onMark = null;
-function load(buttons, live, quiet, entry, extra) {
+function load(buttons, live, quiet, entry, extra, pExtra) {
   // Earlier drivers keep running in the background; each one has its own marks.
   const myMarks = [];
   const myOnMark = onMark;
@@ -43,6 +43,7 @@ function load(buttons, live, quiet, entry, extra) {
     entry: entry || {}
   };
   Object.assign(window.__slotPerfThresholds, extra || {});
+  Object.assign(P, pExtra || {});
   new Function(src)();
   P.auto.marks = myMarks;
   return P.auto;
@@ -166,6 +167,21 @@ async function quickStopCase() {
   assert.ok(log.includes("quick stop turbo-1") && !log.some((l) => /quick stop spin-/.test(l)), "quick stop on turbo spins only: " + log.filter((l) => /quick|press/.test(l)).join(" | "));
 }
 
+// R6. A socket closed after the game was ready stops the driver at the next gap, once per close.
+async function backendCase() {
+  const sp = btn("btn_spin", 500, 600);
+  let evs = [];
+  const auto = load([sp], null, null, null, { maxSpins: 2, normalSpins: 2, settle: { pollMs: 50, minMs: 200, confirmMs: 200, stablePolls: 2, quietMs: 60000, nudgeAfterMs: 60000 } }, { wsEvents: (from) => evs.slice(from || 0) });
+  auto.start();
+  await until(auto, (s) => s.needs === "map");
+  evs = [{ kind: "close", code: 1006, clean: false, stage: "idle", afterReady: true }];
+  auto.map({ spin: sp.point }, 2);
+  const s = await until(auto, (x) => x.needs === "backend", 10000);
+  assert.ok(/code 1006/.test(s.note) && /do not save/.test(s.note) && auto.marks.every((m) => m[0] !== "spin-1"), "asked before the first spin: " + s.note);
+  auto.resume();
+  await until(auto, (x) => auto.marks.some((m) => m[0] === "spin-1"), 10000);
+}
+
 async function busyCase() {
   const plain = await spinFor(false);
   const stop = await spinFor(true);
@@ -174,6 +190,7 @@ async function busyCase() {
 
 (async () => {
   await earlyMapCase();
+  await backendCase();
   await busyCase();
   await quickStopCase();
   await settleCase();

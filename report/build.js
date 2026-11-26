@@ -59,6 +59,11 @@ const notStarted = new Set(raw.notStarted || []);
 const stages = (s.stages || []).map((x) => (notStarted.has(x.name) ? Object.assign({}, x, { name: "gap", notStarted: x.name }) : x));
 const spinWord = (n) => (/^turbo-/.test(n) ? `加速第 ${n.slice(6)} 轉` : `第 ${n.replace(/^spin-/, "")} 轉`);
 const notStartedNote = notStarted.size ? [`${[...notStarted].map(spinWord).join("、")}按下後畫面沒變，沒轉起來，沒算進 spin`] : [];
+// A WebSocket that closed or failed after the game was ready: what follows may not be the game.
+const wsAfter = (s.ws || []).filter((e) => e.afterReady);
+const wsWhere = (n) => (/^(spin|turbo)-\d+$/.test(n || "") ? spinWord(n) : n || "?");
+const wsNote = wsAfter.length ? [`WebSocket 在${wsWhere(wsAfter[0].stage)}${wsAfter[0].kind === "close" ? `斷線（code ${wsAfter[0].code}）` : "出錯"}${wsAfter.length > 1 ? `，共 ${wsAfter.length} 次` : ""}，之後的數字可能不是遊戲本身的表現`] : [];
+const extraNotes = notStartedNote.concat(wsNote);
 const spins = stages
   .filter((x) => /^(spin|turbo)-\d+$/.test(x.name))
   .map((x) => Object.assign({}, x, { tags: x.wallMs > 12000 ? ["long"] : [] }));
@@ -94,12 +99,14 @@ const ev = {
   census: raw.census || undefined,
   spinNodes: raw.spinNodes && raw.spinNodes.length ? raw.spinNodes : undefined,
   settle: raw.settle || undefined,
+  panels: raw.panels || undefined,
+  ws: s.ws || undefined,
   feature: raw.feature || undefined,
   coverage,
   findings: [],
   summary: notes.summary,
   issues: notes.issues,
-  missing: notStartedNote.length ? [].concat(typeof notes.missing === "string" ? [notes.missing] : notes.missing || [], notStartedNote) : typeof notes.missing === "string" ? [notes.missing] : notes.missing,
+  missing: extraNotes.length ? [].concat(typeof notes.missing === "string" ? [notes.missing] : notes.missing || [], extraNotes) : typeof notes.missing === "string" ? [notes.missing] : notes.missing,
 };
 Object.keys(ev).forEach((k) => ev[k] === undefined && delete ev[k]);
 Object.keys(ev.game).forEach((k) => ev.game[k] === undefined && delete ev.game[k]);
