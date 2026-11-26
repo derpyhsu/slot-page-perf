@@ -1083,6 +1083,27 @@
     var v3 = !!(cc.UITransform || /^3\./.test(String(cc.ENGINE_VERSION || "")));
     var out = { status: "ok", engine: v3 ? 3 : 2, offscreen: 0, scale0: 0, outsideMask: 0, checked: 0, noView: 0, offscreenBy: {}, scale0By: {}, outsideMaskBy: {} };
     if (!v3) out.spine = { skeletons: 0, transparent: 0, transparentScreens: 0, transparentBy: {}, empty: 0, emptyBy: {} };
+    // Screen coverage: the area every drawn render node fills inside its camera's view (and inside
+    // any ancestor mask), in screens. Many layers of full-screen art is what fill rate pays for.
+    var cov = { screens: 0, full: 0, additive: 0, groups: {}, spineNoArea: 0 };
+    var addCov = function (grp, screens, additive, full) {
+      if (!(screens > 0)) return;
+      cov.screens += screens;
+      if (additive) cov.additive += screens;
+      if (full) cov.full += 1;
+      var g = cov.groups[grp] || (cov.groups[grp] = [0, 0]);
+      g[0] += screens;
+      g[1] += 1;
+    };
+    var clipArea = function (b, v, c) {
+      var x0 = Math.max(b.x0, v.x0, c ? c.x0 : -Infinity), x1 = Math.min(b.x1, v.x1, c ? c.x1 : Infinity);
+      var y0 = Math.max(b.y0, v.y0, c ? c.y0 : -Infinity), y1 = Math.min(b.y1, v.y1, c ? c.y1 : Infinity);
+      return x1 > x0 && y1 > y0 ? (x1 - x0) * (y1 - y0) : 0;
+    };
+    var isAdditive = function (comp) {
+      var d = comp.dstBlendFactor != null ? comp.dstBlendFactor : comp._dstBlendFactor;
+      return d === 1;
+    };
     var views = new Map();
     var viewOf = function (node) {
       var cam = null;
@@ -1110,8 +1131,9 @@
       }
       return null;
     };
-    var visit = function (node, opacity, clip) {
+    var visit = function (node, opacity, clip, grp, depth) {
       if (!node || node.activeInHierarchy === false || node._activeInHierarchy === false) return;
+      if (depth < 3) grp = (grp ? grp + "/" : "") + String(node.name || "?").replace(/\d+/g, "*");
       var op = opacity;
       if (v3) {
         var up = node._uiProps;
@@ -1120,21 +1142,22 @@
         op = opacity * a * (up && typeof up.localOpacity === "number" ? up.localOpacity : 1);
         if (op <= 0.0001) return;
         // _renderFlag is false when the component has nothing it can draw (a sprite without a frame).
-        if (rc3 && rc3.enabledInHierarchy !== false && rc3._renderFlag !== false) checkNode(node, rc3, clip);
+        if (rc3 && rc3.enabledInHierarchy !== false && rc3._renderFlag !== false) checkNode(node, rc3, clip, grp);
       } else {
         if (node._opacity === 0 || node.opacity === 0) return;
         var rc = node._renderComponent;
-        if (rc && rc.enabledInHierarchy !== false && rc._enabled !== false) checkNode(node, rc, clip);
+        if (rc && rc.enabledInHierarchy !== false && rc._enabled !== false) checkNode(node, rc, clip, grp);
       }
       var mb = maskBox(node);
       var sub = mb ? (clip ? { x0: Math.max(clip.x0, mb.x0), x1: Math.min(clip.x1, mb.x1), y0: Math.max(clip.y0, mb.y0), y1: Math.min(clip.y1, mb.y1) } : mb) : clip;
       var kids = node._children || node.children || [];
-      for (var i = 0; i < kids.length; i += 1) visit(kids[i], op, sub);
+      for (var i = 0; i < kids.length; i += 1) visit(kids[i], op, sub, grp, depth + 1);
     };
-    var checkNode = function (node, comp, clip) {
+    var checkNode = function (node, comp, clip, grp) {
       var name = className(comp);
       if (/Skeleton|dragonBones|Armature/i.test(name)) {
-        if (!v3 && /Skeleton/.test(name)) spineSlots(comp, node);
+        if (!v3 && /Skeleton/.test(name) && !comp._cacheMode) spineSlots(comp, node, clip, grp);
+        else cov.spineNoArea += 1;
         return;
       }
       if (!v3 && cc.RenderFlow && cc.RenderFlow.FLAG_RENDER && typeof node._renderFlag === "number" && !(node._renderFlag & cc.RenderFlow.FLAG_RENDER)) return;
@@ -1155,11 +1178,15 @@
       } else if (clip && (box.x1 <= clip.x0 || box.x0 >= clip.x1 || box.y1 <= clip.y0 || box.y0 >= clip.y1)) {
         out.outsideMask += 1;
         out.outsideMaskBy[path] = (out.outsideMaskBy[path] || 0) + 1;
+      } else {
+        // The box is a rectangle through the node's transform; a rotated node's corners overcount a little.
+        var shown = clipArea(box, view, clip) * Math.min(1, box.area / Math.max(1e-9, (box.x1 - box.x0) * (box.y1 - box.y0)));
+        addCov(grp, shown / view.area, isAdditive(comp), shown >= 0.9 * view.area);
       }
     };
     // 2.x realtime Spine: renderable attachments (they have uvs) at alpha 0, and skeletons with
     // none left to draw. Cached skeletons draw from baked frames and are not read here.
-    var spineSlots = function (comp, node) {
+    var spineSlots = function (comp, node, clip, grp) {
       if (comp._cacheMode) return;
       var sk = comp._skeleton;
       var order = sk && sk.drawOrder;
@@ -1169,15 +1196,38 @@
       var path = groupPath(node);
       var skA = sk.color && typeof sk.color.a === "number" ? sk.color.a : 1;
       var drawn = 0, clear = 0, area = 0;
+      var wm = worldAffine(node, false);
+      var wview = viewOf(node);
+      var det = wm ? Math.abs(wm.a * wm.d - wm.b * wm.c) : 0;
+      var shownScreens = 0, addScreens = 0;
       for (var i = 0; i < order.length; i += 1) {
         var slot = order[i];
         if (!slot || (slot.bone && slot.bone.active === false)) continue;
         var att = typeof slot.getAttachment === "function" ? slot.getAttachment() : slot.attachment;
         if (!att || !att.uvs) continue;
         var a = skA * (slot.color && typeof slot.color.a === "number" ? slot.color.a : 1) * (att.color && typeof att.color.a === "number" ? att.color.a : 1);
-        if (a > 0) { drawn += 1; continue; }
+        var geo = attachmentGeom(att, slot);
+        if (a > 0) {
+          drawn += 1;
+          // Drawn slot: its triangles' area, cut to the part of its box inside the view and mask.
+          if (geo && wm && wview && geo.area > 0) {
+            var wb = affineBox(wm, geo);
+            var full = (wb.x1 - wb.x0) * (wb.y1 - wb.y0);
+            var s = full > 0 ? geo.area * det * (clipArea(wb, wview, clip) / full) / wview.area : 0;
+            shownScreens += s;
+            if (slot.data && slot.data.blendMode === 1) addScreens += s;
+          }
+          continue;
+        }
         clear += 1;
-        area += attachmentArea(att, slot);
+        area += geo ? geo.area : 0;
+      }
+      if (shownScreens > 0) {
+        cov.screens += shownScreens;
+        cov.additive += addScreens;
+        var cg = cov.groups[grp] || (cov.groups[grp] = [0, 0]);
+        cg[0] += shownScreens;
+        cg[1] += 1;
       }
       if (clear) {
         sp.transparent += clear;
@@ -1197,7 +1247,7 @@
       }
     };
     var roots = scene._children || scene.children || [];
-    for (var r = 0; r < roots.length; r += 1) visit(roots[r], 1, null);
+    for (var r = 0; r < roots.length; r += 1) visit(roots[r], 1, null, "", 0);
     var top = function (by) {
       return Object.keys(by).map(function (k) { return [k, by[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, INV_TOP);
     };
@@ -1211,7 +1261,24 @@
         .sort(function (a, b) { return b[2] - a[2] || b[1] - a[1]; }).slice(0, INV_TOP);
       sp.emptyBy = top(sp.emptyBy);
     }
+    out.coverage = {
+      screens: round(cov.screens, 2),
+      full: cov.full,
+      additiveScreens: round(cov.additive, 2),
+      spineNoArea: cov.spineNoArea || undefined,
+      groups: Object.keys(cov.groups).map(function (k) { var g = cov.groups[k]; return [k, round(g[0], 2), g[1]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8)
+    };
     return out;
+  }
+  // The world box of a skeleton-space box through a node's world transform.
+  function affineBox(m, b) {
+    var xs = [b.x0, b.x1], ys = [b.y0, b.y1];
+    var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (var i = 0; i < 2; i += 1) for (var j = 0; j < 2; j += 1) {
+      var x = m.a * xs[i] + m.c * ys[j] + m.tx, y = m.b * xs[i] + m.d * ys[j] + m.ty;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    return { x0: x0, x1: x1, y0: y0, y1: y1 };
   }
 
   // The affine part of a node's world matrix: x' = a*x + c*y + tx, y' = b*x + d*y + ty.
@@ -1292,7 +1359,7 @@
 
   // Area of one Spine attachment in skeleton space, from its world vertices (spine-ts 3.x API).
   var spineVerts = null;
-  function attachmentArea(att, slot) {
+  function attachmentGeom(att, slot) {
     try {
       var n, tris;
       if (att.triangles && att.worldVerticesLength) {
@@ -1304,15 +1371,17 @@
         spineVerts = spineVerts && spineVerts.length >= 8 ? spineVerts : new Float32Array(64);
         att.computeWorldVertices(slot.bone, spineVerts, 0, 2);
         tris = [0, 1, 2, 2, 3, 0];
-      } else return 0;
+      } else return null;
       var sum = 0;
+      var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
       for (var i = 0; i + 2 < tris.length; i += 3) {
         var p = tris[i] * 2, q = tris[i + 1] * 2, r = tris[i + 2] * 2;
         sum += Math.abs((spineVerts[q] - spineVerts[p]) * (spineVerts[r + 1] - spineVerts[p + 1]) - (spineVerts[r] - spineVerts[p]) * (spineVerts[q + 1] - spineVerts[p + 1])) / 2;
+        [p, q, r].forEach(function (k) { var vx = spineVerts[k], vy = spineVerts[k + 1]; if (vx < x0) x0 = vx; if (vx > x1) x1 = vx; if (vy < y0) y0 = vy; if (vy > y1) y1 = vy; });
       }
-      return isFinite(sum) ? sum : 0;
+      return isFinite(sum) ? { area: sum, x0: x0, x1: x1, y0: y0, y1: y1 } : null;
     } catch (e) {
-      return 0;
+      return null;
     }
   }
 
@@ -2449,6 +2518,13 @@
       var t = performance.now();
       var since = function (at) { return Math.round(t - (at || state.t0)); };
       return { badMs: since(state.lastBadAt), longMs: since(state.lastLongAt), uploadMs: since(state.lastBigUploadAt) };
+    },
+    // Screen coverage of what is drawn now (census walk only). For slot-perf-drill coverage().
+    coverage: function () {
+      var cc = window.cc;
+      var scene = cc && cc.director && cc.director.getScene && cc.director.getScene();
+      if (!scene) return { status: "unavailable" };
+      try { return invisibleDrawn(cc, scene).coverage; } catch (e) { return { status: "error", note: String(e && e.message || e).slice(0, 80) }; }
     },
     // Clickable Cocos nodes, optionally only those whose name or text contains one of words.
     // quietMs is how long since the last texture upload, a sign that loading has settled.

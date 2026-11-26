@@ -494,8 +494,12 @@
   // ---------- fps ----------
   // Frames drawn over ms and the median gap between them, from EVENT_AFTER_DRAW. For the
   // fill-rate check: read it, shrink the page, read it again, put the size back.
-  function fps(ms) {
+  // FPS over ms. With opts.hide (cc.find paths), it measures once as is and once with those
+  // subtrees hidden (2.x opacity 0, 3.x active false), then puts them back: what one layer costs
+  // in the state the page is in now, for example while the reels spin.
+  function fps(ms, opts) {
     ms = ms || 4000;
+    if (opts && opts.hide) return fpsAB(ms, [].concat(opts.hide));
     return new Promise(function (resolve) {
       var ts = [];
       var on = function () { ts.push(performance.now()); };
@@ -516,6 +520,60 @@
         resolve(api.last);
       }, ms);
     });
+  }
+
+  async function fpsAB(ms, paths) {
+    var nodes = paths.map(function (p) { return { path: p, node: cc.find ? cc.find(p) : null }; });
+    var missing = nodes.filter(function (x) { return !x.node; }).map(function (x) { return x.path; });
+    if (missing.length) { api.last = { status: "not found", missing: missing }; return api.last; }
+    var base = await fps(ms);
+    var touched = [];
+    nodes.forEach(function (x) { hide(x.node, touched); });
+    var hidden;
+    try { hidden = await fps(ms); } finally { var back = restore(touched); }
+    api.last = {
+      ms: ms, hide: paths, method: METHOD, base: base.fps, hidden: hidden.fps, gain: Math.round((hidden.fps - base.fps) * 10) / 10,
+      restore: { ok: !back.contended.length && !back.notRestored.length, nodes: back.contended.concat(back.notRestored) },
+      summary: [paths.join("、") + (METHOD === "opacity" ? " 以 opacity 0 暫時隱藏" : " 以 active=false 暫時關掉") + "：FPS " + base.fps + " → " + hidden.fps + "（" + (hidden.fps >= base.fps ? "+" : "") + (Math.round((hidden.fps - base.fps) * 10) / 10) + "）"]
+    };
+    return api.last;
+  }
+
+  // Screen coverage while the page does what it does now (idle, reels spinning, a win playing):
+  // samples the slot-page-perf probe's coverage walk every 250 ms for seconds, and keeps the
+  // average and the peak per subtree. Needs the probe on the page (it is there after a run).
+  async function coverage(opts) {
+    opts = opts || {};
+    var P = window.__slotPerf;
+    if (!P || typeof P.coverage !== "function") { api.last = { status: "needs the slot-page-perf probe on this page (it is there after a measuring run)" }; return api.last; }
+    var end = Date.now() + (opts.seconds || 3) * 1000;
+    var samples = [];
+    while (Date.now() < end) {
+      var c = P.coverage();
+      if (c && c.groups) samples.push(c);
+      await new Promise(function (r) { setTimeout(r, 250); });
+    }
+    if (!samples.length) { api.last = { status: "no samples" }; return api.last; }
+    var groups = {};
+    samples.forEach(function (c) {
+      c.groups.forEach(function (g) {
+        var x = groups[g[0]] || (groups[g[0]] = { path: g[0], sum: 0, peak: 0, nodes: 0 });
+        x.sum += g[1]; x.peak = Math.max(x.peak, g[1]); x.nodes = Math.max(x.nodes, g[2]);
+      });
+    });
+    var r2 = function (v) { return Math.round(v * 100) / 100; };
+    var rows = Object.keys(groups).map(function (k) { var x = groups[k]; return { path: x.path, avg: r2(x.sum / samples.length), peak: r2(x.peak), nodes: x.nodes }; }).sort(function (a, b) { return b.avg - a.avg; });
+    var tot = samples.map(function (c) { return c.screens; });
+    var avg = r2(tot.reduce(function (a, b) { return a + b; }, 0) / tot.length);
+    var peak = r2(Math.max.apply(null, tot));
+    var add = r2(Math.max.apply(null, samples.map(function (c) { return c.additiveScreens || 0; })));
+    var noArea = Math.max.apply(null, samples.map(function (c) { return c.spineNoArea || 0; }));
+    api.last = {
+      tool: "coverage", samples: samples.length, screens: { avg: avg, peak: peak }, additivePeak: add, spineNoArea: noArea || undefined, groups: rows.slice(0, 10),
+      summary: ["每幀畫的面積平均約 " + avg + " 個螢幕、最多 " + peak + " 個（" + samples.length + " 次取樣）" + (add ? "，其中加色最多 " + add + " 個" : "") + (noArea ? "；" + noArea + " 個快取模式或 3.x 的 Spine 沒算面積" : ""),
+        "最多的子樹：" + rows.slice(0, 5).map(function (x) { return x.path + " 平均 " + x.avg + "、最多 " + x.peak; }).join("；")]
+    };
+    return api.last;
   }
 
   var REASON = { texture: "貼圖不同", material: "材質不同", "label-own-texture": "Label 沒開快取，自己一張貼圖", mask: "遮罩", graphics: "Graphics", spine: "Spine（沒開合批）", dragonbones: "DragonBones" };
@@ -658,6 +716,7 @@
     drawcalls: drawcalls,
     fps: fps,
     spineCache: spineCache,
+    coverage: coverage,
     images: images,
     imageMeta: imageMeta,
     // Batch breaks of one subtree (cc.find path) or the whole scene, without hiding anything.

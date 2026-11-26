@@ -66,6 +66,11 @@ assert.strictEqual(eval(pageSrc)(), "drill ok");
 const D = global.__slotDrill;
 for (const b of [png, jpg, webp]) assert.deepStrictEqual(D.imageMeta(new Uint8Array(b)), imageMeta(new Uint8Array(b)), "page copy agrees");
 (async () => {
+  // R15. coverage() samples the probe's walk and keeps average and peak per subtree.
+  let k = 0;
+  global.__slotPerf = { coverage: () => { k += 1; return { screens: k % 2 ? 6 : 8, additiveScreens: 1, groups: [["Canvas/BG", k % 2 ? 3 : 5, 3], ["Canvas/Reels", 2, 40]] }; } };
+  const cvr = await D.coverage({ seconds: 1 });
+  assert.ok(cvr.samples >= 3 && cvr.screens.peak === 8 && cvr.groups[0].path === "Canvas/BG" && cvr.groups[0].peak === 5, "coverage average and peak: " + JSON.stringify(cvr));
   const r = await D.images();
   assert.strictEqual(r.rows[0].file, "reel.png", "file name only, no query");
   assert.ok(r.rows[0].name === "reel_frame" && r.rows[0].bpp > 1 && r.rows[0].removableKb > 500, "page scan finds the XMP");

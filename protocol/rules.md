@@ -125,6 +125,10 @@ autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每�
 
 `panel-left-open` 那一列另外寫 `idle` 到 `after-rules` 之間多出的組（`panelNodes`），附顯示中的個數。
 
+## fill-layers
+
+普查（`census[].invisible.coverage`）把每個在畫的節點在畫面內、遮罩框內的面積加起來，換算成幾個螢幕：2.x 即時 Spine 依每個有畫的 slot 的三角形面積算（標出加色混合），快取模式與 3.x 的 Spine 不算面積，只計個數；其他節點用自己的內容框。待機、看完規則後、轉完後這三次普查裡最多的那次達到 `coverage.screens` 就列，`coverage.orange` 以上橘色。寫總層數、幾乎蓋滿畫面的節點數、加色層數，以及依節點路徑前三層分組的前四組。只陳述，不計分。轉動中的畫面在 slot-perf-drill 用 `coverage` 量。
+
 ## label-redraw
 
 同一段裡，同一個系統字或 TTF Label 文字沒變卻又上傳了一次貼圖（探針對每次上傳時的文字算雜湊比對，不存文字）。整段合計達到 `labelRedraw.minSame` 次或 `labelRedraw.minMb` MB 才列。報告只列一列，寫最多的那段和前三段，各段依節點路徑分組，附上傳發生在啟用時（onEnable，節點啟用途中）、繪製時，還是元件的程式裡。

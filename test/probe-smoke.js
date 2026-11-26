@@ -399,6 +399,11 @@ const cc3 = global.cc;
   assert.strictEqual(inv.spine.empty, 1, "skeleton with nothing to draw");
   assert.deepStrictEqual(inv.spine.emptyBy[0], ["Canvas/fx_empty", 1]);
   assert.strictEqual(inv.spine.skeletons, 2, "cached skeletons not read");
+  // R15. Coverage: bg one screen, the drawn Spine slot a quarter, the mask box and the symbol in it.
+  const cv = inv.coverage;
+  assert.ok(Math.abs(cv.screens - (1 + 0.25 + (500 * 300 + 100 * 100) / 921600)) < 0.01 && cv.full === 1, "coverage in screens: " + JSON.stringify(cv));
+  assert.deepStrictEqual(cv.groups[0], ["Canvas/bg", 1, 1], "grouped by the first levels of the path");
+  assert.ok(cv.groups.some((g) => g[0] === "Canvas/fx_rt" && g[1] === 0.25) && cv.spineNoArea === 1, "Spine by slot; cached Spine not measured");
 
   // Through the report: one cocos row with the counts and the paths.
   const dI = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
@@ -411,6 +416,13 @@ const cc3 = global.cc;
   assert.ok(/30/.test(row.title) && row.fix.includes("Canvas/pool/sym_*") && row.fix.includes("Canvas/fx_empty"), "row names counts and paths: " + row.title + " / " + row.fix);
   assert.ok(!ev.todo.some((t) => t.rule === "cocos-invisible-drawn"), "no row without the census field");
   assert.strictEqual(JSON.stringify(evI.score), JSON.stringify(ev.score), "not scored");
+  assert.ok(!evI.todo.some((t) => t.rule === "fill-layers"), "1.4 screens is not many layers");
+  const dF = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+  const cIdle = Object.assign({}, c1, { at: "idle", invisible: Object.assign({}, inv, { coverage: { screens: 8.6, full: 7, additiveScreens: 2.1, groups: [["Canvas/BG", 4.2, 3], ["Canvas/Reels", 2.5, 60]] } }) });
+  fs.writeFileSync(path.join(dF, "raw.json"), JSON.stringify(Object.assign({}, raw, { census: [cIdle, c1, c2] })));
+  execFileSync(process.execPath, [path.join(root, "report", "build.js"), dF], { encoding: "utf8" });
+  const fr = JSON.parse(fs.readFileSync(path.join(dF, "evidence.json"), "utf8")).todo.find((t) => t.rule === "fill-layers");
+  assert.ok(fr && fr.level === "orange" && fr.title === "待機每幀畫的面積約 8.6 個螢幕" && fr.fix.includes("Canvas/BG 4.2 層"), "fill-layers row: " + (fr && fr.fix));
 }
 
 // A level that steps up at spin 6 and stays: draw calls and active nodes, one row.
@@ -441,7 +453,7 @@ const cc3 = global.cc;
   ["loading", "smooth", "memory"].forEach((k) => assert.strictEqual(sumOf(ev, k), 100 - ev.score[k].score, "losses add up for " + k));
   assert.ok(ev.losses.top.length <= 3 && ev.losses.top[0].points >= ev.losses.top[ev.losses.top.length - 1].points, "top three, largest first");
   const steady = ev.losses.all.find((r) => r.id === "steady");
-  assert.ok(!steady || (steady.stage === "spin" && steady.tool === "fill rate"), "low FPS with little engine CPU points to fill rate");
+  assert.ok(!steady || (steady.stage === "spin" && steady.tool === "coverage, fill rate"), "low FPS with little engine CPU points to coverage and fill rate");
   assert.ok(fs.readFileSync(path.join(runDir, "report.html"), "utf8").includes("扣最多分的地方"), "losses on the first screen");
   const cap = leakEv.losses.caps.find((c) => c.category === "memory");
   assert.ok(cap && cap.cap === leakEv.score.memory.score && cap.fatal.includes("leak-suspected") && sumOf(leakEv, "memory") === 100 - cap.uncapped, "a fatal cap is stated beside the losses");

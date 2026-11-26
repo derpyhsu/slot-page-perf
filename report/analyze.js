@@ -728,12 +728,12 @@ function lossRow(key, item, points, gs, gameGroup) {
     if (g) row.stage = g.group;
     // Lessons from drilling: low FPS with little engine CPU per frame is fill rate; with a busy
     // frame, which subtree draws the most.
-    row.tool = g && g.cpuP95 != null && g.cpuP95 >= 1000 / 60 / 2 ? "drawcalls" : g && g.cpuP95 != null ? "fill rate" : "drawcalls, fill rate";
+    row.tool = g && g.cpuP95 != null && g.cpuP95 >= 1000 / 60 / 2 ? "drawcalls" : g && g.cpuP95 != null ? "coverage, fill rate" : "drawcalls, coverage";
   } else if (key === "smooth" && item.id === "low") {
     const g = byFps((x) => x.fpsLow);
     if (g) row.stage = g.group;
   } else if (key === "smooth" && item.id === "cpu") row.tool = "drawcalls";
-  else if (key === "smooth" && item.id === "gpu") row.tool = "fill rate";
+  else if (key === "smooth" && item.id === "gpu") row.tool = "coverage, fill rate";
   else if (key === "smooth" && item.id === "stallRate") {
     const g = gs.filter((x) => gameGroup(x) && x.hitchCount).sort((a, b) => b.hitchCount - a.hitchCount)[0];
     if (g) row.stage = g.group;
@@ -926,6 +926,15 @@ function findingRows() {
   if (bloated.length) {
     const b = (x) => `${x.name ? `${x.name}（${x.file}）` : x.file} ${x.w}×${x.h} ${x.kb >= 1024 ? `${round(x.kb / 1024, 1)} MB` : `${x.kb} KB`}（每像素 ${x.bpp} bytes）`;
     rows.push({ rule: "image-bloated", level: "yellow", title: `${bloated.length} 張圖的檔案比沒壓縮的像素還大`, area: "載入", fix: `沒壓縮的圖每像素 4 bytes，檔案比這還大表示裡面夾了圖以外的東西，常見是編輯軟體寫入的中繼資料。${bloated.slice(0, 3).map(b).join("；")}。用 slot-perf-drill 的 images 看每張能拿掉多少。`, stage: "loading", t: null });
+  }
+
+  // Many screens of art drawn each frame on a still screen (census coverage): what fill rate pays.
+  const CV = thresholds.coverage || {};
+  const covAt = (ev.census || []).filter((c) => c && c.invisible && c.invisible.coverage && ["idle", "end", "after-rules"].includes(c.at)).sort((a, b) => b.invisible.coverage.screens - a.invisible.coverage.screens)[0];
+  if (covAt && covAt.invisible.coverage.screens >= (CV.screens || 4)) {
+    const cv = covAt.invisible.coverage;
+    const at = { idle: "待機", end: "轉完後", "after-rules": "看完規則後" }[covAt.at];
+    rows.push({ rule: "fill-layers", level: cv.screens >= (CV.orange || 8) ? "orange" : "yellow", title: `${at}每幀畫的面積約 ${cv.screens} 個螢幕`, area: "填充率", fix: `把每個在畫的節點在畫面內的面積加起來（Spine 依 slot 算），約等於整個畫面疊了 ${cv.screens} 層${cv.full ? `，其中 ${cv.full} 個節點幾乎蓋滿整個畫面` : ""}${cv.additiveScreens ? `，加色混合約 ${cv.additiveScreens} 層` : ""}。最多的是：${cv.groups.slice(0, 4).map((g) => `${g[0]} ${g[1]} 層（${g[2]} 個節點）`).join("；")}。${cv.spineNoArea ? `另有 ${cv.spineNoArea} 個快取模式或 3.x 的 Spine 沒算面積。` : ""}轉動中的畫面用 slot-perf-drill 的 coverage 量，關掉某一層的差別用 fps 的 hide。`, stage: covAt.at === "idle" ? "idle" : null, t: null });
   }
 
   // Labels drawn again with unchanged text: one row, stages with the most first.

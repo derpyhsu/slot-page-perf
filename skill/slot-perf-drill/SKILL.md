@@ -31,7 +31,7 @@ Start from the report's first screen: 扣最多分的地方 lists the three item
 | --- | --- |
 | Many draw calls: `stall`/`fps` rows with high draw calls, `panel-heavier`, `panel-left-open` (draw call), `cocos-mask-*`, `cocos-label-no-cache`, `cocos-dynamic-atlas-off` | `drawcalls` |
 | `leak-suspected` or `heap-step` where `nodeGrowth` shows no group growing (the heap grows, the node count does not) | `spineCache` first when the scene has Spine in a cache mode, then `heap` |
-| Low FPS while engine CPU per frame is low | fill rate |
+| Low FPS while engine CPU per frame is low, `fill-layers` | `coverage` (in the state that is slow, for example while the reels spin), then `fps` with `hide` on the biggest subtree; fill rate to confirm |
 | `loading-progress-stop`, `image-bloated`, slow loading with large picture files | `images` |
 
 By symptom, in the order to check them:
@@ -58,6 +58,13 @@ By symptom, in the order to check them:
 - `baseAfter` is the count after all values were put back. A large gap from `base` means the screen was animating; measure again.
 - Options: `root` (a `cc.find` path to start from), `depth`, `frames`, `minShare`, `budgetMs` (default 90 s; on timeout the result is partial).
 - `__slotDrill.batchBreaks("Canvas/path")` lists batch breaks of one subtree without hiding anything.
+
+### coverage
+
+`evaluate_script`: `async () => (await __slotDrill.coverage({ seconds: 3 })).summary` while the page is in the slow state (press spin first to sample a spin), then `() => __slotDrill.last` with `filePath` `runs/<run>/drill/coverage-<state>.json`.
+
+- Samples the slot-page-perf probe's coverage walk every 250 ms: the area each drawn node fills inside its camera view and any ancestor mask, in screens, grouped by the first three levels of the node path (digits as `*`). 2.x realtime Spine is measured per drawn slot (additive blend noted); cached and 3.x Spine are counted as not measured. Needs the probe on the page; it is there after a measuring run.
+- `__slotDrill.fps(4000, { hide: ["Canvas/BG/bg_spine"] })` measures FPS as is and with those subtrees hidden, then puts them back: what one layer costs right now. Same hiding as `drawcalls` (2.x opacity 0, 3.x active false).
 
 ### images
 
