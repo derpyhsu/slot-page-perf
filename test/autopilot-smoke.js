@@ -202,6 +202,40 @@ async function gotoCase() {
   assert.strictEqual(auto.marks.filter((m) => /^spin-/.test(m[0])).length, spinsBefore, "goto never spins");
 }
 
+// Auto-drill through the menu: history given inside the menu during the run; goto opens the menu
+// first, then history, and never presses spin.
+async function gotoMenuCase() {
+  const sp = btn("btn_spin", 500, 600);
+  const mn = btn("btn_menu", 900, 100);
+  const H = { x: 850, y: 300 };
+  const auto = load([sp, mn], null, null, null, { maxSpins: 1, normalSpins: 1, panelSpikeSeconds: 0.05, panelSteadySeconds: 0.05, settle: { pollMs: 50, minMs: 200, confirmMs: 200, stablePolls: 2, quietMs: 60000, nudgeAfterMs: 60000 } });
+  auto.start();
+  const answer = async (stopAt) => {
+    for (let i = 0; i < 40; i += 1) {
+      const s = await until(auto, (x) => x.needs || stopAt(x), 20000);
+      if (!s.needs) return s;
+      if (s.needs === "map") auto.map({ spin: sp.point, menu: mn.point, history: null, rules: null }, 1);
+      else if (s.needs === "menu") auto.map({ history: H, close: { x: 1200, y: 60 } });
+      else if (s.needs === "screen" && /pressed history/.test(s.note)) auto.opened();
+      else auto.resume();
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    throw new Error("too many stops");
+  };
+  await answer((x) => x.phase === "done");
+  const before = auto.result().log.length;
+  auto.goto("history");
+  let s = await answer((x) => /^drill:/.test(x.phase));
+  assert.strictEqual(s.phase, "drill:history", "history reached through the menu: " + JSON.stringify(s));
+  assert.ok(!s.note, "no note left from an earlier goto");
+  const presses = auto.result().log.slice(before).map((l) => l[1]).filter((t) => /^press /.test(t));
+  assert.ok(/^press menu @900,100/.test(presses[0]) && /^press history @850,300/.test(presses[1]), "menu first, then history: " + presses.join(" / "));
+  auto.goto("idle");
+  s = await answer((x) => x.phase === "drill:idle");
+  const all = auto.result().log.slice(before).map((l) => l[1]).filter((t) => /^press /.test(t));
+  assert.ok(!all.some((t) => /@500,600/.test(t) || /^press spin/.test(t)), "goto never presses spin: " + all.join(" / "));
+}
+
 async function busyCase() {
   const plain = await spinFor(false);
   const stop = await spinFor(true);
@@ -211,6 +245,7 @@ async function busyCase() {
 (async () => {
   await earlyMapCase();
   await gotoCase();
+  await gotoMenuCase();
   await backendCase();
   await busyCase();
   await quickStopCase();

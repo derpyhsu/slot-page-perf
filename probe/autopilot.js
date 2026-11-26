@@ -1052,6 +1052,7 @@
 
   async function gotoState(kind) {
     st.phase = "goto";
+    st.note = null;
     var base = st.clearRef || footprint();
     if (st.drillOpen) {
       var open = st.drillOpen;
