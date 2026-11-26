@@ -182,6 +182,26 @@ async function backendCase() {
   await until(auto, (x) => auto.marks.some((m) => m[0] === "spin-1"), 10000);
 }
 
+// Auto-drill. After the run, goto brings the game to a state with the run's points; never spins.
+async function gotoCase() {
+  const sp = btn("btn_spin", 500, 600);
+  const auto = load([sp], null, null, null, { maxSpins: 1, normalSpins: 1, settle: { pollMs: 50, minMs: 200, confirmMs: 200, stablePolls: 2, quietMs: 60000, nudgeAfterMs: 60000 } });
+  assert.ok(auto.goto("rules").error, "goto refused before the run is done");
+  auto.start();
+  await until(auto, (s) => s.needs === "map");
+  auto.map({ spin: sp.point }, 1);
+  await until(auto, (s) => s.needs === "gc", 15000);
+  auto.resume();
+  await until(auto, (s) => s.phase === "done", 20000);
+  const spinsBefore = auto.marks.filter((m) => /^spin-/.test(m[0])).length;
+  auto.goto("rules");
+  let s = await until(auto, (x) => /^drill:/.test(x.phase), 5000);
+  assert.ok(s.phase === "drill:rules" && /not on screen/.test(auto.status().note || s.note || ""), "rules not on the map: said so: " + JSON.stringify(s));
+  auto.goto("idle");
+  s = await until(auto, (x) => x.phase === "drill:idle", 5000);
+  assert.strictEqual(auto.marks.filter((m) => /^spin-/.test(m[0])).length, spinsBefore, "goto never spins");
+}
+
 async function busyCase() {
   const plain = await spinFor(false);
   const stop = await spinFor(true);
@@ -190,6 +210,7 @@ async function busyCase() {
 
 (async () => {
   await earlyMapCase();
+  await gotoCase();
   await backendCase();
   await busyCase();
   await quickStopCase();

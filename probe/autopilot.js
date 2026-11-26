@@ -1050,6 +1050,41 @@
     log("done");
   }
 
+  async function gotoState(kind) {
+    st.phase = "goto";
+    var base = st.clearRef || footprint();
+    if (st.drillOpen) {
+      var open = st.drillOpen;
+      st.drillOpen = null;
+      if (!(await closePanel(open, [base]))) {
+        var r = await ask("close", "the " + open + " panel is open: auto.click(x, y) on its close, or auto.resume() if the game screen is clear");
+        if (r && r.click) pressAt(r.click, open + " close");
+        await sleep(1000);
+      }
+      await clearScreen(base);
+    } else if (covered()) await clearScreen(base);
+    if (kind !== "idle") {
+      var m = st.map || {};
+      var pre = footprint();
+      if ((!m[kind] || m[kind + "InMenu"]) && m.menu) await openMenu(pre);
+      if (!m[kind]) {
+        st.phase = "drill:" + kind;
+        st.note = kind + " is not on screen";
+        return;
+      }
+      var before = footprint();
+      pressAt(m[kind], kind);
+      if ((await waitChange(before, 3000)) == null) {
+        var seen = await ask("screen", "pressed " + kind + " but saw no change: screenshot, then auto.opened() if the panel is up, otherwise auto.resume()");
+        if (!(seen && seen.opened)) { st.phase = "drill:idle"; st.note = kind + " did not open"; return; }
+      }
+      await sleep(1500);
+      st.drillOpen = kind;
+    }
+    st.phase = "drill:" + kind;
+    log("drill state " + kind);
+  }
+
   function status() {
     var live = P.live();
     var out = { phase: st.phase, needs: st.needs, note: st.note, spins: st.spins, plan: st.plan, t: Math.round((now() - st.started) / 1000), stage: live.stage, fps: live.fps, gpuMb: live.gpuMb, heapMb: live.heapMb };
@@ -1067,10 +1102,11 @@
       if (st.phase === "ready") run().catch(function (e) { st.phase = "error"; st.note = String(e && e.message || e); st.needs = "error"; });
       return status();
     },
-    // Resolves as soon as the driver needs the agent, finishes, or ms passes. Keep ms under the tool timeout.
+    // Resolves as soon as the driver needs the agent, finishes, reaches a goto state, or ms passes.
+    // Keep ms under the tool timeout.
     wait: async function (ms) {
       var end = now() + (ms || 60000);
-      while (now() < end && !st.needs && st.phase !== "done" && st.phase !== "error") await sleep(500);
+      while (now() < end && !st.needs && st.phase !== "done" && st.phase !== "error" && !/^drill:/.test(st.phase)) await sleep(500);
       return status();
     },
     status: status,
@@ -1098,6 +1134,15 @@
     ready: function () { return resume({ ready: true }); },
     click: function (x, y, text) { return resume({ click: toLocal({ x: x, y: y }), text: text }); },
     resume: function () { return resume({}); },
+    // After the run, for slot-perf-drill: bring the game to "idle" (close what is open), "history"
+    // or "rules" with the points from the run. Never presses spin or buy, and adds nothing to the
+    // saved result. Wait on it like the run; ready when phase is "drill:<state>".
+    goto: function (state) {
+      if (st.phase !== "done" && !/^drill:/.test(st.phase)) return { error: "goto is for after the run (phase done)" };
+      if (["idle", "history", "rules"].indexOf(state) < 0) return { error: "state is idle, history or rules" };
+      gotoState(state).catch(function (e) { st.phase = "error"; st.note = String(e && e.message || e); st.needs = "error"; });
+      return status();
+    },
     // At needs "buy": do not buy (the balance is short, or the screen is not a plain buy).
     skip: function () { return resume({ skip: true }); },
     result: function () {

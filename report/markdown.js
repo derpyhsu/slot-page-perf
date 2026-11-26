@@ -63,6 +63,17 @@ if (stalls.length) {
   stalls.forEach((r) => lines.push(`| ${clk(r.t)} | ${cell(r.stage)} | ${Math.round(r.dt)} ms | ${cell(r.cause || "沒量到")}${r.canvasShare != null ? `；系統字貼圖 ${Math.round(r.canvasShare * 100)}%` : ""} | ${r.counted || "—"} |`));
 }
 
+const drill = ev.drill || [];
+if (drill.length) {
+  lines.push("");
+  lines.push("## 下鑽結果");
+  drill.forEach((x) => {
+    lines.push("");
+    lines.push(`**${x.tool}${x.state ? ` · ${x.state}` : ""}**`);
+    x.summary.forEach((l) => lines.push(`- ${l}`));
+  });
+}
+
 lines.push("");
 lines.push("## 目前狀況");
 lines.push("");

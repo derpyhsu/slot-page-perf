@@ -522,6 +522,22 @@ const cc3 = global.cc;
   assert.deepStrictEqual(P.wsEvents(0).map((e) => e.code), [1006], "autopilot sees closes after game-ready");
 }
 
+// Auto-drill: a plan printed with the digest, and drill results saved with the run in the report.
+{
+  assert.ok(Array.isArray(ev.drillPlan) && ev.drillPlan.every((d) => ["idle", "history", "rules"].includes(d.state) && ["drawcalls", "coverage", "spineCache", "images"].includes(d.tool)), "drill plan uses goto states and page tools: " + JSON.stringify(ev.drillPlan));
+  const dD = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+  fs.writeFileSync(path.join(dD, "raw.json"), JSON.stringify(raw));
+  fs.mkdirSync(path.join(dD, "drill"));
+  fs.writeFileSync(path.join(dD, "drill", "drawcalls-idle.json"), "Script ran on page and returned:\n```json\n" + JSON.stringify({ base: 50, summary: ["基準每幀 50 個 draw call", "第 1 層 Canvas：Canvas/BG −20 https://x.test/a.png?token=secret"] }) + "\n```\n");
+  fs.writeFileSync(path.join(dD, "drill", "spine-cache-rules.json"), JSON.stringify({ summary: ["快取 3 MB"] }));
+  const digestD = execFileSync(process.execPath, [path.join(root, "report", "build.js"), dD], { encoding: "utf8" });
+  const evD = JSON.parse(fs.readFileSync(path.join(dD, "evidence.json"), "utf8"));
+  assert.deepStrictEqual(evD.drill.map((d) => [d.tool, d.state]), [["drawcalls", "idle"], ["spine-cache", "rules"]], "drill files read by tool and state");
+  const htmlD = fs.readFileSync(path.join(dD, "report.html"), "utf8");
+  assert.ok(htmlD.includes("下鑽結果") && htmlD.includes("Canvas/BG −20") && !htmlD.includes("token=secret"), "drill section in the report, scrubbed");
+  assert.ok(!ev.drillPlan.length || digestD.includes("下鑽："), "digest names the drill plan");
+}
+
 // R9. A stall in the settle wait counts in the loading stall item, never as a loading fatal, and
 // stays out of smoothness. P.quiet reports the long task the page just had.
 {

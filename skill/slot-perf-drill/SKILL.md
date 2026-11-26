@@ -13,7 +13,8 @@ Small tools an agent combines to explain one finding of a [slot-page-perf](../sl
 - The page tools change the live page only while they measure (they hide subtrees) and put every value back. They never edit game files. If a result says `restore.ok: false`, tell the user which nodes and reload the page before trusting anything else.
 - State what was measured and where to look. Whether to change it is the engineer's call.
 - Keep the page visible. A minimized or hidden page draws no frames; the tools then return `status: "partial"` or "no frames drawn".
-- Save results with `evaluate_script` `filePath` under `runs/<the run>/drill/`. Read only `summary` lines into the conversation. Never write URL query strings or session tokens.
+- Save results with `evaluate_script` `filePath` under `runs/<the run>/drill/` as `<tool>-<state>.json`. Read only `summary` lines into the conversation. Never write URL query strings or session tokens. `report/build.js` shows each file's `summary` under 下鑽結果.
+- slot-page-perf step 10 already runs `drawcalls`, `coverage`, `spineCache` and `images` in the states its digest names, through `__slotPerf.auto.goto`. Use this skill for what that leaves: `heap`, fill rate, `fps` with `hide`, a spin in progress, or a subtree the user names.
 - Heap snapshots go to your scratchpad, never `runs/`, and are deleted after: they hold session strings.
 
 ## Load
