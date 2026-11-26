@@ -661,6 +661,12 @@
     var lastDraws = null;
     var lastDrawChange = now();
     var sigSince = 0;
+    // Turbo spins also press the spin point again while the spin is seen busy (a quick stop), the
+    // way players cut spins short. Only on two busy polls in a row, so the press cannot start a
+    // new spin; skipped when no spin node is known.
+    var quickStop = /^turbo-/.test(name) && CFG.turboQuickStop !== false && !!st.spinKey;
+    var busyPolls = 0;
+    var stopped = false;
     while (true) {
       await sleep(S.pollMs || 250);
       var el = now() - t0;
@@ -684,6 +690,13 @@
         lastDrawChange = now();
       }
       if (!sb.ready) sawBusy = true;
+      busyPolls = sb.ready ? 0 : busyPolls + 1;
+      if (quickStop && !stopped && busyPolls >= 2 && el < (S.quickStopWithinMs || 3000)) {
+        stopped = true;
+        st.quickStops = (st.quickStops || 0) + 1;
+        log("quick stop " + name);
+        click(sb.point.x, sb.point.y);
+      }
       if (!sb.ready || sb.texts !== texts0 || (draws != null && draws0 != null && Math.abs(draws - draws0) > Math.max(3, draws0 * 0.15))) changed = true;
       var drawsBack = st.idleDraws == null || draws == null || Math.abs(draws - st.idleDraws) <= Math.max(3, st.idleDraws * 0.15);
       // Some spin buttons never disable and the idle glow changes the draw count. Then a screen
@@ -984,6 +997,7 @@
         if (!(await oneSpin((turbo ? "turbo-" : "spin-") + (turbo ? j : normal + j)))) break;
         await gcAfter(normal + j);
       }
+      if (turbo) st.coverage.quickStop = (st.quickStops || 0) + " of " + rest + " turbo spins stopped early";
       // Some toggles cycle through several speeds, so one more press may not turn it off.
       // A free game from the last spin hides the toggle, so wait until the game is calm.
       if (turbo) {

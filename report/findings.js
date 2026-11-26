@@ -287,9 +287,10 @@ function sceneDiff(a, b, min) {
   });
   return out.sort((x, y) => (y.to - y.from) - (x.to - x.from)).slice(0, 5);
 }
-function madeDiff(a, b, min) {
+function madeDiff(a, b, min, m) {
   const al = (a.made && a.made.byName) || [];
   const am = new Map(al.map((g) => [g.name, g]));
+  const mm = new Map(((m && m.made && m.made.byName) || []).map((g) => [g.name, g]));
   const zero = { inScene: 0, detached: 0, destroyed: 0 };
   const out = [];
   ((b.made && b.made.byName) || []).forEach((g) => {
@@ -297,8 +298,13 @@ function madeDiff(a, b, min) {
     if (!q) return;
     const d = g.detached - q.detached;
     const x = g.destroyed - q.destroyed;
-    if (d < min && x < min) return;
-    out.push({ name: g.name, detached: [q.detached, g.detached], destroyed: [q.destroyed, g.destroyed], inScene: [q.inScene, g.inScene] });
+    const pl = (g.pooled || 0) - (q.pooled || 0);
+    if (d < min && x < min && pl < min) return;
+    const row = { name: g.name, detached: [q.detached, g.detached], destroyed: [q.destroyed, g.destroyed], inScene: [q.inScene, g.inScene] };
+    if (g.pooled || q.pooled) row.pooled = [q.pooled || 0, g.pooled || 0];
+    const mid = mm.get(g.name);
+    if (mid) row.mid = { detached: mid.detached, destroyed: mid.destroyed, pooled: mid.pooled || 0 };
+    out.push(row);
   });
   return out.sort((x, y) => (y.detached[1] - y.detached[0] + y.destroyed[1] - y.destroyed[0]) - (x.detached[1] - x.detached[0] + x.destroyed[1] - x.destroyed[0])).slice(0, 5);
 }
@@ -307,13 +313,22 @@ function nodeGrowth(ev, T) {
   const a = censusAt(ev, "after-warmup");
   const b = censusAt(ev, "end");
   if (!a || !b) return null;
+  // The middle census, when there is one, says whether a group kept growing or stopped (a pool
+  // that filled up, an effect made once).
+  const m = censusAt(ev, "mid");
   const made = a.made && b.made && a.made.status !== "unavailable" ? {
     status: b.made.status,
     detached: [a.made.detached, b.made.detached],
     destroyed: [a.made.destroyed, b.made.destroyed],
-    byName: madeDiff(a, b, min),
+    pooled: b.made.pooled != null ? [a.made.pooled || 0, b.made.pooled] : undefined,
+    byName: madeDiff(a, b, min, m),
   } : null;
-  return { spins: b.spins - a.spins, min, nodes: [a.nodes, b.nodes], paths: sceneDiff(a, b, min), made };
+  const paths = sceneDiff(a, b, min);
+  if (m) {
+    const mm = new Map((m.paths || []).map((p) => [p[0], p[1]]));
+    paths.forEach((p) => { if (mm.has(p.path)) p.mid = mm.get(p.path); });
+  }
+  return { spins: b.spins - a.spins, midSpins: m ? m.spins - a.spins : undefined, min, nodes: [a.nodes, b.nodes], paths, made };
 }
 function panelNodes(ev, T) {
   const min = (T.census && T.census.minNodes) || 5;
@@ -327,13 +342,19 @@ const perSpin = (d, spins) => (spins > 0 ? `，每轉 +${round(d / spins, 1)}` :
 function nodeGrowthText(g) {
   if (!g) return null;
   const bits = [];
-  if (g.paths.length) bits.push("場景節點變多：" + g.paths.map((p) => `${p.path} ${p.from} → ${p.to}${perSpin(p.to - p.from, g.spins)}${p.activeTo !== p.to ? `（顯示中 ${p.activeTo}）` : ""}`).join("；"));
+  // a → mid → b, and whether the second half added nothing.
+  const span = (from, mid, to) => (mid != null ? `${from} → ${mid} → ${to}${to - mid <= 0 && mid > from ? "（後半沒再增加）" : ""}` : `${from} → ${to}`);
+  if (g.paths.length) bits.push("場景節點變多：" + g.paths.map((p) => `${p.path} ${span(p.from, p.mid, p.to)}${p.mid != null && p.to - p.mid <= 0 ? "" : perSpin(p.to - p.from, g.spins)}${p.activeTo !== p.to ? `（顯示中 ${p.activeTo}）` : ""}`).join("；"));
   const m = g.made;
   if (m && m.byName.length) bits.push("instantiate 出來、GC 後仍被參考：" + m.byName.map((x) => {
     const parts = [];
-    if (x.detached[1] - x.detached[0] > 0) parts.push(`不在場景也沒 destroy ${x.detached[0]} → ${x.detached[1]}`);
-    if (x.destroyed[1] - x.destroyed[0] > 0) parts.push(`已 destroy ${x.destroyed[0]} → ${x.destroyed[1]}`);
-    return `${x.name}（${parts.join("，")}${perSpin(x.detached[1] - x.detached[0] + x.destroyed[1] - x.destroyed[0], g.spins)}）`;
+    const md = x.mid || {};
+    if (x.detached[1] - x.detached[0] > 0) parts.push(`不在場景也沒 destroy ${span(x.detached[0], md.detached, x.detached[1])}`);
+    if (x.destroyed[1] - x.destroyed[0] > 0) parts.push(`已 destroy ${span(x.destroyed[0], md.destroyed, x.destroyed[1])}`);
+    if (x.pooled && x.pooled[1] - x.pooled[0] > 0) parts.push(`在 cc.NodePool 裡 ${span(x.pooled[0], md.pooled, x.pooled[1])}`);
+    const grow = x.detached[1] - x.detached[0] + x.destroyed[1] - x.destroyed[0];
+    const stopped = x.mid && x.detached[1] - md.detached <= 0 && x.destroyed[1] - md.destroyed <= 0;
+    return `${x.name}（${parts.join("，")}${grow > 0 && !stopped ? perSpin(grow, g.spins) : ""}）`;
   }).join("；"));
   if (!bits.length) return `暖機後到最後，場景節點 ${g.nodes[0]} → ${g.nodes[1]}，沒有哪一組多 ${g.min} 個以上${m ? "；instantiate 的節點 GC 後也沒有變多" : ""}`;
   return `暖機後到最後（${g.spins} 轉）${bits.join("。")}`;

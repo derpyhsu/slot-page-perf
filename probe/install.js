@@ -61,6 +61,7 @@
     lblWrapped: 0,
     lblReg: null,
     made: [],
+    pools: [],
     progress: [],
     madeOff: false,
     compClassCount: -1,
@@ -988,6 +989,36 @@
   // Nodes made by cc.instantiate, held weakly so the census after a forced GC sees only the ones
   // something still references. Nodes built with new cc.Node are not seen.
   var MADE_CAP = 30000;
+  // cc.NodePool instances seen through put/get/size/clear, held weakly. Their _pool arrays are what
+  // the census reads, so nodes put before the hook are counted too. Pools the game builds itself
+  // (plain arrays) are not seen.
+  var poolSeen = typeof WeakSet === "function" ? new WeakSet() : null;
+  function hookPools(cc) {
+    var NP = cc.NodePool || (cc.js && cc.js.getClassByName && cc.js.getClassByName("cc.NodePool"));
+    var proto = NP && NP.prototype;
+    if (!proto || proto.__slotPool || !poolSeen || typeof WeakRef !== "function") return;
+    ["put", "get", "size", "clear"].forEach(function (m) {
+      var orig = proto[m];
+      if (typeof orig !== "function") return;
+      proto[m] = function () {
+        try { if (!poolSeen.has(this) && state.pools.length < 500) { poolSeen.add(this); state.pools.push(new WeakRef(this)); } } catch (e) {}
+        return orig.apply(this, arguments);
+      };
+    });
+    try { Object.defineProperty(proto, "__slotPool", { value: true }); } catch (e) {}
+  }
+  function pooledNodes() {
+    var set = typeof Set === "function" ? new Set() : { has: function () { return false; }, add: function () {} };
+    var n = 0;
+    state.pools = state.pools.filter(function (r) {
+      var p = r.deref();
+      if (!p) return false;
+      n += 1;
+      (p._pool || []).forEach(function (x) { set.add(x); });
+      return true;
+    });
+    return { set: set, pools: n };
+  }
   function trackMade(node, name) {
     if (state.madeOff || typeof WeakRef !== "function" || !node || typeof node !== "object" || !("parent" in node || "_parent" in node)) return;
     if (state.made.length >= MADE_CAP) {
@@ -1014,7 +1045,8 @@
       g[1] += 1;
       if (node.activeInHierarchy !== false) g[2] += 1;
     });
-    var made = { status: typeof WeakRef !== "function" ? "unavailable" : state.madeOff ? "capped" : "ok", alive: 0, inScene: 0, detached: 0, destroyed: 0, byName: [] };
+    var pool = pooledNodes();
+    var made = { status: typeof WeakRef !== "function" ? "unavailable" : state.madeOff ? "capped" : "ok", alive: 0, inScene: 0, detached: 0, destroyed: 0, pooled: 0, byName: [] };
     var byName = {};
     var keep = [];
     state.made.forEach(function (m) {
@@ -1022,12 +1054,14 @@
       if (node === undefined) return;
       keep.push(m);
       made.alive += 1;
-      var g = byName[m.name] || (byName[m.name] = { name: m.name, inScene: 0, detached: 0, destroyed: 0 });
+      var g = byName[m.name] || (byName[m.name] = { name: m.name, inScene: 0, detached: 0, destroyed: 0, pooled: 0 });
       if (node.isValid === false) { made.destroyed += 1; g.destroyed += 1; return; }
       var top = node;
       while (top && (top.parent || top._parent)) top = top.parent || top._parent;
-      if (top === scene) { made.inScene += 1; g.inScene += 1; } else { made.detached += 1; g.detached += 1; }
+      if (top === scene) { made.inScene += 1; g.inScene += 1; } else if (pool.set.has(node)) { made.pooled += 1; g.pooled += 1; } else { made.detached += 1; g.detached += 1; }
     });
+    made.pools = pool.pools;
+    Object.keys(byName).forEach(function (k) { if (!byName[k].pooled) delete byName[k].pooled; });
     state.made = keep;
     made.byName = topCounts(byName, 40, function (a, b) { return (b.detached + b.destroyed) - (a.detached + a.destroyed) || b.inScene - a.inScene; });
     // paths: [folded path, nodes, active], most nodes first, at most 1000 groups.
@@ -1047,7 +1081,7 @@
   var INV_TOP = 8;
   function invisibleDrawn(cc, scene) {
     var v3 = !!(cc.UITransform || /^3\./.test(String(cc.ENGINE_VERSION || "")));
-    var out = { status: "ok", engine: v3 ? 3 : 2, offscreen: 0, scale0: 0, checked: 0, noView: 0, offscreenBy: {}, scale0By: {} };
+    var out = { status: "ok", engine: v3 ? 3 : 2, offscreen: 0, scale0: 0, outsideMask: 0, checked: 0, noView: 0, offscreenBy: {}, scale0By: {}, outsideMaskBy: {} };
     if (!v3) out.spine = { skeletons: 0, transparent: 0, transparentScreens: 0, transparentBy: {}, empty: 0, emptyBy: {} };
     var views = new Map();
     var viewOf = function (node) {
@@ -1064,7 +1098,19 @@
       views.set(k, r);
       return r;
     };
-    var visit = function (node, opacity) {
+    // A mask clips what is under it to its own box (rect, ellipse or image alike, the box bounds it).
+    // Inside the view but wholly outside an ancestor mask still fills buffers and draws.
+    var maskBox = function (node) {
+      var comps = node._components || node.components || [];
+      for (var i = 0; i < comps.length; i += 1) {
+        var c = comps[i];
+        if (!c || className(c) !== "cc.Mask" || c.enabledInHierarchy === false || c.enabled === false) continue;
+        if (c.inverted || c._inverted) return null;
+        return ownBox(node, v3);
+      }
+      return null;
+    };
+    var visit = function (node, opacity, clip) {
       if (!node || node.activeInHierarchy === false || node._activeInHierarchy === false) return;
       var op = opacity;
       if (v3) {
@@ -1074,16 +1120,18 @@
         op = opacity * a * (up && typeof up.localOpacity === "number" ? up.localOpacity : 1);
         if (op <= 0.0001) return;
         // _renderFlag is false when the component has nothing it can draw (a sprite without a frame).
-        if (rc3 && rc3.enabledInHierarchy !== false && rc3._renderFlag !== false) checkNode(node, rc3);
+        if (rc3 && rc3.enabledInHierarchy !== false && rc3._renderFlag !== false) checkNode(node, rc3, clip);
       } else {
         if (node._opacity === 0 || node.opacity === 0) return;
         var rc = node._renderComponent;
-        if (rc && rc.enabledInHierarchy !== false && rc._enabled !== false) checkNode(node, rc);
+        if (rc && rc.enabledInHierarchy !== false && rc._enabled !== false) checkNode(node, rc, clip);
       }
+      var mb = maskBox(node);
+      var sub = mb ? (clip ? { x0: Math.max(clip.x0, mb.x0), x1: Math.min(clip.x1, mb.x1), y0: Math.max(clip.y0, mb.y0), y1: Math.min(clip.y1, mb.y1) } : mb) : clip;
       var kids = node._children || node.children || [];
-      for (var i = 0; i < kids.length; i += 1) visit(kids[i], op);
+      for (var i = 0; i < kids.length; i += 1) visit(kids[i], op, sub);
     };
-    var checkNode = function (node, comp) {
+    var checkNode = function (node, comp, clip) {
       var name = className(comp);
       if (/Skeleton|dragonBones|Armature/i.test(name)) {
         if (!v3 && /Skeleton/.test(name)) spineSlots(comp, node);
@@ -1104,6 +1152,9 @@
       if (box.x1 < view.x0 || box.x0 > view.x1 || box.y1 < view.y0 || box.y0 > view.y1) {
         out.offscreen += 1;
         out.offscreenBy[path] = (out.offscreenBy[path] || 0) + 1;
+      } else if (clip && (box.x1 <= clip.x0 || box.x0 >= clip.x1 || box.y1 <= clip.y0 || box.y0 >= clip.y1)) {
+        out.outsideMask += 1;
+        out.outsideMaskBy[path] = (out.outsideMaskBy[path] || 0) + 1;
       }
     };
     // 2.x realtime Spine: renderable attachments (they have uvs) at alpha 0, and skeletons with
@@ -1146,12 +1197,13 @@
       }
     };
     var roots = scene._children || scene.children || [];
-    for (var r = 0; r < roots.length; r += 1) visit(roots[r], 1);
+    for (var r = 0; r < roots.length; r += 1) visit(roots[r], 1, null);
     var top = function (by) {
       return Object.keys(by).map(function (k) { return [k, by[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, INV_TOP);
     };
     out.offscreenBy = top(out.offscreenBy);
     out.scale0By = top(out.scale0By);
+    out.outsideMaskBy = top(out.outsideMaskBy);
     if (out.spine) {
       var sp = out.spine;
       sp.transparentScreens = round(sp.transparentScreens, 2);
@@ -1666,6 +1718,7 @@
     try { state.capMs = 1000 / frameCap(); } catch (e) {}
     try { hookHandlers(cc); } catch (e) {}
     try { hookSpineBuild(cc); } catch (e) {}
+    try { hookPools(cc); } catch (e) {}
     // Component timing must stay cheap; above 0.3 ms per frame it is switched off for the run.
     if (!state.compOff && state.compCallUs != null && state.compFramesSeen > 300 && (state.compCalls / state.compFramesSeen) * state.compCallUs / 1000 > 0.3) state.compOff = true;
     try {

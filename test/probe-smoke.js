@@ -123,7 +123,9 @@ const betNode = node("lbl_bet", []);
 const lblBet = Object.assign(new Label("1.00"), { node: betNode, overflow: 0, fontSize: 28, cost: 70 });
 betNode.components.push(lblBet);
 const listeners = {};
+class NodePool { constructor() { this._pool = []; } put(n) { this._pool.push(n); } get() { return this._pool.pop(); } size() { return this._pool.length; } }
 global.cc = {
+  NodePool,
   ENGINE_VERSION: "3.8.2",
   Texture2D,
   UITransform,
@@ -249,6 +251,9 @@ assert.strictEqual(c1.status, "ok");
 assert.deepStrictEqual((({ detached, destroyed, inScene }) => ({ detached, destroyed, inScene }))(c1.made), { detached: 3, destroyed: 1, inScene: 2 }, "instantiated nodes split by where they are");
 for (let j = 0; j < 7; j += 1) make("WinFx");
 addCoins(9);
+// Six symbols handed to a cc.NodePool: held on purpose, counted apart from detached.
+const symPool = new cc.NodePool();
+for (let j = 0; j < 6; j += 1) symPool.put(make("Symbol"));
 const c2 = Object.assign(P.census(), { at: "end", spins: 12 });
 assert.ok(c2.paths.some((p) => p[0] === "coin_layer/Coin" && p[1] === 11), "scene grouped by folded path");
 
@@ -325,6 +330,19 @@ const ng = ev.nodeGrowth;
 assert.ok(ng && ng.spins === 7 && ng.paths[0].path === "coin_layer/Coin" && ng.paths[0].from === 2 && ng.paths[0].to === 11, "scene group growth between the GC points");
 assert.deepStrictEqual(ng.made.byName[0], { name: "WinFx", detached: [3, 10], destroyed: [1, 1], inScene: [0, 0] }, "detached instantiated nodes by source name");
 assert.ok(html.includes("coin_layer/Coin 2 → 11") && html.includes("WinFx（不在場景也沒 destroy 3 → 10"), "report shows node growth");
+const symRow = ng.made.byName.find((x) => x.name === "Symbol");
+assert.ok(symRow && symRow.pooled[1] === 6 && symRow.detached[1] === 0 && c2.made.pooled === 6 && c2.made.pools === 1, "pooled nodes counted apart from detached");
+assert.ok(html.includes("Symbol（在 cc.NodePool 裡 0 → 6"), "report names the pool");
+// R14. A middle census shows a group that stopped growing in the second half.
+{
+  const cut = (c, at, spins, coin, sym) => Object.assign({}, c, { at, spins, paths: [["coin_layer/Coin", coin, coin]], made: Object.assign({}, c.made, { byName: [{ name: "Symbol", inScene: 0, detached: 0, destroyed: 0, pooled: sym }] }) });
+  const dM = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+  fs.writeFileSync(path.join(dM, "raw.json"), JSON.stringify(Object.assign({}, raw, { census: [cut(c1, "after-warmup", 5, 2, 0), cut(c1, "mid", 10, 11, 259), cut(c1, "end", 15, 11, 259)] })));
+  execFileSync(process.execPath, [path.join(root, "report", "build.js"), dM], { encoding: "utf8" });
+  const evM = JSON.parse(fs.readFileSync(path.join(dM, "evidence.json"), "utf8"));
+  const t = require(path.join(root, "report", "findings.js")).nodeGrowthText(evM.nodeGrowth);
+  assert.ok(t.includes("coin_layer/Coin 2 → 11 → 11（後半沒再增加）") && t.includes("在 cc.NodePool 裡 0 → 259 → 259（後半沒再增加）") && !t.includes("每轉"), "plateau stated: " + t);
+}
 assert.ok(fs.readFileSync(path.join(runDir, "report.html"), "utf8").includes("SlotReelController.update"), "report shows the cause");
 
 // Invisible but drawn, on a 2.4-shaped scene: census reads window.cc when called.
@@ -335,10 +353,12 @@ const cc3 = global.cc;
   const names24 = new Map([[Sprite24, "cc.Sprite"], [Skel24, "sp.Skeleton"]]);
   const mat = (a, d, tx, ty) => { const m = new Float32Array(16); m[0] = a; m[5] = d; m[10] = 1; m[15] = 1; m[12] = tx; m[13] = ty; return { m }; };
   // Each node carries its world transform as (scale, x, y), already composed.
+  class Mask24 {}
+  names24.set(Mask24, "cc.Mask");
   const n24 = (name, opts = {}, kids = []) => {
     const sc = opts.scale == null ? 1 : opts.scale;
     const n = { name, _activeInHierarchy: true, activeInHierarchy: true, _opacity: opts.opacity == null ? 255 : opts.opacity, _children: kids, _contentSize: { width: opts.w || 0, height: opts.h || 0 }, _anchorPoint: { x: 0.5, y: 0.5 }, _worldMatrix: mat(sc, sc, opts.x || 0, opts.y || 0), _updateWorldMatrix() {} };
-    if (opts.comp) { n._renderComponent = opts.comp; opts.comp.node = n; opts.comp.enabledInHierarchy = true; }
+    if (opts.comp) { n._renderComponent = opts.comp; opts.comp.node = n; opts.comp.enabledInHierarchy = true; n._components = [opts.comp]; }
     kids.forEach((k) => { k.parent = n; });
     return n;
   };
@@ -353,7 +373,9 @@ const cc3 = global.cc;
   const fxRt = n24("fx_rt", { comp: skel([slot(region(), 0), slot(region(), 0), slot(region(), 1)]), x: 640, y: 360 });
   const fxEmpty = n24("fx_empty", { comp: skel([slot(null, 1), slot(null, 1)]), x: 640, y: 360 });
   const fxCached = n24("fx_cached", { comp: skel([slot(region(), 0)], 1), x: 640, y: 360 });
-  const canvas24 = n24("Canvas", {}, [n24("bg", { comp: spr(), w: 1280, h: 720, x: 640, y: 360 }), pool, portrait, faded, fxRt, fxEmpty, fxCached]);
+  // A reel window mask 500×300 at the centre; one symbol below it is inside the view but clipped away.
+  const reelMask = n24("reel_mask", { comp: new Mask24(), w: 500, h: 300, x: 640, y: 360 }, [n24("sym_in", { comp: spr(), w: 100, h: 100, x: 640, y: 360 }), n24("sym_below", { comp: spr(), w: 100, h: 100, x: 640, y: 650 })]);
+  const canvas24 = n24("Canvas", {}, [n24("bg", { comp: spr(), w: 1280, h: 720, x: 640, y: 360 }), pool, portrait, faded, fxRt, fxEmpty, fxCached, reelMask]);
   const scene24 = { name: "scene", _children: [canvas24], activeInHierarchy: false };
   canvas24.parent = scene24;
   const cam24 = { getScreenToWorldPoint: (p) => ({ x: p.x, y: p.y }) };
@@ -371,6 +393,7 @@ const cc3 = global.cc;
   assert.strictEqual(inv.offscreen, 30, "parked pool nodes counted, opacity-0 subtree skipped");
   assert.deepStrictEqual(inv.offscreenBy[0], ["Canvas/pool/sym_*", 30], "grouped by folded path");
   assert.strictEqual(inv.scale0, 5, "scale-0 children counted");
+  assert.ok(inv.outsideMask === 1 && inv.outsideMaskBy[0][0] === "Canvas/reel_mask/sym_below", "clipped by an ancestor mask, inside the view");
   assert.strictEqual(inv.spine.transparent, 2, "alpha-0 attachments on a realtime skeleton");
   assert.strictEqual(inv.spine.transparentScreens, 0.5, "two quarter-screen attachments");
   assert.strictEqual(inv.spine.empty, 1, "skeleton with nothing to draw");

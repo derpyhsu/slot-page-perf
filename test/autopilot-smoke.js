@@ -9,7 +9,10 @@ const assert = require("assert");
 const src = fs.readFileSync(path.join(__dirname, "..", "probe", "autopilot.js"), "utf8");
 
 global.window = global;
-global.document = { elementFromPoint: () => null, getElementsByTagName: () => [], querySelector: () => null };
+// Presses land on a stand-in canvas, so a press counts as made.
+const fakeCanvas = { tagName: "CANVAS", dispatchEvent: () => true, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1280, height: 720 }) };
+global.MouseEvent = class { constructor(t, o) { this.type = t; this.init = o; } };
+global.document = { elementFromPoint: () => null, getElementsByTagName: () => [], querySelector: () => fakeCanvas };
 
 function btn(name, x, y) {
   return { kind: "button", name, text: "", point: { x, y }, interactable: true, sig: "" };
@@ -144,6 +147,25 @@ async function spinFor(showStop) {
   const g = marks.slice(i + 1).find((m) => m[0] === "gap");
   return g[1] - marks[i][1];
 }
+// R3. Turbo spins press the spin point again while the spin is seen busy; normal spins do not.
+async function quickStopCase() {
+  const sp = btn("btn_spin", 500, 600);
+  const tb = btn("btn_turbo", 300, 600);
+  onMark = (n) => {
+    if (!/^(spin|turbo)-1$/.test(n)) return;
+    sp.sig = "1:StopText";
+    setTimeout(() => { sp.sig = ""; }, 1200);
+  };
+  const auto = load([sp, tb], null, null, null, { maxSpins: 2, normalSpins: 1, settle: { pollMs: 50, minMs: 200, confirmMs: 200, stablePolls: 2, quietMs: 60000, nudgeAfterMs: 60000 } });
+  auto.start();
+  await until(auto, (s) => s.needs === "map");
+  auto.map({ spin: sp.point, turbo: tb.point }, 2);
+  await until(auto, (s) => s.needs === "gc" || s.needs === "screen", 20000);
+  onMark = null;
+  const log = auto.result().log.map((l) => l[1]);
+  assert.ok(log.includes("quick stop turbo-1") && !log.some((l) => /quick stop spin-/.test(l)), "quick stop on turbo spins only: " + log.filter((l) => /quick|press/.test(l)).join(" | "));
+}
+
 async function busyCase() {
   const plain = await spinFor(false);
   const stop = await spinFor(true);
@@ -153,6 +175,7 @@ async function busyCase() {
 (async () => {
   await earlyMapCase();
   await busyCase();
+  await quickStopCase();
   await settleCase();
   await mapCase();
   console.log("autopilot smoke ok");

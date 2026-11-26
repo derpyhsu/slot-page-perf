@@ -1205,30 +1205,32 @@ function cocosAdvice() {
 
   // Invisible but drawn (probe census in the gaps): the census point with the most of it.
   const CENSUS_AT = { idle: "待機時", "after-rules": "看完規則後", "after-warmup": "暖機後", mid: "轉到一半時", end: "轉完後" };
-  const invCount = (v) => v.offscreen + v.scale0 + (v.spine ? v.spine.transparent + v.spine.empty : 0);
+  const invCount = (v) => v.offscreen + v.scale0 + (v.outsideMask || 0) + (v.spine ? v.spine.transparent + v.spine.empty : 0);
   const invPeak = (ev.census || []).filter((c) => c && c.invisible && c.invisible.status === "ok")
     .reduce((best, c) => (!best || invCount(c.invisible) > invCount(best.invisible) ? c : best), null);
   if (invPeak) {
     const v = invPeak.invisible;
     const sp = v.spine || { transparent: 0, empty: 0 };
-    const nodesHit = v.offscreen + v.scale0 >= (C.invisibleNodes || 20);
+    const nodesHit = v.offscreen + v.scale0 + (v.outsideMask || 0) >= (C.invisibleNodes || 20);
     const clearHit = sp.transparent >= (C.spineTransparent || 10);
     const emptyHit = sp.empty >= (C.spineEmpty || 3);
     if (nodesHit || clearHit || emptyHit) {
       const parts = [];
       if (v.offscreen) parts.push(`畫面外 ${v.offscreen} 個`);
       if (v.scale0) parts.push(`縮放 0 的 ${v.scale0} 個`);
+      if (v.outsideMask) parts.push(`在遮罩框外的 ${v.outsideMask} 個`);
       if (sp.transparent) parts.push(`Spine alpha 0 的附件 ${sp.transparent} 個${sp.transparentScreens ? `（約 ${sp.transparentScreens} 屏）` : ""}`);
       if (sp.empty) parts.push(`沒東西可畫的骨架 ${sp.empty} 個`);
       const by = (xs) => (xs || []).slice(0, 3).map((g) => `${g[0]} ×${g[1]}${g[2] ? `（${g[2]} 屏）` : ""}`).join("、");
       const where = [];
       if (v.offscreenBy && v.offscreenBy.length) where.push(`畫面外：${by(v.offscreenBy)}`);
       if (v.scale0By && v.scale0By.length) where.push(`縮放 0：${by(v.scale0By)}`);
+      if (v.outsideMaskBy && v.outsideMaskBy.length) where.push(`遮罩框外：${by(v.outsideMaskBy)}`);
       if (sp.transparentBy && sp.transparentBy.length) where.push(`alpha 0 附件：${by(sp.transparentBy)}`);
       if (sp.emptyBy && sp.emptyBy.length) where.push(`空骨架：${by(sp.emptyBy)}`);
       const how = v.engine === 3
-        ? "3.x 的 2D 合批不依位置剔除，畫面外和縮放 0 的節點照樣填頂點、送 draw call。"
-        : "2.4 不會略過畫面外與縮放 0 的節點，照樣組頂點、送 draw call；alpha 0 的 Spine 附件照樣組網格、照樣填色；整個骨架沒有東西可畫時，仍會打斷前後的合批。";
+        ? "3.x 的 2D 合批不依位置剔除，畫面外、縮放 0 與被遮罩整個裁掉的節點照樣填頂點、送 draw call。"
+        : "2.4 不會略過畫面外、縮放 0 與被遮罩整個裁掉的節點，照樣組頂點、送 draw call；alpha 0 的 Spine 附件照樣組網格、照樣填色；整個骨架沒有東西可畫時，仍會打斷前後的合批。";
       add(
         "cocos-invisible-drawn",
         "draw call",
