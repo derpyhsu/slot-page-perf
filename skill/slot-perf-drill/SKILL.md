@@ -32,6 +32,7 @@ Start from the report's first screen: 扣最多分的地方 lists the three item
 | Many draw calls: `stall`/`fps` rows with high draw calls, `panel-heavier`, `panel-left-open` (draw call), `cocos-mask-*`, `cocos-label-no-cache`, `cocos-dynamic-atlas-off` | `drawcalls` |
 | `leak-suspected` or `heap-step` where `nodeGrowth` shows no group growing (the heap grows, the node count does not) | `spineCache` first when the scene has Spine in a cache mode, then `heap` |
 | Low FPS while engine CPU per frame is low | fill rate |
+| `loading-progress-stop`, `image-bloated`, slow loading with large picture files | `images` |
 
 By symptom, in the order to check them:
 
@@ -57,6 +58,14 @@ By symptom, in the order to check them:
 - `baseAfter` is the count after all values were put back. A large gap from `base` means the screen was animating; measure again.
 - Options: `root` (a `cc.find` path to start from), `depth`, `frames`, `minShare`, `budgetMs` (default 90 s; on timeout the result is partial).
 - `__slotDrill.batchBreaks("Canvas/path")` lists batch breaks of one subtree without hiding anything.
+
+### images
+
+`evaluate_script`: `async () => (await __slotDrill.images()).summary`, then `() => __slotDrill.last` with `filePath` `runs/<run>/drill/images.json`.
+
+- Fetches each loaded texture's picture file again (normally from the HTTP cache) and reads its blocks: PNG text, Exif, XMP and private chunks, JPEG APP and comment segments, WebP EXIF and XMP. Lists files carrying `minKb` (default 20) or more that can go without changing a pixel, and files larger than their raw pixels (over 4 bytes a pixel). Colour profiles, JFIF and Exif are kept (Exif may hold the orientation).
+- Prints block types, keys and sizes only, never what is inside a block. File names only, no query.
+- For a build or project folder instead of a page: `node drill/images.js <folder>` (same parser).
 
 ### spineCache
 

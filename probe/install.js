@@ -61,6 +61,7 @@
     lblWrapped: 0,
     lblReg: null,
     made: [],
+    progress: [],
     madeOff: false,
     compClassCount: -1,
     compCalls: 0,
@@ -739,8 +740,12 @@
     }).sort(function (a, b) { return b.queued - a.queued || b.count - a.count; }).slice(0, 4);
     var duplicates = Object.keys(paths).map(function (p) { return { path: p, count: paths[p] }; }).filter(function (d) { return d.count >= 2; }).sort(function (a, b) { return b.count - a.count; }).slice(0, 5);
     slow.sort(function (a, b) { return b.ms - a.ms; });
+    var files = loadFiles(entries);
     return {
       status: "ok",
+      files: files.rows,
+      sizes: files.sized ? "ok" : "unavailable",
+      bloated: imageBytesPerPixel(entries),
       count: entries.length,
       transferMb: round(transfer / 1048576),
       decodedMb: round(decoded / 1048576),
@@ -751,6 +756,70 @@
       duplicates: duplicates,
       slowest: slow.slice(0, 5)
     };
+  }
+
+  // Requests made before the spin button was ready: [start, end] in ms from the probe start, KB
+  // (-1 when the server does not expose sizes to the page, as cross-origin files without
+  // Timing-Allow-Origin), short path, and the asset name when the file name is a uuid.
+  function loadFiles(entries) {
+    var rows = [];
+    var sized = false;
+    entries.forEach(function (e) {
+      if (state.gameReadyAt != null && e.startTime >= state.gameReadyAt) return;
+      if (rows.length >= 1500) return;
+      var size = e.encodedBodySize > 0 ? e.encodedBodySize : e.transferSize > 0 ? e.transferSize : 0;
+      if (size) sized = true;
+      var clean = String(e.name || "").split("?")[0].split("#")[0];
+      var short = clean.split("/").filter(Boolean).slice(-2).join("/");
+      rows.push([Math.round(e.startTime - state.t0), Math.round((e.responseEnd || e.startTime + e.duration) - state.t0), size ? Math.round(size / 1024) : -1, short, assetNameOf(clean) || undefined]);
+    });
+    return { rows: rows, sized: sized };
+  }
+  var UUID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+  function assetNameOf(url) {
+    var m = UUID_RE.exec(url);
+    var cc = window.cc;
+    if (!m || !cc || !cc.assetManager) return null;
+    var uuid = m[1].toLowerCase();
+    try {
+      var a = cc.assetManager.assets && cc.assetManager.assets.get(uuid);
+      var n = a && (a.name || a._name);
+      if (n) return String(n).slice(0, 60);
+      var found = null;
+      if (cc.assetManager.bundles) cc.assetManager.bundles.forEach(function (b) {
+        if (found) return;
+        var info = b.getAssetInfo ? b.getAssetInfo(uuid) : b._config && b._config.getAssetInfo && b._config.getAssetInfo(uuid);
+        if (info && info.path) found = info.path;
+      });
+      return found ? String(found).slice(0, 80) : null;
+    } catch (e) { return null; }
+  }
+  // Picture files larger than their pixels would be uncompressed (4 bytes a pixel): something other
+  // than the picture is in the file, often editor metadata. Needs sizes, so same-origin builds only.
+  function imageBytesPerPixel(entries) {
+    var cc = window.cc;
+    var items = allAssets();
+    if (!items || !cc || !cc.Texture2D) return undefined;
+    var sizes = {};
+    entries.forEach(function (e) {
+      var size = e.encodedBodySize || e.transferSize || 0;
+      if (!size) return;
+      var f = String(e.name || "").split("?")[0].split("#")[0].split("/").pop();
+      if (/\.(png|jpe?g|webp)$/i.test(f)) sizes[f] = Math.max(sizes[f] || 0, size);
+    });
+    if (!Object.keys(sizes).length) return undefined;
+    var out = [];
+    var seen = [];
+    items.forEach(function (tex) {
+      if (!(tex instanceof cc.Texture2D) || seen.indexOf(tex) >= 0) return;
+      seen.push(tex);
+      var f = assetFile(tex);
+      var size = f && sizes[f];
+      if (!size || !tex.width || !tex.height) return;
+      var bpp = size / (tex.width * tex.height);
+      if (bpp > 4 && size > 200 * 1024) out.push({ file: f, name: assetNameOf(f) || undefined, w: tex.width, h: tex.height, kb: Math.round(size / 1024), bpp: round(bpp) });
+    });
+    return out.sort(function (a, b) { return b.kb - a.kb; }).slice(0, 10);
   }
 
   // Browser paint timing, in ms from navigation start. t0 is when the probe started on the same
@@ -1613,6 +1682,19 @@
     if (!state.gl && cc.game && cc.game._renderContext) attachContext(cc.game._renderContext);
   }
   setInterval(watch, 200);
+  // The loading screen's percentage, while loading: when it changed, to put downloads against it.
+  setInterval(function () {
+    if (state.gameReady || state.progress.length >= 400) return;
+    try {
+      var best = null;
+      activeTexts(80).forEach(function (t) {
+        var m = /^\s*(\d{1,3})\s*%\s*$/.exec(t);
+        if (m && +m[1] <= 100 && (best == null || +m[1] > best)) best = +m[1];
+      });
+      var last = state.progress[state.progress.length - 1];
+      if (best != null && (!last || last[1] !== best)) state.progress.push([rel(performance.now()), best]);
+    } catch (e) {}
+  }, 500);
   setInterval(function () { try { sampleSpine(); } catch (e) {} }, SPINE_SAMPLE_MS);
 
   setInterval(function () {
@@ -2394,6 +2476,7 @@
           textures: textureInfo()
         },
         resources: resourceSummary(),
+      progress: state.progress.length ? state.progress : undefined,
         paint: paintSummary(),
         shaders: state.shaderN ? { status: "ok", ms: round(state.shaderMs), maxMs: round(state.shaderMax), count: state.shaderN, stalls: state.shaderStalls } : { status: "none", ms: 0, count: 0, stalls: [] },
         audio: state.audioN ? { status: "ok", pcmMb: round(state.audioPcm / 1048576), count: state.audioN, maxMs: round(state.audioMaxMs) } : { status: "none", pcmMb: 0, count: 0, maxMs: 0 }

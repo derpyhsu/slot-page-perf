@@ -84,6 +84,7 @@ const ev = {
   timeline: s.timeline,
   memory: s.memory || {},
   resources: s.resources,
+  progress: s.progress,
   paint: s.paint,
   shaders: s.shaders,
   audio: s.audio,

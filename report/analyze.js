@@ -608,6 +608,35 @@ ev.todo = todo();
 ev.fps = fpsTable();
 ev.losses = losses();
 ev.stalls = stallTable();
+ev.loadStops = loadStops();
+
+// Where the loading percentage stood still, and what was downloading meanwhile. Times are from the
+// probe start, like stages. The tail from the last change to the spin button counts as a stop too.
+function loadStops() {
+  const prog = ev.progress || [];
+  const files = (ev.resources && ev.resources.files) || [];
+  const ld = stages.find((s) => s.name === "loading" && s.startMs != null);
+  if (prog.length < 2 || !ld) return undefined;
+  const end = ld.startMs + ld.wallMs;
+  const minMs = (thresholds.loadProgress || {}).stopMs || 5000;
+  const spans = [];
+  for (let i = 0; i < prog.length; i += 1) {
+    const a = prog[i][0];
+    const b = i + 1 < prog.length ? prog[i + 1][0] : end;
+    if (b - a >= minMs && a < end) spans.push({ pct: prog[i][1], from: a, to: Math.min(b, end) });
+  }
+  return spans.sort((x, y) => (y.to - y.from) - (x.to - x.from)).slice(0, 3).map((sp) => {
+    const over = files.map((f) => ({ f, ms: Math.min(f[1], sp.to) - Math.max(f[0], sp.from) })).filter((x) => x.ms > 0).sort((x, y) => y.ms - x.ms);
+    const done = files.filter((f) => f[1] >= sp.from && f[1] <= sp.to);
+    const kb = done.reduce((a, f) => a + Math.max(0, f[2]), 0);
+    return {
+      pct: sp.pct, from: sp.from, to: sp.to, sec: round((sp.to - sp.from) / 1000, 1),
+      done: done.length, mb: done.some((f) => f[2] >= 0) ? round(kb / 1024, 1) : null,
+      files: over.slice(0, 5).map((x) => ({ path: x.f[3], name: x.f[4], kb: x.f[2] >= 0 ? x.f[2] : null, from: x.f[0], to: x.f[1] })),
+    };
+  });
+}
+
 ev.longSpins = longSpins();
 
 // Every stall in the run, in time order, with its cause in a few words and how many times the
@@ -883,6 +912,21 @@ function findingRows() {
     });
     rows.push({ rule: "worse-from-spin", level: "yellow", title, area: fs.some((f) => f.metric === "draws") ? "draw call" : fs.some((f) => f.metric === "fps") ? "FPS" : "CPU", fix: `${facts.join("；")}（第 1 轉不算）。之後每一轉都比之前每一轉差，轉完時也還在；要找多出來的是什麼，在轉完的畫面上用 slot-perf-drill 的 drawcalls 看哪個子樹畫最多。` + nodeNote, stage: f0.stage, t: null });
   });
+
+  // The loading percentage stood still while files were downloading.
+  const stops = loadStops() || [];
+  if (stops.length) {
+    const s0 = stops[0];
+    const sz = (f) => (f.kb == null ? "大小不明" : f.kb >= 1024 ? `${round(f.kb / 1024, 1)} MB` : `${f.kb} KB`);
+    const fl = (f) => `${f.name ? `${f.name}（${f.path}）` : f.path} ${sz(f)}，${round(f.from / 1000, 1)}–${round(f.to / 1000, 1)} 秒`;
+    const more = stops.slice(1).map((s) => `${s.pct}% 停 ${s.sec} 秒`).join("、");
+    rows.push({ rule: "loading-progress-stop", level: s0.sec >= 15 ? "orange" : "yellow", title: `載入停在 ${s0.pct}% 有 ${s0.sec} 秒`, area: "載入", fix: `${round(s0.from / 1000, 1)}–${round(s0.to / 1000, 1)} 秒之間百分比沒動，這段收完 ${s0.done} 個檔案${s0.mb != null ? `、${s0.mb} MB` : ""}。正在下載最久的是：${s0.files.map(fl).join("；")}。${more ? `另外 ${more}。` : ""}`, stage: "loading", t: s0.from });
+  }
+  const bloated = (ev.resources && ev.resources.bloated) || [];
+  if (bloated.length) {
+    const b = (x) => `${x.name ? `${x.name}（${x.file}）` : x.file} ${x.w}×${x.h} ${x.kb >= 1024 ? `${round(x.kb / 1024, 1)} MB` : `${x.kb} KB`}（每像素 ${x.bpp} bytes）`;
+    rows.push({ rule: "image-bloated", level: "yellow", title: `${bloated.length} 張圖的檔案比沒壓縮的像素還大`, area: "載入", fix: `沒壓縮的圖每像素 4 bytes，檔案比這還大表示裡面夾了圖以外的東西，常見是編輯軟體寫入的中繼資料。${bloated.slice(0, 3).map(b).join("；")}。用 slot-perf-drill 的 images 看每張能拿掉多少。`, stage: "loading", t: null });
+  }
 
   // Labels drawn again with unchanged text: one row, stages with the most first.
   const redraw = found.filter((f) => f.id === "label-redraw").sort((a, b) => b.sameMb - a.sameMb || b.same - a.same);

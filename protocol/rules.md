@@ -222,6 +222,14 @@ autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每�
 
 讀不到的欄位是 `null`，該規則不觸發。
 
+## loading-progress-stop
+
+探針在 `game-ready` 之前每 0.5 秒讀一次載入畫面上的百分比（`progress`），並記下 `game-ready` 之前每個請求的起訖時間、大小和路徑（`resources.files`，不含 query；檔名是 uuid 時對回引擎裡已載入資源的名稱或 bundle 路徑）。百分比停住 `loadProgress.stopMs` 以上（最後一次變化到能轉也算）就列，最長的一段寫：停在幾 %、幾秒、這段收完幾個檔案和 MB、正在下載最久的五個檔案與起訖秒數。跨網域的 CDN 沒給 `Timing-Allow-Origin` 時拿不到大小，寫「大小不明」，時間照樣有。
+
+## image-bloated
+
+圖檔大小除以像素數超過 4 bytes（比沒壓縮還大）而且超過 200 KB，表示檔案裡夾了圖以外的東西，常見是編輯軟體寫入的中繼資料。只在拿得到檔案大小時（本機或同網域的打包）由探針判斷；拿不到大小時用 slot-perf-drill 的 `images` 在頁面上重新讀檔檢查。
+
 ## loading-stall
 
 `loading` 或 `enter` 階段有 `hitch-main-thread`，或 CPU% 高於 80 且平均 FPS 低於 30。`boot` 只有文件與腳本，幀數很少時不單獨觸發。`splash` 是等人按開始的時間，不觸發這條。

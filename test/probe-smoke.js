@@ -444,6 +444,29 @@ const cc3 = global.cc;
   assert.ok(html1.includes("每一次停頓") && html1.includes("算進頻率"), "stall table in the report");
 }
 
+// R12, R13. The loading percentage stood still while a file downloaded; a picture file larger than
+// its raw pixels.
+{
+  const dL = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+  const sL = JSON.parse(JSON.stringify(s));
+  const ld = sL.stages.find((x) => x.name === "loading");
+  ld.startMs = 0;
+  ld.wallMs = 50000;
+  sL.progress = [[1000, 10], [16000, 98], [47000, 99]];
+  sL.resources = { status: "ok", count: 2, sizes: "ok", files: [[15000, 45000, 5324, "ab/abcdef12-0000-0000-0000-000000000000.png", "reel_frame"], [17000, 20000, 100, "cfg/config.json"]], bloated: [{ file: "abcdef12.png", name: "reel_frame", w: 786, h: 608, kb: 5324, bpp: 11.4 }] };
+  fs.writeFileSync(path.join(dL, "raw.json"), JSON.stringify(Object.assign({}, raw, { summary: sL })));
+  execFileSync(process.execPath, [path.join(root, "report", "build.js"), dL], { encoding: "utf8" });
+  const evL = JSON.parse(fs.readFileSync(path.join(dL, "evidence.json"), "utf8"));
+  const st = evL.loadStops[0];
+  assert.ok(st.pct === 98 && st.sec === 31 && st.files[0].name === "reel_frame" && st.done === 2 && st.mb === 5.3, "loading stop at 98% with the file downloading: " + JSON.stringify(st));
+  assert.ok(!evL.loadStops.some((x) => x.pct === 99) && evL.loadStops[1].pct === 10, "a short tail is not a stop; longest first");
+  const lr = evL.todo.find((t) => t.rule === "loading-progress-stop");
+  assert.ok(lr && lr.title === "載入停在 98% 有 31 秒" && lr.fix.includes("reel_frame") && lr.fix.includes("5.2 MB"), "loading stop row: " + (lr && lr.fix));
+  const br = evL.todo.find((t) => t.rule === "image-bloated");
+  assert.ok(br && br.fix.includes("786×608") && br.fix.includes("每像素 11.4 bytes"), "bloated picture row");
+  assert.ok(fs.readFileSync(path.join(dL, "report.html"), "utf8").includes("載入時下載最久"), "loading files table");
+}
+
 // R9. A stall in the settle wait counts in the loading stall item, never as a loading fatal, and
 // stays out of smoothness. P.quiet reports the long task the page just had.
 {

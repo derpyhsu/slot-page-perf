@@ -94,6 +94,18 @@ function stallsHtml() {
   return h;
 }
 
+// The files that took longest while loading, with when they ran.
+function loadFilesHtml() {
+  const files = (ev.resources && ev.resources.files) || [];
+  if (!files.length) return "";
+  const top = files.slice().sort((a, b) => (b[1] - b[0]) - (a[1] - a[0])).slice(0, 20);
+  const sz = (kb) => (kb < 0 ? "—" : kb >= 1024 ? `${Math.round(kb / 102.4) / 10} MB` : `${kb} KB`);
+  const prog = (ev.progress || []).map((p) => `${clock(p[0])} ${p[1]}%`).join(" → ");
+  return `<details><summary>載入時下載最久的 ${top.length} 個檔案（共 ${files.length} 個${ev.resources.sizes === "ok" ? "" : "，伺服器沒給大小"}）</summary>${prog ? `<p class="small">載入百分比：${esc(prog)}</p>` : ""}<div class="scroll"><table><tr><th>檔案</th><th class=num>大小</th><th class=num>開始</th><th class=num>結束</th><th class=num>秒數</th></tr>` +
+    top.map((f) => `<tr><td>${esc(f[4] ? `${f[4]}（${f[3]}）` : f[3])}</td><td class=num>${sz(f[2])}</td><td class=num>${Math.round(f[0] / 100) / 10}</td><td class=num>${Math.round(f[1] / 100) / 10}</td><td class=num>${Math.round((f[1] - f[0]) / 100) / 10}</td></tr>`).join("") +
+    `</table></div></details>`;
+}
+
 function todoHtml() {
   const rows = (ev.todo || []).filter((r) => !r.note);
   if (!rows.length) return '<p class="small">沒有要處理的地方。</p>';
@@ -346,6 +358,7 @@ ${readoutHtml(ev)}
 <div class="sec-h"><h2>可優化項目</h2></div>
 ${todoHtml()}
 ${stallsHtml()}
+${loadFilesHtml()}
 </section>
 
 <section class="sec" id="timeline-h">
