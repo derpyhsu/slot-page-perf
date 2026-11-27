@@ -480,6 +480,19 @@ const cc3 = global.cc;
   ev.losses.top.forEach((r) => r.why.forEach((w) => assert.ok(box.includes(w.replace(/&/g, "&amp;").replace(/</g, "&lt;")), "why shown: " + w)));
 }
 
+// R17. Highest draw calls per spin climbing with ups and downs (real series from two games).
+{
+  const { drawsRise } = require("../report/findings");
+  const thresholds = JSON.parse(fs.readFileSync(path.join(root, "protocol", "thresholds.json"), "utf8"));
+  const mk = (xs, longAt) => ({ stages: xs.map((v, i) => ({ name: "spin-" + (i + 1), draws: { max: v }, wallMs: (longAt || []).includes(i + 1) ? 60000 : 4000 })) });
+  const ge = drawsRise(mk([51, 55, 73, 86, 81, 106, 94, 95, 118, 124, 141]), thresholds);
+  assert.ok(ge && ge.base.avg === 71.3 && ge.last.avg === 127.7 && ge.series.length === 11, "golden empire series is a rise: " + JSON.stringify(ge));
+  assert.ok(drawsRise(mk([54, 58, 61, 70, 66, 80, 77, 95, 104, 118, 126]), thresholds), "buffalo king 54 to 126 is a rise");
+  assert.strictEqual(drawsRise(mk([50, 52, 51, 53, 50, 54, 52, 51, 53, 52, 51]), thresholds), null, "flat is not");
+  assert.strictEqual(drawsRise(mk([6, 6, 7, 6, 7, 8, 8, 9, 9, 9, 9]), thresholds), null, "a small absolute rise is not");
+  assert.strictEqual(drawsRise(mk([50, 52, 51, 53, 50, 54, 52, 51, 53, 52, 140], [11]), thresholds), null, "a long last spin (feature, big win) is left out");
+}
+
 // R1, R2. Label textures by owner, the same text uploaded twice, Spine parse, every stall listed.
 {
   const st8 = s.stages.find((x) => x.name === "spin-8");

@@ -437,6 +437,31 @@ function worseFrom(ev, T) {
   return out;
 }
 
+// Draw calls that climb across the normal spins with ups and downs, which worse-from-spin (every
+// later spin above every earlier one) misses: the highest draw calls of each spin, the mean of the
+// last few against the mean of spins 2-4. Spins far longer than the others (longSpinFactor times
+// the median: a feature, a big win) are left out of both windows. Facts only, not scored.
+function drawsRise(ev, T) {
+  const R = T.drawsRise || {};
+  const first = R.first || [2, 4];
+  const lastN = R.last || 3;
+  const re = /^spin-(\d+)$/;
+  const all = (ev.stages || []).filter((s) => re.test(s.name) && s.draws && s.draws.max > 0).map((s) => ({ n: Number(s.name.match(re)[1]), max: s.draws.max, ms: s.wallMs })).sort((a, b) => a.n - b.n);
+  if (all.length < (R.minSpins || 7)) return null;
+  const times = all.map((x) => x.ms).filter((x) => x > 0).sort((a, b) => a - b);
+  const med = times.length ? times[Math.floor(times.length / 2)] : 0;
+  const long = (x) => med > 0 && x.ms > med * (T.longSpinFactor || 3);
+  const pts = all.filter((x) => !long(x));
+  const base = pts.filter((x) => x.n >= first[0] && x.n <= first[1]);
+  const last = pts.slice(-lastN);
+  if (base.length < 2 || last.length < lastN || last[0].n <= base[base.length - 1].n) return null;
+  const avg = (xs) => xs.reduce((a, x) => a + x.max, 0) / xs.length;
+  const a = avg(base);
+  const b = avg(last);
+  if (!(a > 0) || b / a <= (R.ratio || 1.3) || b - a < (R.minAbs || 10)) return null;
+  return { id: "draws-rise", stage: "spin", metric: "draws.max", base: { spins: base.map((x) => x.n), avg: round(a, 1) }, last: { spins: last.map((x) => x.n), avg: round(b, 1) }, ratio: round(b / a, 2), series: all.map((x) => [x.n, x.max, long(x) ? 1 : 0]) };
+}
+
 function findings(ev, T) {
   const out = [];
   const stages = ev.stages || [];
@@ -515,6 +540,8 @@ function findings(ev, T) {
   }
 
   worseFrom(ev, T).forEach((f) => out.push(f));
+  const rise = drawsRise(ev, T);
+  if (rise) out.push(rise);
 
   // The same label uploaded again with unchanged text, within one stage: drawn again for nothing.
   const R = T.labelRedraw || {};
@@ -602,4 +629,4 @@ function findings(ev, T) {
   return { findings: out, groups: gs, softwareGpu: soft };
 }
 
-module.exports = { findings, gcHalves, stallCause, causeText, canvasText, labelText, nodeGrowth, nodeGrowthText, panelNodes, groups, groupOf, heapFit, SOFTWARE_GPU };
+module.exports = { findings, drawsRise, gcHalves, stallCause, causeText, canvasText, labelText, nodeGrowth, nodeGrowthText, panelNodes, groups, groupOf, heapFit, SOFTWARE_GPU };

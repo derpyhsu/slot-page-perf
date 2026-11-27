@@ -771,6 +771,11 @@ function explainLosses() {
           numbers.coverageScreens = cv.screens;
           (cv.groups || []).slice(0, 4).forEach((x) => suspects.push({ kind: "subtree", path: x[0], screens: x[1], nodes: x[2] }));
         }
+        const rise = (ev.findings || []).find((f) => f.id === "draws-rise");
+        if (rise && (row.stage === "spin" || row.id === "cpu") && why.length < 2) {
+          why.push(`每轉最高 draw call 從約 ${Math.round(rise.base.avg)} 爬到約 ${Math.round(rise.last.avg)}`);
+          numbers.drawsRise = { base: rise.base.avg, last: rise.last.avg, series: rise.series };
+        }
         const ls = (ev.longSpins || []).filter((x) => inTarget(x.stage, row.stage)).sort((a, b) => b.sec - a.sec)[0];
         if (ls && why.length < 2) why.push(`${place(ls.stage)}這轉 ${ls.sec} 秒（平常 ${ls.medianSec} 秒），FPS ${ls.fps}`);
       }
@@ -1091,6 +1096,13 @@ function findingRows() {
     });
     rows.push({ rule: "worse-from-spin", level: "yellow", title, area: fs.some((f) => f.metric === "draws") ? "draw call" : fs.some((f) => f.metric === "fps") ? "FPS" : "CPU", fix: `${facts.join("；")}（第 1 轉不算）。之後每一轉都比之前每一轉差，轉完時也還在；要找多出來的是什麼，在轉完的畫面上用 slot-perf-drill 的 drawcalls 看哪個子樹畫最多。` + nodeNote, stage: f0.stage, t: null });
   });
+
+  // Highest draw calls per spin climbing over the run (draws-rise): the series, not scored.
+  const rise = found.find((f) => f.id === "draws-rise");
+  if (rise) {
+    const span = (xs) => (xs.length > 1 ? `第 ${xs[0]}–${xs[xs.length - 1]} 轉` : `第 ${xs[0]} 轉`);
+    rows.push({ rule: "draws-rise", level: "yellow", title: `轉動時每轉最高 draw call 越來越多：${span(rise.base.spins)}平均 ${rise.base.avg}，最後 3 轉平均 ${rise.last.avg}（×${rise.ratio}）`, area: "draw call", fix: `每轉最高 draw call：${rise.series.map((x) => `${x[1]}${x[2] ? "（特別長，不算）" : ""}`).join("、")}。特別長的轉（平常的 ${thresholds.longSpinFactor || 3} 倍以上）不算進前後兩段。每轉都比前一轉高才會列在「從某一轉起變差」；這裡是有起伏的爬升。`, stage: "spin", t: null });
+  }
 
   // The loading percentage stood still while files were downloading.
   const stops = loadStops() || [];

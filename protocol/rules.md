@@ -149,6 +149,10 @@ autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每�
 
 這條抓的是台階，以及每轉漲幅都大於門檻的上升。每轉只多一點的緩慢上升不會列，節點看 `nodeGrowth`、記憶體看增長項。第 1 轉就出現、之後一直在的（例如第一轉後停在畫面外的池子節點）也不會列，那類看 `cocos-invisible-drawn`。
 
+## draws-rise
+
+一般 spin 每轉最高 draw call 有起伏地越來越多。最後 `drawsRise.last` 轉的平均 ÷ 第 `first` 轉（2–4）的平均大於 `ratio`，而且多出 `minAbs` 以上才列；至少要 `minSpins` 轉。比平常長 `longSpinFactor` 倍以上的轉（購買或自然觸發的免費遊戲、大獎）不算進前後兩段，但序列照列。寫前後兩段平均、倍數，和每轉最高 draw call 的序列。只陳述現況，不計分；扣分項在轉動時的平均 FPS、CPU 餘裕下面也會寫一句爬升。
+
 ## panel-heavier
 
 `history-before`、`history-after` 或 `rules` 的穩態，相對 `idle`：FPS 下降超過 10，或 draw call 平均增加超過三成，或尖峰窗出現 `hitchMs` 以上的幀。證據寫明減掉待機之後的差。
