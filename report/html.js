@@ -109,7 +109,8 @@ function loadFilesHtml() {
 function todoHtml() {
   const rows = (ev.todo || []).filter((r) => !r.note);
   if (!rows.length) return '<p class="small">沒有要處理的地方。</p>';
-  return rows.map((r, i) => todoRow(r, i === 0)).join("");
+  // All rows start closed: their text names nodes and files, which the first screen leaves out.
+  return rows.map((r) => todoRow(r, false)).join("");
 }
 
 const css = `

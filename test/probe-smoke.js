@@ -326,6 +326,7 @@ assert.ok(lk && lk.status === "retained-after-gc" && lk.delta === 40, "rise in b
 assert.ok(!leakEv.findings.some((f) => f.id === "heap-step") && growthItem(leakEv).value === 4, "steady growth per spin");
 assert.ok(!/PLAYER-8848|Title 1|88,888/.test(JSON.stringify(ev) + JSON.stringify(s)), "label text never kept");
 const html = fs.readFileSync(path.join(runDir, "report.html"), "utf8");
+assert.ok(html.includes("<details class=\"acc\"") && !/<details class="acc"[^>]* open>/.test(html), "todo rows start closed");
 assert.ok(html.includes("lbl_win") && html.includes("overflow SHRINK"), "report names the labels on the worst spin stall");
 const ng = ev.nodeGrowth;
 assert.ok(ng && ng.spins === 7 && ng.paths[0].path === "coin_layer/Coin" && ng.paths[0].from === 2 && ng.paths[0].to === 11, "scene group growth between the GC points");
