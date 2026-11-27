@@ -1086,11 +1086,12 @@
     log("drill state " + kind);
   }
 
-  // The points the run pressed (CSS pixels of the game's frame) and the viewport they were taken
-  // at, so slot-perf-drill can reach the same states later. No URL.
+  // The points the run pressed (CSS pixels of the game's frame), the frame's offset on the page
+  // (add it for page points when the game is in an iframe) and the viewport, so slot-perf-drill can
+  // reach the same states later. No URL.
   function points() {
     var vp = { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio };
-    return st.map ? { map: st.map, close: st.close, viewport: vp } : undefined;
+    return st.map ? { map: st.map, close: st.close, frame: frameOffset(), viewport: vp } : undefined;
   }
 
   function status() {

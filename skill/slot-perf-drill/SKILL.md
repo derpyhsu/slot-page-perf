@@ -32,7 +32,7 @@ Start from the run's `evidence.json`, not the report. The report says, for each 
 - `suspects`: `stall` (the work a stall was in, by name, and how many stalls), `label` (a label path whose unchanged text was uploaded again, and how often), `subtree` (a path with its screens of coverage or its node counts), `file`, `image`, `texture`, `made` (an instantiated node group that grew).
 - `numbers`, and `tool` when the run already knows which tool answers it.
 
-`points` in the same file has the run's map (spin, menu, history, rules) and the viewport it was taken at; on a page of that size the points press the same buttons.
+`points` in the same file has the run's map (spin, menu, history, rules) in CSS pixels of the game's frame, the frame's offset on the page, and the viewport. On a page of that size, the map plus `frame` gives page points that press the same buttons; check them on a screenshot first.
 
 For each lead: reach its state, run `tool` or the tool for its suspects below, then confirm in that state with `fps` and `hide` on the suspect's subtree. FPS is capped at the display rate, so a gain shows only where FPS was below it. Tell the user the suspect, the measured difference, and what the report said. Drill the first lead before the others.
 

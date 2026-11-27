@@ -779,9 +779,11 @@ function explainLosses() {
         const leak = (ev.findings || []).find((f) => f.id === "leak-suspected");
         if (leak && leak.delta != null) why.push(`強制 GC 後還多 ${round(leak.delta, 1)} MB，前後兩半都在增加`);
         const ng = ev.nodeGrowth;
+        let grewNodes = false;
         if (ng) {
           const grew = (ng.made && ng.made.byName) || [];
           const kept = grew.filter((x) => x.detached[1] - x.detached[0] + x.destroyed[1] - x.destroyed[0] > 0);
+          grewNodes = kept.length > 0 || !!(ng.paths && ng.paths.length);
           if (kept.length) why.push(`有 ${kept.length} 組 instantiate 出來的節點用完後還被參考著，越來越多`);
           else if (ng.paths && ng.paths.length) why.push(`場景裡有 ${ng.paths.length} 組節點在轉的過程中變多`);
           else if (ng.nodes) why.push(`暖機後到最後節點 ${ng.nodes[0]} → ${ng.nodes[1]}，沒有哪一組明顯變多`);
@@ -790,7 +792,7 @@ function explainLosses() {
         }
         const snap = ((ev.cocos && ev.cocos.snapshots) || []).slice(-1)[0] || {};
         const sc = snap.spine ? (snap.spine.sharedCache || 0) + (snap.spine.privateCache || 0) : 0;
-        if (sc && why.length < 2) why.push(`有 ${sc} 個 Spine 用快取模式，快取會隨播過的動畫變大`);
+        if (sc && !grewNodes && why.length < 2) why.push(`有 ${sc} 個 Spine 用快取模式，快取會隨播過的動畫變大`);
         if (sc) numbers.spineCached = sc;
       } else if (row.id === "gpu" || row.id === "bigTextures") {
         const snap = ((ev.cocos && ev.cocos.snapshots) || []).slice(-1)[0] || {};
