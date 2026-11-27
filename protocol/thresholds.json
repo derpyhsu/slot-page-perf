@@ -4,6 +4,7 @@
   "turboSpins": 3,
   "warmupSpins": 5,
   "gcEverySpins": 10,
+  "verifyMaxSpins": 20,
   "idleSeconds": 8,
   "panelSteadySeconds": 5,
   "panelSpikeSeconds": 2,

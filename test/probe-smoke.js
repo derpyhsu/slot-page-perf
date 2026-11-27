@@ -517,7 +517,7 @@ const cc3 = global.cc;
 // R19. Spine in a cc.NodePool left on a finished animation with something to draw.
 {
   const slotOf = (a) => ({ color: { a: 1 }, bone: { active: true }, attachment: { color: { a } } });
-  const skel = (tracks, alphas, mode) => Object.assign(new Skeleton(mode || 0), { _state: { tracks }, _skeleton: { color: { a: 1 }, drawOrder: alphas.map(slotOf) } });
+  const skel = (tracks, alphas, mode) => Object.assign(new Skeleton(mode || 0), { _state: { tracks }, _skeleton: { color: { a: 1 }, drawOrder: alphas.map(slotOf) }, clearTracks() { this._state.tracks = []; }, setToSetupPose() {} });
   const done = { loop: false, isComplete: () => true };
   const resPool = new cc.NodePool();
   for (let j = 0; j < 12; j += 1) resPool.put(node("Reel_" + (j % 3), [], [node("Symbol", [], [node("gold", [skel([done], [0, 1])])])]));
@@ -534,6 +534,11 @@ const cc3 = global.cc;
   const evR = JSON.parse(fs.readFileSync(path.join(dR, "evidence.json"), "utf8"));
   const row = evR.todo.find((t) => t.rule === "pool-residue");
   assert.ok(row && /12 個 Spine 停在播完的最後一幀/.test(row.title) && row.fix.includes("Reel_*/Symbol/gold 12 個") && row.fix.includes("快取模式 1 個不算"), "pool residue row: " + JSON.stringify(row));
+  // slot-perf-verify clears exactly what the census counted.
+  assert.strictEqual(eval(fs.readFileSync(path.join(root, "verify", "page.js"), "utf8")), "verify ok");
+  assert.deepStrictEqual(window.__slotVerify.residue(), { count: 12 }, "verify sees the census residue");
+  const cl = window.__slotVerify.clearPoolResidue();
+  assert.ok(cl.cleared === 12 && cl.left === 0 && P.census().poolResidue.residue === 0, "cleared residue is gone from the census: " + JSON.stringify(cl));
   resPool._pool.length = 0;
 }
 

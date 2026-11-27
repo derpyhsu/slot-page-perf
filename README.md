@@ -53,6 +53,11 @@ node report/build.js runs/<run>
 
 只做 Cocos 通用的事實，不判斷要不要改。
 
+
+## 驗證（slot-perf-verify）
+
+深鑽找到嫌疑之後，要確認「改了這個、結果真的變好」時，用 `skill/slot-perf-verify/SKILL.md`。它在同一個遊戲上，用同樣的轉數各跑一次「不改」和「改了」，比較每轉的 draw call、FPS 和秒數。第一個測試是每轉後清掉 cc.NodePool 裡停在播完畫面的 Spine。它會改動遊戲狀態、做完要重整頁面，也會花 2N 轉的押注，所以只在你要求時才做，結果不進報告。
+
 ## 邊界
 
 流程與門檻在 `protocol/`。問題必須對得上 `protocol/rules.md`。evidence 只留網址路徑，不留 query string，避免把 session 寫進檔案。

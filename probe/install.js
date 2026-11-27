@@ -2723,6 +2723,14 @@
       var since = function (at) { return Math.round(t - (at || state.t0)); };
       return { badMs: since(state.lastBadAt), longMs: since(state.lastLongAt), uploadMs: since(state.lastBigUploadAt) };
     },
+    // Read-only, for slot-perf-verify: the cc.NodePool instances the probe has seen, and the census
+    // test for one sp.Skeleton ("residue", "clean", "cache", "unreadable"). The probe changes nothing.
+    pools: function () {
+      return state.pools.map(function (r) { return r.deref && r.deref(); }).filter(Boolean);
+    },
+    spineResidue: function (comp) {
+      try { return spineResidue(comp); } catch (e) { return "unreadable"; }
+    },
     // WebSocket closes and errors after the game was ready, from index on. The autopilot asks at gaps.
     wsEvents: function (from) {
       return state.wsEvents.filter(function (e) { return e.afterReady; }).slice(from || 0);

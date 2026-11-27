@@ -19,7 +19,11 @@ Before measuring, read `skill/slot-page-perf/SKILL.md`, then `protocol/scenarios
 
 ## Drill
 
-To dig into one finding after a run, read `skill/slot-perf-drill/SKILL.md`. Its page tools (`drill/page.js`) hide subtrees only while measuring and restore them; they are not part of the probe bundle and never run during a measuring run. `drill/heap.js` reads heap snapshots kept in the scratchpad, never in `runs/`.
+To dig into one finding after a run, read `skill/slot-perf-drill/SKILL.md`. Its page tools (`drill/page.js`) hide subtrees only while measuring and restore them; they are not part of the probe bundle and never run during a measuring run. `drill/heap.js` reads heap snapshots kept in the scratchpad, never in `runs/`. The drill skill starts from `evidence.json` `leads`; each tool has its own file under `skill/slot-perf-drill/tools/`, read only when used.
+
+## Verify
+
+To confirm a cause by changing the game and measuring again (an A/B of the same spins), read `skill/slot-perf-verify/SKILL.md`, and only when the user asks. `verify/page.js` changes the game and does not put it back, so the page is reloaded after; it is not part of the probe bundle and never runs during a measuring or drilling run. It spends 2N spins of the current bet and never changes the bet.
 
 ## Output
 

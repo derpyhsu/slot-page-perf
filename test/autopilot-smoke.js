@@ -266,6 +266,18 @@ async function gotoMenuCase() {
   assert.ok(!all.some((t) => /@500,600/.test(t) || /^press spin/.test(t)), "goto never presses spin: " + all.join(" / "));
 }
 
+// slot-perf-verify: n spins on a page where no run was started, with after(i) after each one.
+async function verifyCase() {
+  const sp = btn("btn_spin", 500, 600);
+  const auto = load([sp], null, null, null, { settle: { pollMs: 50, minMs: 200, confirmMs: 200, stablePolls: 2, quietMs: 60000, nudgeAfterMs: 60000 } });
+  const seen = [];
+  auto.verify({ spins: 2, map: { spin: sp.point }, after: async (i) => { seen.push(i); return { cleared: i }; } });
+  const s = await until(auto, (x) => x.phase === "verify-done" || x.needs, 15000);
+  const r = auto.verifyResult();
+  assert.ok(s.phase === "verify-done" && r.spins.length === 2 && r.after.length === 2 && r.after[1].cleared === 2 && seen.join() === "1,2", "verify runs n spins and after each: " + JSON.stringify([s, r]));
+  assert.ok(auto.marks.some((m) => m[0] === "verify-1") && !auto.marks.some((m) => /^spin-/.test(m[0])), "verify spins are not run spins");
+}
+
 async function busyCase() {
   const plain = await spinFor(false);
   const stop = await spinFor(true);
@@ -277,6 +289,7 @@ async function busyCase() {
   await gotoCase();
   await gotoMenuCase();
   await hintCase();
+  await verifyCase();
   await backendCase();
   await busyCase();
   await quickStopCase();

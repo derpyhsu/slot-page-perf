@@ -1128,6 +1128,42 @@
     return st.map ? { map: st.map, close: st.close, frame: frameOffset(), viewport: vp } : undefined;
   }
 
+  // slot-perf-verify: n spins with the run's settle logic, after the run or on a fresh page, with
+  // opts.after(i) awaited after each spin (the change being tested). Per spin: seconds, highest and
+  // median draw calls, FPS. Never on a measuring run; nothing goes into the saved result.
+  async function runVerify(n, opts) {
+    st.phase = "verify";
+    st.note = null;
+    if (opts.map) {
+      st.map = {};
+      Object.keys(opts.map).forEach(function (k) { st.map[k] = opts.map[k]; });
+      var sn = nodeNear(st.map.spin);
+      st.spinKey = sn ? key(sn) : null;
+      st.spinName = sn ? nameKey(sn) : null;
+      await sampleSpinSigs();
+    }
+    if (!st.map || !st.map.spin) { st.phase = "error"; st.needs = "error"; st.note = "verify needs map.spin (evidence.json points.map)"; return; }
+    if (st.coverBase == null) st.coverBase = cover();
+    if (st.idleDraws == null) {
+      var ds = [];
+      for (var k = 0; k < 8; k += 1) { var d = P.live().draws; if (d != null) ds.push(d); await sleep(250); }
+      ds.sort(function (a, b) { return a - b; });
+      if (ds.length) st.idleDraws = ds[Math.floor(ds.length / 2)];
+    }
+    st.verify = { spins: [], after: [] };
+    for (var i = 1; i <= n; i += 1) {
+      var name = "verify-" + i;
+      if (!(await oneSpin(name))) break;
+      var sg = (P.summary().stages || []).filter(function (x) { return x.name === name; }).slice(-1)[0];
+      st.verify.spins.push({ n: i, sec: sg ? Math.round(sg.wallMs / 100) / 10 : null, drawsMax: sg && sg.draws ? sg.draws.max : null, drawsP50: sg && sg.draws ? sg.draws.p50 : null, fps: sg ? sg.fps : null });
+      if (typeof opts.after === "function") {
+        try { st.verify.after.push(await opts.after(i)); } catch (e) { st.verify.after.push({ error: String(e && e.message || e).slice(0, 120) }); }
+      }
+    }
+    st.phase = "verify-done";
+    log("verify done " + st.verify.spins.length);
+  }
+
   function status() {
     var live = P.live();
     var out = { phase: st.phase, needs: st.needs, note: st.note, spins: st.spins, plan: st.plan, t: Math.round((now() - st.started) / 1000), stage: live.stage, fps: live.fps, gpuMb: live.gpuMb, heapMb: live.heapMb };
@@ -1149,7 +1185,7 @@
     // Keep ms under the tool timeout.
     wait: async function (ms) {
       var end = now() + (ms || 60000);
-      while (now() < end && !st.needs && st.phase !== "done" && st.phase !== "error" && !/^drill:/.test(st.phase)) await sleep(500);
+      while (now() < end && !st.needs && st.phase !== "done" && st.phase !== "error" && st.phase !== "verify-done" && !/^drill:/.test(st.phase)) await sleep(500);
       return status();
     },
     status: status,
@@ -1186,6 +1222,16 @@
       gotoState(state).catch(function (e) { st.phase = "error"; st.note = String(e && e.message || e); st.needs = "error"; });
       return status();
     },
+    // slot-perf-verify only: { spins, map (evidence points.map), after(i) }. On a page whose run is
+    // done, or a fresh page with the probe where no run was started. Ready when phase is verify-done.
+    verify: function (opts) {
+      opts = opts || {};
+      if (["ready", "done", "verify-done"].indexOf(st.phase) < 0 && !/^drill:/.test(st.phase)) return { error: "verify is for a page with no run going (phase ready or done)" };
+      var n = Math.max(1, Math.min(opts.spins || 10, CFG.verifyMaxSpins || 20));
+      runVerify(n, opts).catch(function (e) { st.phase = "error"; st.note = String(e && e.message || e); st.needs = "error"; });
+      return status();
+    },
+    verifyResult: function () { return st.verify || null; },
     // At needs "buy": do not buy (the balance is short, or the screen is not a plain buy).
     skip: function () { return resume({ skip: true }); },
     result: function () {
