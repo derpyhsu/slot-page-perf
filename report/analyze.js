@@ -639,13 +639,189 @@ function loadStops() {
 
 ev.longSpins = longSpins();
 
+// Why each deduction happened and where, from the evidence. losses rows get why: at most two
+// plain sentences for the report, with no node paths, file names or tool names. ev.leads holds
+// the same deductions for slot-perf-drill with what the report leaves out: the state to reach,
+// the suspects (node paths, files, labels) and the numbers. Display only: no score changes here,
+// and a cause the evidence does not hold is left out rather than guessed.
+function explainLosses() {
+  const L = ev.losses;
+  if (!L || !L.all) return [];
+  const { groupOf, groups: groupsOf } = require("./findings");
+  const gs = groupsOf(ev.stages || []);
+  const KIND = { "loading-burst": "同時收完多個下載", "texture-upload": "貼圖上傳", deserialize: "資源解析", "shader-compile": "shader 編譯", instantiate: "建立節點", label: "文字排版繪字", component: "遊戲元件更新", render: "繪製", layout: "網頁版面", script: "腳本執行", activate: "節點啟用／停用", handler: "按鈕回呼", websocket: "伺服器訊息處理", "spine-build": "Spine 骨架解析" };
+  const LOADING = ["loading", "enter", "settle"];
+  const inTarget = (name, target) => (target === "loading" ? LOADING.includes(name) : name === target || groupOf(name) === target);
+  const place = (name) => {
+    if (!name) return "";
+    const m = String(name).match(/^(spin|turbo)-(\d+)$/);
+    if (m) return `${m[1] === "turbo" ? "加速" : ""}第 ${m[2]} 轉`;
+    return name === "loading" ? "載入" : name === "spin" ? "轉動" : name === "turbo" ? "加速轉動" : stageName(name) || name;
+  };
+  const reachOf = (stage) => {
+    const g = stage ? groupOf(String(stage)) : "idle";
+    if (LOADING.includes(g)) return "loading";
+    if (/^history/.test(g)) return "history";
+    if (g === "rules") return "rules";
+    if (g === "spin" || g === "turbo" || g === "feature" || g === "menu") return g;
+    return "idle";
+  };
+  const top = (m, n) => Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, n);
+  const stallsIn = (target) => (ev.stalls || []).filter((r) => inTarget(r.stage, target));
+  // Stalls in a stage or group: how many, the longest, the kinds of work most of them were in.
+  const stallWhy = (rows, target) => {
+    if (!rows.length) return null;
+    const kinds = {};
+    rows.forEach((r) => { if (r.kind) kinds[r.kind] = (kinds[r.kind] || 0) + 1; });
+    const per = {};
+    rows.forEach((r) => { per[r.stage] = (per[r.stage] || 0) + 1; });
+    const [most, next] = top(per, 2);
+    const worst = rows.reduce((a, r) => (r.dt > a.dt ? r : a), rows[0]);
+    const k = top(kinds, 2);
+    const at = most && Object.keys(per).length > 1 && most[1] >= 2 && (!next || most[1] > next[1]) ? `，${place(most[0])}最多（${most[1]} 次）` : "";
+    return `${place(target)}期間停頓 ${rows.length} 次，最長 ${round(worst.dt, 0)} ms${at}` + (k.length ? `；其中${k.map(([x, n]) => `${KIND[x] || x}（${n} 次）`).join("、")}` : "；沒量到在做什麼");
+  };
+  // Label text uploaded again with the same string, in the stages of a target.
+  const labelSame = (target) => {
+    let same = 0, mb = 0;
+    const paths = {};
+    (ev.stages || []).forEach((s) => {
+      const lb = s.uploads && s.uploads.labels;
+      if (!lb || !inTarget(s.name, target)) return;
+      same += lb.same || 0;
+      mb += lb.sameMb || 0;
+      (lb.top || []).forEach((x) => { if (x.same) paths[x.path] = (paths[x.path] || 0) + x.same; });
+    });
+    return same ? { same, mb: round(mb, 1), paths: top(paths, 5).map(([p, n]) => ({ path: p, same: n })) } : null;
+  };
+  const coverageAt = () => {
+    const c = (ev.census || []).filter((x) => x && x.invisible && x.invisible.coverage && ["idle", "end", "after-rules"].includes(x.at)).sort((a, b) => b.invisible.coverage.screens - a.invisible.coverage.screens)[0];
+    return c ? Object.assign({ at: c.at }, c.invisible.coverage) : null;
+  };
+  const groupRow = (stage) => gs.find((g) => g.group === (stage ? groupOf(String(stage)) : null));
+
+  const leads = [];
+  L.all.forEach((row) => {
+    const why = [];
+    const suspects = [];
+    const numbers = {};
+    const target = row.category === "loading" ? "loading" : row.stage;
+    const addStalls = (rows) => {
+      const w = stallWhy(rows, target);
+      if (w) why.push(w);
+      const who = {};
+      rows.forEach((r) => { if (r.who) who[r.who] = (who[r.who] || 0) + 1; });
+      top(who, 5).forEach(([w2, n]) => suspects.push({ kind: "stall", what: w2, n }));
+      if (rows.length) numbers.stalls = rows.length;
+    };
+    const addLabels = () => {
+      const ls = labelSame(target);
+      if (!ls) return;
+      why.push(`文字內容沒變卻重新繪製上傳 ${ls.same} 次（約 ${ls.mb} MB）`);
+      ls.paths.forEach((p) => suspects.push({ kind: "label", path: p.path, n: p.same }));
+      numbers.labelSame = ls.same;
+    };
+    if (row.category === "loading") {
+      if (["stall", "stallTotal", "longTask", "low", "steady", "shader"].includes(row.id)) addStalls(stallsIn("loading"));
+      const stop = (ev.loadStops || [])[0];
+      if (stop && ["fcp", "tti", "requests", "stall", "stallTotal", "steady", "longTask"].includes(row.id)) {
+        why.push(`載入進度停在 ${stop.pct}% 約 ${stop.sec} 秒，期間下載完 ${stop.done} 個檔${stop.mb != null ? `、共 ${stop.mb} MB` : ""}`);
+        stop.files.forEach((f) => suspects.push({ kind: "file", path: f.path, name: f.name, kb: f.kb }));
+        numbers.progressStop = { pct: stop.pct, sec: stop.sec };
+      }
+      const bl = (ev.resources && ev.resources.bloated) || [];
+      if (bl.length && ["fcp", "tti", "requests"].includes(row.id) && why.length < 2) {
+        why.push(`${bl.length} 張圖檔比它的像素該有的大小還大`);
+        bl.slice(0, 5).forEach((b) => suspects.push({ kind: "image", path: b.file, name: b.name, kb: b.kb, bpp: b.bpp }));
+      }
+      const ld = ev.resources && ev.resources.load;
+      if (ld && ld.count && !why.length && ["fcp", "tti", "requests"].includes(row.id)) {
+        const kinds = [["images", "圖片"], ["audio", "音效"], ["json", "JSON"], ["scripts", "腳本"]].filter(([k]) => ld[k]).map(([k, w]) => `${w} ${ld[k]} 個`);
+        why.push(`載入時下載 ${ld.count} 個檔${ld.transferMb != null ? `、共 ${round(ld.transferMb, 1)} MB` : ""}${kinds.length ? `（${kinds.join("、")}）` : ""}`);
+        numbers.load = { count: ld.count, mb: ld.transferMb };
+      }
+    } else if (row.category === "smooth") {
+      if (row.id === "stall") {
+        const r = (ev.stalls || []).filter((x) => x.stage === row.stage).sort((a, b) => b.dt - a.dt)[0];
+        if (r) {
+          why.push(`最長一次 ${round(r.dt, 0)} ms 在${place(r.stage)}${r.kind ? `，當時在${KIND[r.kind] || r.kind}` : ""}`);
+          if (r.who) suspects.push({ kind: "stall", what: r.who, n: 1 });
+        }
+        addLabels();
+      } else if (["stallRate", "low", "pace"].includes(row.id)) {
+        addStalls(stallsIn(row.stage));
+        addLabels();
+      } else if (["steady", "feature", "cpu", "gpu"].includes(row.id)) {
+        const g = groupRow(row.stage);
+        const cv = coverageAt();
+        if (g && g.cpuP95 != null && g.cpuP95 >= 1000 / 60 / 2 && row.id !== "gpu") {
+          // Past one frame's time the engine itself is the limit; below it, the numbers only.
+          const frameMs = 1000 / (g.expectedFps || 60);
+          why.push(`引擎每幀 CPU 最多約 ${g.cpuP95} ms${g.draws != null ? `、約 ${Math.round(g.draws)} 個 draw call` : ""}${g.cpuP95 > frameMs ? `，超過一幀的時間（${round(frameMs, 1)} ms）` : ""}`);
+          numbers.cpuP95 = g.cpuP95;
+          numbers.draws = Math.round(g.draws);
+        } else if (g && g.cpuP95 != null) {
+          why.push(`引擎每幀 CPU 只要約 ${g.cpuP95} ms，時間多半花在畫面繪製（GPU 端）` + (cv && cv.screens >= 2 ? `；${place(cv.at === "end" ? "idle-end" : cv.at)}時每幀疊約 ${cv.screens} 個螢幕的圖` : ""));
+          numbers.cpuP95 = g.cpuP95;
+        } else if (g && g.draws != null) {
+          why.push(`每幀約 ${Math.round(g.draws)} 個 draw call`);
+        }
+        if (g && g.draws != null) numbers.draws = Math.round(g.draws);
+        if (cv) {
+          numbers.coverageScreens = cv.screens;
+          (cv.groups || []).slice(0, 4).forEach((x) => suspects.push({ kind: "subtree", path: x[0], screens: x[1], nodes: x[2] }));
+        }
+        const ls = (ev.longSpins || []).filter((x) => inTarget(x.stage, row.stage)).sort((a, b) => b.sec - a.sec)[0];
+        if (ls && why.length < 2) why.push(`${place(ls.stage)}這轉 ${ls.sec} 秒（平常 ${ls.medianSec} 秒），FPS ${ls.fps}`);
+      }
+    } else if (row.category === "memory") {
+      if (["growth", "heap"].includes(row.id)) {
+        const leak = (ev.findings || []).find((f) => f.id === "leak-suspected");
+        if (leak && leak.delta != null) why.push(`強制 GC 後還多 ${round(leak.delta, 1)} MB，前後兩半都在增加`);
+        const ng = ev.nodeGrowth;
+        if (ng) {
+          const grew = (ng.made && ng.made.byName) || [];
+          const kept = grew.filter((x) => x.detached[1] - x.detached[0] + x.destroyed[1] - x.destroyed[0] > 0);
+          if (kept.length) why.push(`有 ${kept.length} 組 instantiate 出來的節點用完後還被參考著，越來越多`);
+          else if (ng.paths && ng.paths.length) why.push(`場景裡有 ${ng.paths.length} 組節點在轉的過程中變多`);
+          else if (ng.nodes) why.push(`暖機後到最後節點 ${ng.nodes[0]} → ${ng.nodes[1]}，沒有哪一組明顯變多`);
+          grew.forEach((x) => suspects.push({ kind: "made", name: x.name, detached: x.detached, destroyed: x.destroyed, pooled: x.pooled }));
+          (ng.paths || []).forEach((p) => suspects.push({ kind: "subtree", path: p.path, from: p.from, to: p.to }));
+        }
+        const snap = ((ev.cocos && ev.cocos.snapshots) || []).slice(-1)[0] || {};
+        const sc = snap.spine ? (snap.spine.sharedCache || 0) + (snap.spine.privateCache || 0) : 0;
+        if (sc && why.length < 2) why.push(`有 ${sc} 個 Spine 用快取模式，快取會隨播過的動畫變大`);
+        if (sc) numbers.spineCached = sc;
+      } else if (row.id === "gpu" || row.id === "bigTextures") {
+        const snap = ((ev.cocos && ev.cocos.snapshots) || []).slice(-1)[0] || {};
+        const tx = snap.textures;
+        if (tx && tx.status === "ok" && tx.count) {
+          why.push(`場景用到 ${tx.count} 張貼圖、共約 ${Math.round(tx.mb)} MB${tx.compressed === 0 ? "，沒有一張是壓縮格式" : tx.compressed ? `，${tx.compressed} 張是壓縮格式` : ""}`);
+          (tx.largest || []).slice(0, 5).forEach((t) => suspects.push({ kind: "texture", path: t.file, w: t.w, h: t.h, mb: t.mb, format: t.format }));
+          numbers.textures = { count: tx.count, mb: tx.mb };
+        }
+      } else if (row.id === "audio") {
+        const au = ev.audio;
+        if (au && au.status === "ok" && au.count) why.push(`${au.count} 個音效解碼成未壓縮的聲音資料放在記憶體`);
+      }
+    }
+    row.why = why.slice(0, 2);
+    leads.push({ category: row.category, id: row.id, label: row.label, points: row.points, value: row.value, unit: row.unit, stage: row.stage, reach: reachOf(row.category === "loading" ? "loading" : row.stage), why: why, suspects: suspects.slice(0, 10), numbers, tool: row.tool || null });
+  });
+  return leads;
+}
+ev.leads = explainLosses();
+
 // Every stall in the run, in time order, with its cause in a few words and how many times the
 // 卡頓頻率 item counted it. That item counts every hitch entry of the play stages, so a long task
 // that overlaps a frame stall is counted again (shown as 2).
+function causeWho(c) {
+  return c.kind === "component" || c.kind === "handler" || c.kind === "instantiate" || c.kind === "spine-build" ? c.name : c.kind === "script" ? c.file : c.kind === "label" ? (c.top || [])[0] && c.top[0].path : c.kind === "activate" ? c.top : null;
+}
 function stallWord(c) {
   if (!c) return null;
   const W = { "loading-burst": "同時收完多個下載", "texture-upload": "貼圖上傳", deserialize: "資源解析", "shader-compile": "shader 編譯", instantiate: "建立節點", label: "Label 排版繪字", component: "元件", render: "繪製", layout: "樣式與版面", script: "腳本", activate: "節點啟用／停用", handler: "編輯器回呼", websocket: "WebSocket 訊息處理", "spine-build": "Spine 骨架資料解析" };
-  const name = c.kind === "component" || c.kind === "handler" || c.kind === "instantiate" || c.kind === "spine-build" ? c.name : c.kind === "script" ? c.file : c.kind === "label" ? (c.top || [])[0] && c.top[0].path : c.kind === "activate" ? c.top : null;
+  const name = causeWho(c);
   let w = `${W[c.kind] || c.kind}${name ? ` ${name}` : ""}`;
   if (c.inside && c.inside.length) w += `（在${c.inside.map((x) => W[x.kind] || x.kind).join("、")}裡）`;
   return w;
@@ -663,7 +839,7 @@ function stallTable() {
       const f = hitchF.find((x) => x.stage === s.name && x.t === h.t && x.value === h.dt);
       const again = h.source === "longtask" ? 0 : hs.filter((o) => o.source === "longtask" && overlap(o, h)).length;
       const cv = f && f.canvas;
-      rows.push({ t: h.t, stage: s.name, dt: h.dt, cause: f ? stallWord(f.cause) : null, canvasShare: cv ? round(cv.ms / h.dt, 2) : undefined, counted: counted.has(s.name) ? 1 + again : 0 });
+      rows.push({ t: h.t, stage: s.name, dt: h.dt, cause: f ? stallWord(f.cause) : null, kind: f && f.cause ? f.cause.kind : undefined, who: f && f.cause ? causeWho(f.cause) || undefined : undefined, canvasShare: cv ? round(cv.ms / h.dt, 2) : undefined, counted: counted.has(s.name) ? 1 + again : 0 });
     });
   });
   return rows.sort((a, b) => a.t - b.t);
@@ -686,8 +862,9 @@ function longSpins() {
 
 // Where the points went: each scored item's share of 100 minus the score, with the scorer's own
 // weight normalization (unmeasured items left out), so a score's losses add up to 100 minus its
-// uncapped score. The three largest across the three scores, each with the stage it comes from
-// and the slot-perf-drill tool that answers it, when one does. A fatal cap is stated beside them.
+// uncapped score. The three largest across the three scores, each with the stage it comes from;
+// explainLosses adds why (for the report) and ev.leads (for slot-perf-drill). A fatal cap is
+// stated beside them.
 function losses() {
   const { groups: groupsOf } = require("./findings");
   const gs = groupsOf(ev.stages || []);

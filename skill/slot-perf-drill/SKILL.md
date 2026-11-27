@@ -26,7 +26,15 @@ On the game page, once it shows the state the finding is about (idle, a panel op
 
 ## Which tool
 
-Start from the report's first screen: 扣最多分的地方 lists the three items that cost the most points, the stage each comes from, and the tool below that answers it. Drill the first one before the others.
+Start from the run's `evidence.json`, not the report. The report says, for each deduction, where and why in plain words; `leads` holds the same deductions, largest first, with what the report leaves out. Read only the lead you drill:
+
+- `reach`: the state to get the page into. `loading` needs a reload with the probe; `idle`, `history`, `rules` and `menu` are screens; `spin`, `turbo` and `feature` mean while it plays, so press spin and measure during it.
+- `suspects`: `stall` (the work a stall was in, by name, and how many stalls), `label` (a label path whose unchanged text was uploaded again, and how often), `subtree` (a path with its screens of coverage or its node counts), `file`, `image`, `texture`, `made` (an instantiated node group that grew).
+- `numbers`, and `tool` when the run already knows which tool answers it.
+
+`points` in the same file has the run's map (spin, menu, history, rules) and the viewport it was taken at; on a page of that size the points press the same buttons.
+
+For each lead: reach its state, run `tool` or the tool for its suspects below, then confirm in that state with `fps` and `hide` on the suspect's subtree. FPS is capped at the display rate, so a gain shows only where FPS was below it. Tell the user the suspect, the measured difference, and what the report said. Drill the first lead before the others.
 
 | Finding or symptom | Tool |
 | --- | --- |
@@ -34,6 +42,17 @@ Start from the report's first screen: 扣最多分的地方 lists the three item
 | `leak-suspected` or `heap-step` where `nodeGrowth` shows no group growing (the heap grows, the node count does not) | `spineCache` first when the scene has Spine in a cache mode, then `heap` |
 | Low FPS while engine CPU per frame is low, `fill-layers` | `coverage` (in the state that is slow, for example while the reels spin), then `fps` with `hide` on the biggest subtree; fill rate to confirm |
 | `loading-progress-stop`, `image-bloated`, slow loading with large picture files | `images` |
+
+By suspect kind in a lead:
+
+| Suspect | First look |
+| --- | --- |
+| `subtree` | `fps` with `hide` on its path in the lead's state; `drawcalls` with it as root for draw calls and batch breaks |
+| `label` | `fps` with `hide` on the label's parent while its text changes (during a spin); `drawcalls` for its batch breaks |
+| `stall` | The named component, script, label or Spine ran during the stalls; no page tool times it alone. State it with the stall count, and hide its subtree with `fps` where it has one |
+| `file`, `image` | `images` |
+| `texture` | `images` for its file; its size and format are already in the lead |
+| `made` | `heap` retainers for that node name |
 
 By symptom, in the order to check them:
 

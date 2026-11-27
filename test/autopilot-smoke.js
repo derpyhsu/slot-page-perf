@@ -223,6 +223,8 @@ async function gotoMenuCase() {
     throw new Error("too many stops");
   };
   await answer((x) => x.phase === "done");
+  const pts = auto.result().points;
+  assert.ok(pts && pts.map.spin.x === 500 && pts.map.history.x === 850 && pts.map.historyInMenu && pts.close.menu && pts.viewport, "result keeps the points for the drill: " + JSON.stringify(pts));
   const before = auto.result().log.length;
   auto.goto("history");
   let s = await answer((x) => /^drill:/.test(x.phase));

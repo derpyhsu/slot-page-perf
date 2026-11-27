@@ -143,6 +143,7 @@ h3 { font-size: 11.5px; font-weight: 600; color: var(--faint); letter-spacing: .
 .losses { margin: 12px 0 0; font-size: 13px; }
 .losses h3 { margin: 0 0 4px; font-size: 13px; }
 .losses ol { margin: 0; padding-left: 20px; }
+.losses .why { color: var(--sub); margin: 2px 0 6px; }
 .lm { display: inline-block; width: 9px; height: 9px; flex: none; }
 .lm.circ { border-radius: 50%; background: currentColor; }
 .lm.sq { background: currentColor; }

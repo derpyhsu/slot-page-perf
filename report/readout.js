@@ -558,7 +558,8 @@ function panel(ev, m, key, selected) {
   </div>`;
 }
 
-// The three items that cost the most points, with stage and the drill tool that answers them.
+// The three items that cost the most points, with the stage and why, in plain words. Tool names,
+// node paths and files stay in evidence.json (leads) for slot-perf-drill.
 const STAGE_WORD = { settle: "進遊戲後穩定期", spin: "spin", turbo: "加速 spin", idle: "待機", "idle-after-rules": "規則後待機", "idle-end": "結束待機", menu: "選單", "history-before": "轉前紀錄", "history-after": "轉後紀錄", rules: "規則", feature: "免費遊戲", loading: "載入", enter: "進遊戲" };
 function stageWord(name) {
   const m = name.match(/^(spin|turbo)-(\d+)$/);
@@ -567,23 +568,30 @@ function stageWord(name) {
   return (STAGE_WORD[base] || base) + (base !== name ? "開啟瞬間" : "");
 }
 function lossLines(ev) {
+  return lossItems(ev).map((x) => x.head + (x.why.length ? `：${x.why.join("；")}` : ""));
+}
+// A sentence already given for a larger deduction is not repeated under a smaller one.
+function lossItems(ev) {
+  const shown = new Set();
+  return lossRows(ev).map((x) => ({ head: x.head, why: x.why.filter((w) => !shown.has(w) && shown.add(w)) }));
+}
+function lossRows(ev) {
   const L = ev.losses;
   if (!L) return [];
-  const lines = L.caps.map((c) => `${NAMES[c.category]}封頂 ${c.cap}（沒封頂是 ${c.uncapped}）：${c.fatal.map((f) => FATAL_WORD[f] || f).join("、")}`);
+  const lines = L.caps.map((c) => ({ head: `${NAMES[c.category]}封頂 ${c.cap}（沒封頂是 ${c.uncapped}）：${c.fatal.map((f) => FATAL_WORD[f] || f).join("、")}`, why: [] }));
   L.top.forEach((r) => {
     const unit = r.unit && !/FPS$/.test(r.label) ? r.unit : "";
     const v = r.value == null ? "" : ` ${r.value}${unit && unit !== "%" ? " " : ""}${unit}`;
     const where = r.stage ? `（${stageWord(r.stage)}）` : "";
-    const tool = r.tool ? `；下鑽：slot-perf-drill ${r.tool}` : r.category === "smooth" && /^stall/.test(r.id) ? "；原因見可優化項目的卡頓列" : "";
-    lines.push(`${NAMES[r.category]} −${r.points}：${r.label}${v}${where}${tool}`);
+    lines.push({ head: `${NAMES[r.category]} −${r.points}：${r.label}${v}${where}`, why: r.why || [] });
   });
   return lines;
 }
 const FATAL_WORD = { "low-fps": "遊玩時平均 FPS 低於 30", stall: "載入時單次卡頓過長", "over-budget": "推估記憶體超過預算兩倍", "leak-suspected": "GC 後記憶體持續增加" };
 function lossesHtml(ev) {
-  const lines = lossLines(ev);
-  if (!lines.length) return "";
-  return `<div class="losses"><h3>扣最多分的地方</h3><ol>${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ol></div>`;
+  const items = lossItems(ev);
+  if (!items.length) return "";
+  return `<div class="losses"><h3>扣最多分的地方</h3><ol>${items.map((x) => `<li>${esc(x.head)}${x.why.length ? `<div class="why">${x.why.map((w) => esc(w)).join("<br>")}</div>` : ""}</li>`).join("")}</ol></div>`;
 }
 
 function readoutHtml(ev) {

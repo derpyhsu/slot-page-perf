@@ -1086,6 +1086,13 @@
     log("drill state " + kind);
   }
 
+  // The points the run pressed (CSS pixels of the game's frame) and the viewport they were taken
+  // at, so slot-perf-drill can reach the same states later. No URL.
+  function points() {
+    var vp = { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio };
+    return st.map ? { map: st.map, close: st.close, viewport: vp } : undefined;
+  }
+
   function status() {
     var live = P.live();
     var out = { phase: st.phase, needs: st.needs, note: st.note, spins: st.spins, plan: st.plan, t: Math.round((now() - st.started) / 1000), stage: live.stage, fps: live.fps, gpuMb: live.gpuMb, heapMb: live.heapMb };
@@ -1147,7 +1154,7 @@
     // At needs "buy": do not buy (the balance is short, or the screen is not a plain buy).
     skip: function () { return resume({ skip: true }); },
     result: function () {
-      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, notStarted: st.notStarted, spinNodes: st.spinNodes, settle: st.settle, panels: st.panels, feature: st.feature || null, log: st.log };
+      return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, notStarted: st.notStarted, spinNodes: st.spinNodes, settle: st.settle, panels: st.panels, points: points(), feature: st.feature || null, log: st.log };
     }
   };
 

@@ -99,6 +99,7 @@ const ev = {
   census: raw.census || undefined,
   spinNodes: raw.spinNodes && raw.spinNodes.length ? raw.spinNodes : undefined,
   settle: raw.settle || undefined,
+  points: raw.points || undefined,
   panels: raw.panels || undefined,
   ws: s.ws || undefined,
   feature: raw.feature || undefined,

@@ -463,6 +463,22 @@ const cc3 = global.cc;
   assert.ok(cap && cap.cap === leakEv.score.memory.score && cap.fatal.includes("leak-suspected") && sumOf(leakEv, "memory") === 100 - cap.uncapped, "a fatal cap is stated beside the losses");
 }
 
+// Why and where for each deduction, from the evidence: plain lines in the report, the same
+// deductions with suspects and numbers in ev.leads for slot-perf-drill.
+{
+  assert.ok(ev.losses.top.every((r) => Array.isArray(r.why) && r.why.length <= 2), "top losses carry why");
+  assert.ok(ev.losses.top.some((r) => r.why.length), "at least one why from the smoke evidence: " + JSON.stringify(ev.losses.top));
+  assert.strictEqual(ev.leads.length, ev.losses.all.length, "a lead per deduction");
+  assert.ok(ev.leads.every((l) => l.reach && Array.isArray(l.suspects) && l.numbers), "leads have a state to reach, suspects and numbers");
+  const labelLead = ev.leads.find((l) => l.suspects.some((x) => x.kind === "label"));
+  assert.ok(!labelLead || labelLead.why.some((w) => /文字內容沒變卻重新繪製上傳/.test(w)), "label re-upload said in plain words");
+  const htmlW = fs.readFileSync(path.join(runDir, "report.html"), "utf8");
+  const box = htmlW.slice(htmlW.indexOf('<div class="losses">'), htmlW.indexOf("</ol></div>", htmlW.indexOf('<div class="losses">')));
+  const paths = ev.leads.flatMap((l) => l.suspects.map((x) => x.path || x.what).filter((p) => p && String(p).length > 3));
+  assert.ok(box.length > 0 && !/slot-perf-drill/.test(box) && paths.every((p) => !box.includes(p)), "the report's losses name no tool and no suspect path");
+  ev.losses.top.forEach((r) => r.why.forEach((w) => assert.ok(box.includes(w.replace(/&/g, "&amp;").replace(/</g, "&lt;")), "why shown: " + w)));
+}
+
 // R1, R2. Label textures by owner, the same text uploaded twice, Spine parse, every stall listed.
 {
   const st8 = s.stages.find((x) => x.name === "spin-8");
