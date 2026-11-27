@@ -153,6 +153,10 @@ autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每�
 
 一般 spin 每轉最高 draw call 有起伏地越來越多。最後 `drawsRise.last` 轉的平均 ÷ 第 `first` 轉（2–4）的平均大於 `ratio`，而且多出 `minAbs` 以上才列；至少要 `minSpins` 轉。比平常長 `longSpinFactor` 倍以上的轉（購買或自然觸發的免費遊戲、大獎）不算進前後兩段，但序列照列。寫前後兩段平均、倍數，和每轉最高 draw call 的序列。只陳述現況，不計分；扣分項在轉動時的平均 FPS、CPU 餘裕下面也會寫一句爬升。
 
+## pool-residue
+
+cc.NodePool 裡的節點底下有 sp.Skeleton，所有 track 都是不循環、已播完的動畫，骨架上還有可畫的附件（slot 有 attachment，骨架、slot、附件的 alpha 相乘大於 0）。每次 census（暖機後、中間、轉完後）各記一次，依池內節點路徑（去數字）分組。轉完後達 `poolResidue.min` 個才列。快取模式的 Spine 與讀不到 track 或繪製順序的（3.x 的 Spine 在 wasm 裡）分開算，不當成沒有殘留；全部讀不到時是 `unavailable`。只陳述現況，不計分；同一輪有 draws-rise 時兩列互相提到。
+
 ## panel-heavier
 
 `history-before`、`history-after` 或 `rules` 的穩態，相對 `idle`：FPS 下降超過 10，或 draw call 平均增加超過三成，或尖峰窗出現 `hitchMs` 以上的幀。證據寫明減掉待機之後的差。

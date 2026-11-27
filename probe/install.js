@@ -1033,6 +1033,75 @@
   }
   // What the scene and instantiated nodes hold right now. Call it after a forced GC, in a gap:
   // the scene walk builds a path per node. Counts only; nothing is judged here.
+  // Spine under nodes held in a cc.NodePool whose every track is a finished non-looping animation
+  // while the skeleton still has an attachment to draw: the last frame stays on it, and the pool
+  // gives the node back as it is. A skeleton in a cache mode, or one whose tracks or draw order
+  // cannot be read (3.x Spine runs in wasm), is counted apart, never as clean. Only what the pools
+  // hold; nothing is changed.
+  function spineResidue(comp) {
+    if (comp._cacheMode) return "cache";
+    var stt = comp._state || (typeof comp.getState === "function" ? comp.getState() : null);
+    var tracks = stt && stt.tracks;
+    if (!tracks || typeof tracks.length !== "number") return "unreadable";
+    var live = [];
+    for (var i = 0; i < tracks.length; i += 1) if (tracks[i]) live.push(tracks[i]);
+    if (!live.length) return "clean";
+    var done = live.every(function (t) {
+      if (t.loop) return false;
+      if (typeof t.isComplete === "function") return t.isComplete();
+      return typeof t.trackTime === "number" && t.trackTime >= (t.animationEnd || 0) - (t.animationStart || 0);
+    });
+    if (!done) return "clean";
+    var sk = comp._skeleton;
+    var order = sk && (sk.drawOrder || sk.slots);
+    if (!order || typeof order.length !== "number") return "unreadable";
+    var skA = sk.color && typeof sk.color.a === "number" ? sk.color.a : 1;
+    for (var j = 0; j < order.length; j += 1) {
+      var slot = order[j];
+      if (!slot || (slot.bone && slot.bone.active === false)) continue;
+      var att = typeof slot.getAttachment === "function" ? slot.getAttachment() : slot.attachment;
+      if (!att) continue;
+      var a = skA * (slot.color && typeof slot.color.a === "number" ? slot.color.a : 1) * (att.color && typeof att.color.a === "number" ? att.color.a : 1);
+      if (a > 0) return "residue";
+    }
+    return "clean";
+  }
+  function poolResidue() {
+    var out = { checked: 0, residue: 0, cacheMode: 0, unreadable: 0, byPath: {} };
+    var pools = 0;
+    state.pools.forEach(function (r) {
+      var p = r.deref && r.deref();
+      if (!p) return;
+      pools += 1;
+      (p._pool || []).forEach(function (root) {
+        var visit = function (node, path, depth) {
+          if (!node || depth > 12) return;
+          var comps = node._components || node.components || [];
+          for (var i = 0; i < comps.length; i += 1) {
+            if (!/Skeleton/.test(className(comps[i]))) continue;
+            out.checked += 1;
+            var k = spineResidue(comps[i]);
+            if (k === "residue") {
+              out.residue += 1;
+              var g = path.replace(/\d+/g, "*");
+              out.byPath[g] = (out.byPath[g] || 0) + 1;
+            } else if (k === "cache") out.cacheMode += 1;
+            else if (k === "unreadable") out.unreadable += 1;
+          }
+          var kids = node._children || node.children || [];
+          for (var j = 0; j < kids.length; j += 1) visit(kids[j], path + "/" + (kids[j] && kids[j].name || "?"), depth + 1);
+        };
+        visit(root, String(root && root.name || "?"), 0);
+      });
+    });
+    if (!pools) return { status: "no pools" };
+    if (!out.checked) return { status: "no spine in pools", pools: pools };
+    out.status = out.unreadable && out.unreadable === out.checked - out.cacheMode ? "unavailable" : "ok";
+    out.pools = pools;
+    out.byPath = Object.keys(out.byPath).map(function (k) { return [k, out.byPath[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8);
+    return out;
+  }
+
   function census() {
     var cc = window.cc;
     var scene = cc && cc.director && cc.director.getScene && cc.director.getScene();
@@ -1069,7 +1138,9 @@
     var groups = Object.keys(paths).length;
     var inv;
     try { inv = invisibleDrawn(cc, scene); } catch (e) { inv = { status: "error" }; }
-    return { status: "ok", nodes: total, groups: groups, truncated: groups > 1000 || undefined, paths: topCounts(paths, 1000, function (a, b) { return b[1] - a[1]; }), made: made, invisible: inv };
+    var pr;
+    try { pr = poolResidue(); } catch (e) { pr = { status: "error" }; }
+    return { status: "ok", nodes: total, groups: groups, truncated: groups > 1000 || undefined, paths: topCounts(paths, 1000, function (a, b) { return b[1] - a[1]; }), made: made, invisible: inv, poolResidue: pr };
   }
 
   // Render nodes the engine still draws although nothing of them shows. Neither 2.x RenderFlow nor

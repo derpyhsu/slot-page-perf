@@ -462,6 +462,17 @@ function drawsRise(ev, T) {
   return { id: "draws-rise", stage: "spin", metric: "draws.max", base: { spins: base.map((x) => x.n), avg: round(a, 1) }, last: { spins: last.map((x) => x.n), avg: round(b, 1) }, ratio: round(b / a, 2), series: all.map((x) => [x.n, x.max, long(x) ? 1 : 0]) };
 }
 
+// Spine left in cc.NodePool on a finished animation with something to draw (census poolResidue),
+// at each census of the spins. Listed from poolResidue.min at the last one. Not scored.
+function poolResidue(ev, T) {
+  const at = (name) => ((ev.census || []).filter((c) => c && c.status === "ok" && c.at === name && c.poolResidue && c.poolResidue.status === "ok")).slice(-1)[0];
+  const end = at("end");
+  if (!end || end.poolResidue.residue < ((T.poolResidue || {}).min || 10)) return null;
+  const points = (ev.census || []).filter((c) => c && c.status === "ok" && c.poolResidue && c.poolResidue.status === "ok" && c.spins != null && c.at !== "idle" && c.at !== "after-rules").map((c) => ({ at: c.at, spins: c.spins, residue: c.poolResidue.residue }));
+  const r = end.poolResidue;
+  return { id: "pool-residue", stage: "spin", value: r.residue, checked: r.checked, cacheMode: r.cacheMode, unreadable: r.unreadable, points, byPath: r.byPath };
+}
+
 function findings(ev, T) {
   const out = [];
   const stages = ev.stages || [];
@@ -542,6 +553,8 @@ function findings(ev, T) {
   worseFrom(ev, T).forEach((f) => out.push(f));
   const rise = drawsRise(ev, T);
   if (rise) out.push(rise);
+  const residue = poolResidue(ev, T);
+  if (residue) out.push(residue);
 
   // The same label uploaded again with unchanged text, within one stage: drawn again for nothing.
   const R = T.labelRedraw || {};

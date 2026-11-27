@@ -1101,7 +1101,14 @@ function findingRows() {
   const rise = found.find((f) => f.id === "draws-rise");
   if (rise) {
     const span = (xs) => (xs.length > 1 ? `第 ${xs[0]}–${xs[xs.length - 1]} 轉` : `第 ${xs[0]} 轉`);
-    rows.push({ rule: "draws-rise", level: "yellow", title: `轉動時每轉最高 draw call 越來越多：${span(rise.base.spins)}平均 ${rise.base.avg}，最後 3 轉平均 ${rise.last.avg}（×${rise.ratio}）`, area: "draw call", fix: `每轉最高 draw call：${rise.series.map((x) => `${x[1]}${x[2] ? "（特別長，不算）" : ""}`).join("、")}。特別長的轉（平常的 ${thresholds.longSpinFactor || 3} 倍以上）不算進前後兩段。每轉都比前一轉高才會列在「從某一轉起變差」；這裡是有起伏的爬升。`, stage: "spin", t: null });
+    rows.push({ rule: "draws-rise", level: "yellow", title: `轉動時每轉最高 draw call 越來越多：${span(rise.base.spins)}平均 ${rise.base.avg}，最後 3 轉平均 ${rise.last.avg}（×${rise.ratio}）`, area: "draw call", fix: `每轉最高 draw call：${rise.series.map((x) => `${x[1]}${x[2] ? "（特別長，不算）" : ""}`).join("、")}。特別長的轉（平常的 ${thresholds.longSpinFactor || 3} 倍以上）不算進前後兩段。每轉都比前一轉高才會列在「從某一轉起變差」；這裡是有起伏的爬升。${found.some((f) => f.id === "pool-residue") ? `同一輪轉完後，cc.NodePool 裡有 ${found.find((f) => f.id === "pool-residue").value} 個 Spine 停在播完的最後一幀（見池內殘留那一列）。` : ""}`, stage: "spin", t: null });
+  }
+
+  // Spine left in a pool on a finished animation with something to draw.
+  const pr = found.find((f) => f.id === "pool-residue");
+  if (pr) {
+    const AT = { "after-warmup": "暖機後", mid: "轉到一半", end: "轉完後" };
+    rows.push({ rule: "pool-residue", level: "yellow", title: `轉完後 cc.NodePool 裡有 ${pr.value} 個 Spine 停在播完的最後一幀，還有東西可畫`, area: "draw call", fix: `${pr.points.map((p) => `${AT[p.at] || `第 ${p.spins} 轉後`} ${p.residue} 個`).join("、")}（檢查 ${pr.checked} 個${pr.cacheMode ? `，快取模式 ${pr.cacheMode} 個不算` : ""}${pr.unreadable ? `，讀不到 ${pr.unreadable} 個不算` : ""}）。所有 track 都是不循環、已播完的動畫，骨架上還有 alpha 大於 0 的附件。最多的是：${pr.byPath.slice(0, 5).map((g) => `${g[0]} ${g[1]} 個`).join("；")}。cc.NodePool 取出節點時不會重設 Spine，這些節點拿出來用時帶著播完的姿勢與附件。`, stage: "spin", t: null });
   }
 
   // The loading percentage stood still while files were downloading.

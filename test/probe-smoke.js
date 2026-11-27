@@ -493,6 +493,29 @@ const cc3 = global.cc;
   assert.strictEqual(drawsRise(mk([50, 52, 51, 53, 50, 54, 52, 51, 53, 52, 140], [11]), thresholds), null, "a long last spin (feature, big win) is left out");
 }
 
+// R19. Spine in a cc.NodePool left on a finished animation with something to draw.
+{
+  const slotOf = (a) => ({ color: { a: 1 }, bone: { active: true }, attachment: { color: { a } } });
+  const skel = (tracks, alphas, mode) => Object.assign(new Skeleton(mode || 0), { _state: { tracks }, _skeleton: { color: { a: 1 }, drawOrder: alphas.map(slotOf) } });
+  const done = { loop: false, isComplete: () => true };
+  const resPool = new cc.NodePool();
+  for (let j = 0; j < 12; j += 1) resPool.put(node("Reel_" + (j % 3), [], [node("Symbol", [], [node("gold", [skel([done], [0, 1])])])]));
+  resPool.put(node("Reel_0", [], [node("Symbol", [], [node("gold", [skel([{ loop: true, isComplete: () => false }], [1])])])]));
+  resPool.put(node("Reel_0", [], [node("Symbol", [], [node("gold", [skel([done], [0, 0])])])]));
+  resPool.put(node("Reel_0", [], [node("Symbol", [], [node("gold", [skel([], [1], 1)])])]));
+  resPool.put(node("Reel_0", [], [node("Symbol", [], [node("gold", [Object.assign(new Skeleton(0), { _skeleton: {} })])])]));
+  const cr = P.census();
+  assert.deepStrictEqual((({ residue, checked, cacheMode, unreadable }) => ({ residue, checked, cacheMode, unreadable }))(cr.poolResidue), { residue: 12, checked: 16, cacheMode: 1, unreadable: 1 }, "pool residue counted, cache mode and unreadable apart: " + JSON.stringify(cr.poolResidue));
+  assert.deepStrictEqual(cr.poolResidue.byPath[0], ["Reel_*/Symbol/gold", 12], "grouped by folded pool path");
+  const dR = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+  fs.writeFileSync(path.join(dR, "raw.json"), JSON.stringify(Object.assign({}, raw, { census: [c1, Object.assign(cr, { at: "end", spins: 12 })] })));
+  execFileSync(process.execPath, [path.join(root, "report", "build.js"), dR], { encoding: "utf8" });
+  const evR = JSON.parse(fs.readFileSync(path.join(dR, "evidence.json"), "utf8"));
+  const row = evR.todo.find((t) => t.rule === "pool-residue");
+  assert.ok(row && /12 個 Spine 停在播完的最後一幀/.test(row.title) && row.fix.includes("Reel_*/Symbol/gold 12 個") && row.fix.includes("快取模式 1 個不算"), "pool residue row: " + JSON.stringify(row));
+  resPool._pool.length = 0;
+}
+
 // R1, R2. Label textures by owner, the same text uploaded twice, Spine parse, every stall listed.
 {
   const st8 = s.stages.find((x) => x.name === "spin-8");
