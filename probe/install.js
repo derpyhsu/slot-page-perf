@@ -850,6 +850,107 @@
     return gl;
   };
 
+  // Batch breaks on a sampled frame, counted by the engine's own batcher as it draws: each new draw
+  // call goes to the render component whose commit started it, with the class pair at the switch
+  // (a skeleton switching textures inside itself is "內部"). 2.x: ModelBatcher._flush on the
+  // renderer's batcher and RenderComponent._checkBacth. 3.x: Batcher2D autoMergeBatches,
+  // commitComp and commitMiddleware. The wrappers exist only for that one frame (put back in a
+  // finally), only on spin and turbo stages, at most once every BB_EVERY_MS and BB_PER_STAGE times
+  // a stage, when the last frame's draw calls were near the stage's highest so far. Component
+  // references are dropped as soon as the frame is counted.
+  var BB_EVERY_MS = 500, BB_PER_STAGE = 12;
+  function batchWanted(lastDraws) {
+    var s = state.stage;
+    if (!s || !/^(spin|turbo)-\d+$/.test(s.name) || !(lastDraws > 0)) return false;
+    s.bbSeen = Math.max(s.bbSeen || 0, lastDraws);
+    if ((s.bbN || 0) >= BB_PER_STAGE || performance.now() - (state.bbLastAt || 0) < BB_EVERY_MS) return false;
+    return lastDraws >= 0.9 * s.bbSeen;
+  }
+  function batchHookOn(cc) {
+    var h = { counts: new Map(), pairs: {}, cur: null, prev: null, n: 0, undo: [] };
+    var note = function () {
+      h.n += 1;
+      var c = h.cur;
+      if (!c) return;
+      h.counts.set(c, (h.counts.get(c) || 0) + 1);
+      var pk = h.prev === c ? compName(c, cc) + " 內部" : (h.prev ? compName(h.prev, cc) : "?") + " → " + compName(c, cc);
+      h.pairs[pk] = (h.pairs[pk] || 0) + 1;
+    };
+    var own = function (o, k) { return Object.prototype.hasOwnProperty.call(o, k); };
+    var setOwn = function (o, k, f) {
+      var had = own(o, k), was = o[k];
+      o[k] = f;
+      h.undo.push(function () { if (had) o[k] = was; else delete o[k]; });
+    };
+    try {
+      var B3 = cc.director && cc.director.root && cc.director.root.batcher2D;
+      var b2 = cc.renderer && cc.renderer._handle;
+      var RC = cc.RenderComponent && cc.RenderComponent.prototype;
+      if (B3 && typeof B3.autoMergeBatches === "function" && B3._batches) {
+        var am = B3.autoMergeBatches;
+        setOwn(B3, "autoMergeBatches", function () { var n0 = this._batches.length; var r = am.apply(this, arguments); for (var k = this._batches.length - n0; k > 0; k -= 1) note(); return r; });
+        ["commitComp", "commitMiddleware"].forEach(function (m) {
+          var f = B3[m];
+          if (typeof f === "function") setOwn(B3, m, function (t) { h.prev = h.cur; h.cur = t; return f.apply(this, arguments); });
+        });
+        // commitIA and commitModel (graphics, masks, models in UI) push their own draw after
+        // closing the previous batch; that draw is theirs.
+        ["commitIA", "commitModel"].forEach(function (m) {
+          var f = B3[m];
+          if (typeof f !== "function") return;
+          setOwn(B3, m, function (t) {
+            h.prev = h.cur;
+            h.cur = t;
+            var n0 = this._batches.length, c0 = h.n;
+            var r = f.apply(this, arguments);
+            for (var k = this._batches.length - n0 - (h.n - c0); k > 0; k -= 1) note();
+            return r;
+          });
+        });
+      } else if (b2 && typeof b2._flush === "function" && b2._batchedModels && RC && typeof RC._checkBacth === "function") {
+        var fl = b2._flush, ck = RC._checkBacth;
+        setOwn(b2, "_flush", function () { var n0 = this._batchedModels.length; var r = fl.apply(this, arguments); if (this._batchedModels.length > n0) note(); return r; });
+        RC._checkBacth = function () { h.prev = h.cur; h.cur = this; return ck.apply(this, arguments); };
+        h.undo.push(function () { RC._checkBacth = ck; });
+      } else return null;
+    } catch (e) {
+      batchHookOff(h);
+      return null;
+    }
+    return h;
+  }
+  function batchHookOff(h) {
+    while (h.undo.length) { try { h.undo.pop()(); } catch (e) {} }
+  }
+  function batchCount(h, draws, cc) {
+    var s = state.stage;
+    if (!s) return;
+    var t0 = performance.now();
+    s.bbN = (s.bbN || 0) + 1;
+    state.bbLastAt = t0;
+    var list = [];
+    var byClass = {};
+    h.counts.forEach(function (n, comp) {
+      list.push([comp, n]);
+      var k = compName(comp, cc);
+      byClass[k] = (byClass[k] || 0) + n;
+    });
+    list.sort(function (a, b) { return b[1] - a[1]; });
+    var byPath = {};
+    list.slice(0, 20).forEach(function (x) {
+      var k = groupPath(x[0].node || {}) + " [" + compName(x[0], cc) + "]";
+      byPath[k] = (byPath[k] || 0) + x[1];
+    });
+    h.counts.clear();
+    h.cur = h.prev = null;
+    var top = function (o, n) { return Object.keys(o).map(function (k) { return [k, o[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, n); };
+    var sample = { draws: draws, breaks: h.n, top: top(byPath, 8), classes: top(byClass, 6), pairs: top(h.pairs, 6), ms: round(performance.now() - t0) };
+    // The batcher's count and the engine's draw calls for the frame should agree; far apart means
+    // the hook missed a path (another renderer, a custom pipeline).
+    if (draws > 0 && Math.abs(h.n - draws) > Math.max(3, draws * 0.3)) sample.partial = true;
+    if (!s.bb || draws > s.bb.draws) s.bb = sample;
+  }
+
   function hookDirector(cc) {
     var director = cc.director;
     if (state.loopHooked || !director) return;
@@ -876,8 +977,10 @@
       if (prevCpu != null) recordFrame(dt, prevCpu, prevDraws);
       else state.fw = newLedger();
       beginGpu();
+      var bb = batchWanted(prevDraws) ? batchHookOn(cc) : null;
       var t0 = performance.now();
-      var ret = orig.apply(this, arguments);
+      var ret;
+      try { ret = orig.apply(this, arguments); } finally { if (bb) batchHookOff(bb); }
       var t1 = performance.now();
       var cpu = t1 - t0;
       endGpu();
@@ -894,6 +997,7 @@
       if (fw.calls) { state.compCalls += fw.calls; state.compFramesSeen += 1; }
       prevCpu = cpu;
       prevDraws = drawsThisFrame();
+      if (bb) batchCount(bb, prevDraws, cc);
       return ret;
     };
   }
@@ -1983,6 +2087,7 @@
       heapEndMb: s.heapEnd == null ? heapMb() : s.heapEnd,
       texUploadMb: round((s.texEnd - s.texStart) / 1048576),
       uploads: uploadsOf(s),
+      batches: s.bb || undefined,
       // What reached the screen. capFps is cc.game's frame cap when the stage closed.
       presented: { frames: s.pres.n, hist: s.pres.hist, wasted: s.pres.wasted, vsyncMs: s.vsyncMs != null ? s.vsyncMs : vsyncMs(), capFps: s.capFps != null ? s.capFps : frameCap() }
     };

@@ -516,6 +516,24 @@ const cc3 = global.cc;
   resPool._pool.length = 0;
 }
 
+// R18. The sampled spin frame with the most draw calls: who started each draw call.
+{
+  const sB = JSON.parse(JSON.stringify(s));
+  const bt = (draws, top) => ({ draws, breaks: draws, top, classes: [["sp.Skeleton", Math.round(draws * 0.6)], ["cc.Sprite", Math.round(draws * 0.4)]], pairs: [["cc.Sprite → sp.Skeleton", 30], ["sp.Skeleton 內部", 12]], ms: 0.3 });
+  sB.stages.find((x) => x.name === "spin-3").batches = bt(70, [["Reel_*/wheel_*/Symbol/gold [sp.Skeleton]", 40]]);
+  sB.stages.find((x) => x.name === "spin-5").batches = bt(120, [["Reel_*/wheel_*/Symbol/gold [sp.Skeleton]", 60], ["Reel_*/frame [cc.Sprite]", 20]]);
+  sB.stages.find((x) => x.name === "spin-6").batches = Object.assign(bt(200, [["x [cc.Sprite]", 2]]), { partial: true });
+  const dB = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+  fs.writeFileSync(path.join(dB, "raw.json"), JSON.stringify(Object.assign({}, raw, { summary: sB })));
+  execFileSync(process.execPath, [path.join(root, "report", "build.js"), dB], { encoding: "utf8" });
+  const evB = JSON.parse(fs.readFileSync(path.join(dB, "evidence.json"), "utf8"));
+  assert.ok(evB.batchPeak && evB.batchPeak.stage === "spin-5" && evB.batchPeak.draws === 120, "peak is the largest complete sample: " + JSON.stringify(evB.batchPeak));
+  const rowB = evB.todo.find((t) => t.rule === "batch-breaks");
+  assert.ok(rowB && /120 個，換手最多在 Spine（72 次）、Sprite（48 次）/.test(rowB.title) && rowB.fix.includes("Reel_*/wheel_*/Symbol/gold [sp.Skeleton] 60 次"), "batch breaks row: " + JSON.stringify(rowB));
+  const lead = evB.leads.find((l) => l.suspects.some((x) => x.kind === "batch"));
+  assert.ok(!lead || lead.suspects.find((x) => x.kind === "batch").path === "Reel_*/wheel_*/Symbol/gold", "lead suspects carry the path");
+}
+
 // R1, R2. Label textures by owner, the same text uploaded twice, Spine parse, every stall listed.
 {
   const st8 = s.stages.find((x) => x.name === "spin-8");

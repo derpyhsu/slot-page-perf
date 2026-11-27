@@ -602,6 +602,18 @@ function stageName(name) {
   return STAGE_NAMES[name.replace(/-spike$/, "")] || name;
 }
 
+// The sampled spin frame with the most draw calls (probe stages[].batches): which render
+// components started a new draw call, by folded path and class, and the class pairs at the switch.
+function batchPeak() {
+  const xs = stages.filter((s) => /^(spin|turbo)-\d+$/.test(s.name) && s.batches && s.batches.breaks > 0 && !s.batches.partial);
+  if (!xs.length) return undefined;
+  const s = xs.sort((a, b) => b.batches.draws - a.batches.draws)[0];
+  return Object.assign({ stage: s.name }, s.batches);
+}
+ev.batchPeak = batchPeak();
+const CLASS_WORD = { "sp.Skeleton": "Spine", "cc.Sprite": "Sprite", "cc.Label": "文字", "cc.RichText": "文字", "cc.Graphics": "Graphics", "cc.Mask": "遮罩", "dragonBones.ArmatureDisplay": "DragonBones", "cc.ParticleSystem": "粒子", "cc.ParticleSystem2D": "粒子" };
+const classWord = (c) => CLASS_WORD[c] || String(c).replace(/^cc\./, "");
+
 ev.cocosAdvice = cocosAdvice();
 ev.findingRows = findingRows();
 ev.todo = todo();
@@ -775,6 +787,12 @@ function explainLosses() {
         if (rise && (row.stage === "spin" || row.id === "cpu") && why.length < 2) {
           why.push(`每轉最高 draw call 從約 ${Math.round(rise.base.avg)} 爬到約 ${Math.round(rise.last.avg)}`);
           numbers.drawsRise = { base: rise.base.avg, last: rise.last.avg, series: rise.series };
+        }
+        const bpk = ev.batchPeak;
+        if (bpk && (row.stage === "spin" || row.stage === "turbo" || row.id === "cpu")) {
+          if (why.length < 2 && bpk.classes.length) why.push(`轉動時 draw call 最多的一幀約 ${bpk.draws} 個，換手最多在${bpk.classes.slice(0, 2).map((c) => `${classWord(c[0])}（${c[1]} 次）`).join("、")}`);
+          bpk.top.slice(0, 5).forEach((x) => { const m = x[0].match(/^(.*) \[(.+)\]$/); suspects.push({ kind: "batch", path: m ? m[1] : x[0], class: m ? m[2] : undefined, n: x[1], stage: bpk.stage }); });
+          numbers.batchPeak = { stage: bpk.stage, draws: bpk.draws, breaks: bpk.breaks };
         }
         const ls = (ev.longSpins || []).filter((x) => inTarget(x.stage, row.stage)).sort((a, b) => b.sec - a.sec)[0];
         if (ls && why.length < 2) why.push(`${place(ls.stage)}這轉 ${ls.sec} 秒（平常 ${ls.medianSec} 秒），FPS ${ls.fps}`);
@@ -1101,7 +1119,14 @@ function findingRows() {
   const rise = found.find((f) => f.id === "draws-rise");
   if (rise) {
     const span = (xs) => (xs.length > 1 ? `第 ${xs[0]}–${xs[xs.length - 1]} 轉` : `第 ${xs[0]} 轉`);
-    rows.push({ rule: "draws-rise", level: "yellow", title: `轉動時每轉最高 draw call 越來越多：${span(rise.base.spins)}平均 ${rise.base.avg}，最後 3 轉平均 ${rise.last.avg}（×${rise.ratio}）`, area: "draw call", fix: `每轉最高 draw call：${rise.series.map((x) => `${x[1]}${x[2] ? "（特別長，不算）" : ""}`).join("、")}。特別長的轉（平常的 ${thresholds.longSpinFactor || 3} 倍以上）不算進前後兩段。每轉都比前一轉高才會列在「從某一轉起變差」；這裡是有起伏的爬升。${found.some((f) => f.id === "pool-residue") ? `同一輪轉完後，cc.NodePool 裡有 ${found.find((f) => f.id === "pool-residue").value} 個 Spine 停在播完的最後一幀（見池內殘留那一列）。` : ""}`, stage: "spin", t: null });
+    rows.push({ rule: "draws-rise", level: "yellow", title: `轉動時每轉最高 draw call 越來越多：${span(rise.base.spins)}平均 ${rise.base.avg}，最後 3 轉平均 ${rise.last.avg}（×${rise.ratio}）`, area: "draw call", fix: `每轉最高 draw call：${rise.series.map((x) => `${x[1]}${x[2] ? "（特別長，不算）" : ""}`).join("、")}。特別長的轉（平常的 ${thresholds.longSpinFactor || 3} 倍以上）不算進前後兩段。每轉都比前一轉高才會列在「從某一轉起變差」；這裡是有起伏的爬升。${found.some((f) => f.id === "pool-residue") ? `同一輪轉完後，cc.NodePool 裡有 ${found.find((f) => f.id === "pool-residue").value} 個 Spine 停在播完的最後一幀（見池內殘留那一列）。` : ""}${ev.batchPeak ? `draw call 最多的那一幀（${ev.batchPeak.stage}，${ev.batchPeak.draws} 個）換手最多的：${ev.batchPeak.top.slice(0, 3).map((x) => `${x[0]} ${x[1]} 次`).join("；")}。` : ""}`, stage: "spin", t: null });
+  }
+
+  // Who started the draw calls on the sampled spin frame with the most of them.
+  const bp = ev.batchPeak;
+  if (bp && bp.draws >= ((thresholds.batchBreaks || {}).minDraws || 60)) {
+    const word = /^turbo-/.test(bp.stage) ? `加速第 ${bp.stage.slice(6)} 轉` : `第 ${bp.stage.slice(5)} 轉`;
+    rows.push({ rule: "batch-breaks", level: "yellow", title: `轉動時 draw call 最多的一幀有 ${bp.draws} 個，換手最多在 ${bp.classes.slice(0, 2).map((c) => `${classWord(c[0])}（${c[1]} 次）`).join("、")}`, area: "draw call", fix: `${word}取樣到的一幀，引擎的合批器每開一個新的 draw call 就記給讓它換手的那個繪製元件（連續同材質、同貼圖才合得起來）。換手最多的：${bp.top.slice(0, 6).map((x) => `${x[0]} ${x[1]} 次`).join("；")}。前後元件類別：${bp.pairs.slice(0, 4).map((x) => `${x[0]} ${x[1]} 次`).join("；")}（「內部」是同一個元件裡自己換貼圖，例如 Spine 的附件分在不同圖集）。`, stage: bp.stage, t: null });
   }
 
   // Spine left in a pool on a finished animation with something to draw.

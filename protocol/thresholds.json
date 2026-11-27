@@ -61,6 +61,7 @@
   "loadProgress": { "stopMs": 5000 },
   "coverage": { "screens": 4, "orange": 8 },
   "panelCover": { "minUnder": 20 },
+  "batchBreaks": { "minDraws": 60 },
   "poolResidue": { "min": 10 },
   "drawsRise": { "first": [2, 4], "last": 3, "ratio": 1.3, "minAbs": 10, "minSpins": 7 },
   "worseFrom": { "minBefore": 2, "minAfter": 3, "draws": { "abs": 5, "rel": 0.15 }, "nodes": { "abs": 20, "rel": 0.05 }, "fps": { "abs": 3 } },

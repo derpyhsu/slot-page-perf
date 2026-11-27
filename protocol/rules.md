@@ -153,6 +153,10 @@ autopilot 在 `idle` 之後、面板關掉之後（`after-rules`），以及每�
 
 一般 spin 每轉最高 draw call 有起伏地越來越多。最後 `drawsRise.last` 轉的平均 ÷ 第 `first` 轉（2–4）的平均大於 `ratio`，而且多出 `minAbs` 以上才列；至少要 `minSpins` 轉。比平常長 `longSpinFactor` 倍以上的轉（購買或自然觸發的免費遊戲、大獎）不算進前後兩段，但序列照列。寫前後兩段平均、倍數，和每轉最高 draw call 的序列。只陳述現況，不計分；扣分項在轉動時的平均 FPS、CPU 餘裕下面也會寫一句爬升。
 
+## batch-breaks
+
+轉動中取樣幾幀（每轉最多 12 幀、間隔至少 0.5 秒，只在上一幀 draw call 接近這一轉最高值時），在那一幀裡讓引擎自己的合批器記：每開一個新的 draw call，記給讓它換手的那個繪製元件（2.x 看 ModelBatcher 的 flush 與 RenderComponent 的批次檢查，3.x 看 Batcher2D 的合批與 commit）。連續同材質、同貼圖才合得起來；沒有東西可畫的元件不送資料，也不會被記。依節點路徑（去數字）與元件類別分組，另記前後元件的類別（同一個元件自己換貼圖記成「內部」）。計數只掛在那一幀，畫完立刻拿掉、元件參照當場丟掉。記到的次數和引擎那一幀的 draw call 差太多時標成不完整，不採用。取 draw call 最多的那一幀，達 `batchBreaks.minDraws` 才列。只陳述現況，不計分；轉動時的平均 FPS、CPU 餘裕下面寫一句換手最多的類別，路徑只放在可優化項目與 leads。
+
 ## pool-residue
 
 cc.NodePool 裡的節點底下有 sp.Skeleton，所有 track 都是不循環、已播完的動畫，骨架上還有可畫的附件（slot 有 attachment，骨架、slot、附件的 alpha 相乘大於 0）。每次 census（暖機後、中間、轉完後）各記一次，依池內節點路徑（去數字）分組。轉完後達 `poolResidue.min` 個才列。快取模式的 Spine 與讀不到 track 或繪製順序的（3.x 的 Spine 在 wasm 裡）分開算，不當成沒有殘留；全部讀不到時是 `unavailable`。只陳述現況，不計分；同一輪有 draws-rise 時兩列互相提到。
