@@ -46,12 +46,6 @@ Use the `chrome-devtools` MCP. If it is not connected, stop and point at the REA
 7. When `phase` is `done`, `evaluate_script` `() => __slotPerf.auto.result()` with `filePath` = `runs/<utc>-<slug>/raw.json`. Do not return it inline.
 8. `node report/build.js runs/<utc>-<slug>`. It writes evidence, findings, scores and `report.html`, and prints a digest of about 20 lines.
 9. From the digest, write `runs/<utc>-<slug>/notes.json` (below), then run step 8 again. Open `report.html`. `report.md` and `timeline.svg` are the GitHub copy of the same run. Do not make a Cursor canvas.
-10. Drill. When the digest has a line `下鑽：<state> <tool>；…`, do each pair in order, on the same page, after `raw.json` is saved:
-    - `evaluate_script` `() => __slotPerf.auto.goto("<state>")`, then `async () => __slotPerf.auto.wait(60000)` until `phase` is `drill:<state>`. Answer `needs` as in step 6. A `note` that says "is not on screen" or "did not open" means skip this pair.
-    - Once per page, `evaluate_script` with `sourcePath` = absolute path of `drill/page.js`.
-    - `evaluate_script` `async () => __slotDrill.<tool>()` with `filePath` = `runs/<utc>-<slug>/drill/<tool>-<state>.json`. Read nothing back but its `summary` if the user asks.
-    - After the last pair, `__slotPerf.auto.goto("idle")` and run step 8 again; the report shows the results under 下鑽結果.
-    `goto` never presses spin or buy, and adds nothing to `raw.json`; spin stages are drilled on the screen after the spins. `heap` and fill rate are never in the line: they need a snapshot or a GPU setting, so use [slot-perf-drill](../slot-perf-drill/SKILL.md) for them when the user asks. A tool that returns `restore.ok: false`: tell the user which nodes and stop drilling.
 
 Take screenshots only when the driver asks or the user wants to see something. Each one costs far more than a status reply.
 

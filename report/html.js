@@ -106,14 +106,6 @@ function loadFilesHtml() {
     `</table></div></details>`;
 }
 
-// Drill results saved with the run, as their summary lines.
-function drillHtml() {
-  const d = ev.drill || [];
-  if (!d.length) return "";
-  const STATE = { idle: "待機（轉完後的畫面）", history: "下注紀錄開著", rules: "遊戲規則開著" };
-  return `<section class="sec" id="drill"><div class="sec-h"><h2>下鑽結果</h2></div>` + d.map((x) => `<h3>${esc(x.tool)}${x.state ? ` · ${esc(STATE[x.state] || x.state)}` : ""}</h3><ul>${x.summary.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`).join("") + `<p class="small">slot-perf-drill 在跑分之後量的；spin 那幾段是在轉完後的畫面量，不是轉動當下。</p></section>`;
-}
-
 function todoHtml() {
   const rows = (ev.todo || []).filter((r) => !r.note);
   if (!rows.length) return '<p class="small">沒有要處理的地方。</p>';
@@ -368,8 +360,6 @@ ${todoHtml()}
 ${stallsHtml()}
 ${loadFilesHtml()}
 </section>
-
-${drillHtml()}
 
 <section class="sec" id="timeline-h">
 <div class="sec-h"><h2>時間軸 · <span id="zoom-name">全程</span></h2><button type="button" class="zoom-out" id="zoom-out" hidden>回到全程</button></div>

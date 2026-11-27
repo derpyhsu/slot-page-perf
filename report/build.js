@@ -52,16 +52,6 @@ if (fs.existsSync(notesPath)) {
   if (!notes.displayName) notesWarn.push("notes.displayName is missing");
 }
 const s = raw.summary || raw;
-// Drill results saved next to the run (runs/<run>/drill/<tool>-<state>.json): their summary lines.
-const drillDir = path.join(runDir, "drill");
-const drill = fs.existsSync(drillDir) ? fs.readdirSync(drillDir).filter((f) => /\.json$/.test(f)).sort().map((f) => {
-  try {
-    const d = scrub(readJsonLoose(path.join(drillDir, f)));
-    const m = f.replace(/\.json$/, "").match(/^([a-z]+(?:-[a-z]+)*?)(?:-(idle|history|rules|spin|end|[a-z0-9]+))?$/i);
-    const lines = Array.isArray(d.summary) ? d.summary : typeof d.summary === "string" ? [d.summary] : [];
-    return lines.length ? { file: f, tool: m ? m[1] : f, state: m && m[2] ? m[2] : null, summary: lines.slice(0, 8).map((x) => String(x).slice(0, 300)) } : null;
-  } catch (e) { return null; }
-}).filter(Boolean) : [];
 
 // Spins the autopilot saw not start (nothing on screen changed from the press until it settled)
 // are not spins: they become gap, and the report says which.
@@ -110,7 +100,6 @@ const ev = {
   spinNodes: raw.spinNodes && raw.spinNodes.length ? raw.spinNodes : undefined,
   settle: raw.settle || undefined,
   panels: raw.panels || undefined,
-  drill: drill.length ? drill : undefined,
   ws: s.ws || undefined,
   feature: raw.feature || undefined,
   coverage,

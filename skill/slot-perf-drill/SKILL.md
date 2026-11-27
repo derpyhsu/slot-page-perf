@@ -13,8 +13,8 @@ Small tools an agent combines to explain one finding of a [slot-page-perf](../sl
 - The page tools change the live page only while they measure (they hide subtrees) and put every value back. They never edit game files. If a result says `restore.ok: false`, tell the user which nodes and reload the page before trusting anything else.
 - State what was measured and where to look. Whether to change it is the engineer's call.
 - Keep the page visible. A minimized or hidden page draws no frames; the tools then return `status: "partial"` or "no frames drawn".
-- Save results with `evaluate_script` `filePath` under `runs/<the run>/drill/` as `<tool>-<state>.json`. Read only `summary` lines into the conversation. Never write URL query strings or session tokens. `report/build.js` shows each file's `summary` under 下鑽結果.
-- slot-page-perf step 10 already runs `drawcalls`, `coverage`, `spineCache` and `images` in the states its digest names, through `__slotPerf.auto.goto`. Use this skill for what that leaves: `heap`, fill rate, `fps` with `hide`, a spin in progress, or a subtree the user names.
+- This is for troubleshooting after the report, not part of measuring. Its numbers are never added to the report.
+- Save results with `evaluate_script` `filePath` under `runs/<the run>/drill/` as `<tool>-<state>.json`. Read only `summary` lines into the conversation. Never write URL query strings or session tokens.
 - Heap snapshots go to your scratchpad, never `runs/`, and are deleted after: they hold session strings.
 
 ## Load
@@ -22,7 +22,7 @@ Small tools an agent combines to explain one finding of a [slot-page-perf](../sl
 On the game page, once it shows the state the finding is about (idle, a panel open, after spins):
 
 1. `evaluate_script` with `sourcePath` = absolute path of `drill/page.js`. It returns `"drill ok"` and leaves `window.__slotDrill` (`engine`, `counter`, `method`). It does not need the slot-page-perf probe.
-2. Get the game into the state to measure with pointer events, as slot-page-perf does. Do not call game-internal handlers.
+2. Get the game into the state to measure with pointer events, as slot-page-perf does. Do not call game-internal handlers. On a page where a slot-page-perf run has just finished, `__slotPerf.auto.goto("history" | "rules" | "idle")` does it with the run's points, then `__slotPerf.auto.wait(60000)` until `phase` is `drill:<state>`; it never presses spin or buy.
 
 ## Which tool
 

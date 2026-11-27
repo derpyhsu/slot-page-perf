@@ -609,31 +609,6 @@ ev.fps = fpsTable();
 ev.losses = losses();
 ev.stalls = stallTable();
 ev.loadStops = loadStops();
-ev.drillPlan = drillPlan();
-
-// What to drill after the run, from the losses and the rows: the state to bring the game to with
-// auto.goto (idle, history, rules; spin stages are drilled on the screen after the spins, since a
-// drill never presses spin) and the slot-perf-drill tool. heap and fill rate need more than a
-// screen, so they are named for the agent but not run automatically.
-function drillPlan() {
-  const stateOf = (stage) => (!stage ? "idle" : /^history/.test(stage) ? "history" : /^rules/.test(stage) ? "rules" : "idle");
-  const AUTO = new Set(["drawcalls", "coverage", "spineCache", "images"]);
-  const out = [];
-  const addStep = (state, tool, why) => {
-    if (!AUTO.has(tool) || out.some((x) => x.state === state && x.tool === tool)) return;
-    out.push({ state, tool, why });
-  };
-  ((ev.losses && ev.losses.top) || []).forEach((l) => {
-    String(l.tool || "").split(/,\s*/).filter(Boolean).forEach((t) => addStep(stateOf(l.stage), t === "heap" ? "spineCache" : t, `${l.label}${l.stage ? `（${l.stage}）` : ""}`));
-  });
-  (ev.todo || []).forEach((r) => {
-    if (r.rule === "fill-layers") addStep("idle", "coverage", r.title);
-    else if (/^panel-cover-|^panel-(history|rules)/.test(r.rule || "")) addStep(stateOf(r.stage), "drawcalls", r.title);
-    else if (r.rule === "cocos-invisible-drawn" || r.rule === "worse-from-spin") addStep("idle", "drawcalls", r.title);
-    else if (r.rule === "loading-progress-stop" || r.rule === "image-bloated") addStep("idle", "images", r.title);
-  });
-  return out.slice(0, 6);
-}
 
 // Where the loading percentage stood still, and what was downloading meanwhile. Times are from the
 // probe start, like stages. The tail from the last change to the spin button counts as a stop too.
@@ -1410,5 +1385,4 @@ function cocosAdvice() {
 
 fs.writeFileSync(evidencePath, JSON.stringify(ev, null, 2) + "\n");
 const fmt = (p) => (p.score == null ? "未評分" : `${p.score}${p.provisional ? `（暫定，覆蓋 ${p.coverage}%）` : ""}`);
-if (ev.drillPlan.length) console.log(`下鑽：${ev.drillPlan.map((d) => `${d.state} ${d.tool}`).join("；")}`);
 console.log(`載入階段 ${fmt(ev.score.loading)}　幀率穩定度 ${fmt(ev.score.smooth)}　資源占用 ${fmt(ev.score.memory)}　要處理 ${ev.todo.length} 條（Cocos ${ev.cocosAdvice.items.length}）`);
