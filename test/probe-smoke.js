@@ -325,6 +325,27 @@ const lk = leakEv.findings.find((f) => f.id === "leak-suspected");
 assert.ok(lk && lk.status === "retained-after-gc" && lk.delta === 40, "rise in both halves is a leak");
 assert.ok(!leakEv.findings.some((f) => f.id === "heap-step") && growthItem(leakEv).value === 4, "steady growth per spin");
 assert.ok(!/PLAYER-8848|Title 1|88,888/.test(JSON.stringify(ev) + JSON.stringify(s)), "label text never kept");
+// R21. Five forced GCs over 40 spins: growth is the median pairwise slope.
+{
+  const gcRun5 = (mbs) => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "slot-page-perf-smoke-"));
+    const gc = [["after-warmup", 5], ["gc-15", 15], ["mid", 25], ["gc-35", 35], ["end", 40]].map(([at, spins], i) => ({ at, spins, beforeMb: mbs[i] + 5, mb: mbs[i] }));
+    fs.writeFileSync(path.join(d, "raw.json"), JSON.stringify(Object.assign({}, raw, { gc })));
+    execFileSync(process.execPath, [path.join(root, "report", "build.js"), d], { encoding: "utf8" });
+    return JSON.parse(fs.readFileSync(path.join(d, "evidence.json"), "utf8"));
+  };
+  // The same build twice: about 0.18 MB a spin, each floor off by up to a MB.
+  const a = gcRun5([57.4, 58.6, 61.2, 62.6, 63.6]);
+  const b = gcRun5([57.2, 59.4, 60.6, 63.3, 63.3]);
+  const ga = growthItem(a), gb = growthItem(b);
+  assert.ok(ga.basis === "gc-line" && Math.abs(ga.value - 0.18) < 0.05 && Math.abs(gb.value - 0.18) < 0.05, "both runs near 0.18 MB a spin: " + ga.value + " " + gb.value);
+  assert.ok(Math.abs(ga.score - gb.score) <= 5 && !a.findings.some((f) => f.id === "leak-suspected"), "noisy floors score alike: " + ga.score + " " + gb.score);
+  assert.ok(a.leads.some((l) => l.id === "growth" && /GC 後 heap：57.4 → 58.6 → 61.2 → 62.6 → 63.6 MB/.test(l.why[0])) || !a.losses.all.some((r) => r.id === "growth"), "the floors in plain words");
+  const st5 = gcRun5([100, 130, 130.5, 131, 131.2]);
+  assert.ok(growthItem(st5).value < 0.1 && st5.findings.some((f) => f.id === "heap-step") && !st5.findings.some((f) => f.id === "leak-suspected"), "a one-off step is not growth: " + growthItem(st5).value);
+  const lk5 = gcRun5([100, 116, 131, 146, 154]);
+  assert.ok(lk5.findings.some((f) => f.id === "leak-suspected" && f.line) && lk5.todo.some((t) => t.rule === "leak-suspected" && t.fix.includes("100 → 116 → 131 → 146 → 154")), "a rise that keeps going at 1.5 MB a spin is a leak");
+}
 const html = fs.readFileSync(path.join(runDir, "report.html"), "utf8");
 assert.ok(html.includes("<details class=\"acc\"") && !/<details class="acc"[^>]* open>/.test(html), "todo rows start closed");
 assert.ok(html.includes("lbl_win") && html.includes("overflow SHRINK"), "report names the labels on the worst spin stall");

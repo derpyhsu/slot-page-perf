@@ -101,12 +101,14 @@ GPU timer 的 p95 大於 `gpuHeavyP95Ms`。擴充不存在時整條保持 `unava
 - 有大 GC：最後一次大 GC 之後的最低地板，比第一個地板高出 `leakMb` 以上，標 `leak-suspected`，狀態 `retained-after-gc`。這是 GC 收不回來的部分。
 - 沒有大 GC：斜率 × 轉數大於 `leakMb`，而且最後 `leakTailSpins` 轉的斜率高於 `heap.tailSlopeMb`，標 `leak-suspected`，狀態 `no-major-gc`。大 GC 可能還會收回，所以只是疑似，要多轉或用 heap snapshot 確認。
 
-有強制 GC 點時（`evidence.gc` 裡的 `after-warmup`、`mid`、`end`，各在一次 heap snapshot 之後量），上面的切段都不用：
+有強制 GC 點時（`evidence.gc` 裡的 `after-warmup`、`gc-N`、`mid`、`end`，各在一次 heap snapshot 之後量），上面的切段都不用。單一個 GC 後的地板本身會跳動約 1 MB，所以看的是很多個點連成的線，不是兩個點的差：
 
-- 三個點都有：分成前半（`after-warmup` 到 `mid`）和後半（`mid` 到 `end`），各算每轉增加多少，取較小的那一半乘上暖機後的轉數，當作兩半都有的增長。大於 `leakMb` 才標 `leak-suspected`，狀態 `retained-after-gc`。只有一半增加、但總共多了 `leakMb` 以上時，標 `heap-step`（一次性的增加，例如第一次出現的畫面或特效載入後留著），不封頂。
+- 四個點以上：每兩個地板之間算一個每轉斜率，取所有斜率的中位數（Theil–Sen），當作每轉增加多少；一次性的跳階（第一次出現的畫面或特效載入後留著）只影響跨過它的那幾對，不會被當成增長。另用最小平方線算斜率的標準誤。中位數斜率達到 `leakMb` ÷ `leakSpanSpins`（每轉 1.5 MB，跟以前 10 轉跨度的門檻同樣靈敏），而且最小平方斜率減兩個標準誤仍大於 0，才標 `leak-suspected`，狀態 `retained-after-gc`。總共多了 `leakMb` 以上但沒有穩定地增加，標 `heap-step`，不封頂。
+
+- 只有三個點（以前的跑法）：分成前半（`after-warmup` 到 `mid`）和後半（`mid` 到 `end`），各算每轉增加多少，取較小的那一半乘上暖機後的轉數，當作兩半都有的增長。大於 `leakMb` 才標 `leak-suspected`，狀態 `retained-after-gc`。只有一半增加、但總共多了 `leakMb` 以上時，標 `heap-step`（一次性的增加，例如第一次出現的畫面或特效載入後留著），不封頂。
 - 只有 `after-warmup` 和 `end`（舊探針）：兩次 GC 後地板的差大於 `leakMb` 就標 `leak-suspected`，狀態 `retained-after-gc`。
 
-`mid` 落在暖機後剩下轉數的一半（15 轉時是第 10 轉後）。兩半各不到 2 轉時不拍 `mid`。
+autopilot 在暖機後（第 `warmupSpins` 轉）、之後每 `gcEverySpins` 轉、最後一轉後各強制 GC 一次；40 轉時是第 5、15、25、35、40 轉後。離中間最近的那個點叫 `mid`（節點 census 用）。中間沒有點時，`mid` 落在暖機後剩下轉數的一半，兩半各不到 2 轉時不拍。
 
 ## heap-step
 

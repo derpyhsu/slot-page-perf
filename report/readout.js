@@ -211,8 +211,10 @@ function factRows(ev, m) {
     rows.push(["JS heap", `地板 ${Math.round(fit.from)} MB → ${Math.round(fit.to)} MB，每轉 ${fit.slopeMb >= 0 ? "+" : ""}${fit.slopeMb} MB`, notes.join("；")]);
   } else if (growth && growth.value != null) rows.push(["JS heap", `每轉 +${growth.value} MB`, ""]);
   // Heap floors right after each forced GC: after warm-up, halfway, after the last spin.
+  const hl = ev.heapGc && ev.heapGc.line;
   const hv = ev.heapGc && ev.heapGc.halves;
-  if (hv) rows.push(["GC 後地板", `${Math.round(hv.from)} → ${Math.round(hv.mid)} → ${Math.round(hv.to)} MB`, `第 ${hv.spins[0]}–${hv.spins[1]} 轉 ${hv.deltas[0] >= 0 ? "+" : ""}${hv.deltas[0]} MB，第 ${hv.spins[1]}–${hv.spins[2]} 轉 ${hv.deltas[1] >= 0 ? "+" : ""}${hv.deltas[1]} MB`]);
+  if (hl && hl.n >= 4) rows.push(["GC 後地板", `${hl.points.map((p) => Math.round(p[1])).join(" → ")} MB`, `第 ${hl.points.map((p) => p[0]).join("、")} 轉後；每轉 ${hl.slope >= 0 ? "+" : ""}${hl.slope} MB（±${hl.se}）`]);
+  else if (hv) rows.push(["GC 後地板", `${Math.round(hv.from)} → ${Math.round(hv.mid)} → ${Math.round(hv.to)} MB`, `第 ${hv.spins[0]}–${hv.spins[1]} 轉 ${hv.deltas[0] >= 0 ? "+" : ""}${hv.deltas[0]} MB，第 ${hv.spins[1]}–${hv.spins[2]} 轉 ${hv.deltas[1] >= 0 ? "+" : ""}${hv.deltas[1]} MB`]);
   // Node counts after the two forced GCs (probe census), and what grew between them.
   if (ev.nodeGrowth) rows.push(["節點", `GC 後 ${ev.nodeGrowth.nodes[0]} → ${ev.nodeGrowth.nodes[1]} 個`, nodeGrowthText(ev.nodeGrowth)]);
   // The bought free game: forced-GC floor after it, against the floor after the last spin.

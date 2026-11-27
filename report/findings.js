@@ -256,6 +256,30 @@ function labelText(lb, dt) {
   return `Label 更新 ${lb.n} 次，花 ${round(lb.ms)} ms（佔 ${Math.round((lb.ms / dt) * 100)}%）：${labelList(lb.top)}`;
 }
 
+// Every forced-GC floor of the spins (after-warmup, gc-N, mid, end). slope is the median of the
+// slopes between every pair of floors (Theil-Sen): a one-off step (a screen or effect loaded once)
+// moves only the pairs across it, so it is not read as growth. se is the least-squares slope's
+// standard error, for whether a rise keeps going.
+function gcLine(ev) {
+  const pts = (ev.gc || []).filter((x) => x.mb != null && x.spins != null && (x.at === "after-warmup" || x.at === "mid" || x.at === "end" || /^gc-\d+$/.test(x.at)))
+    .sort((a, b) => a.spins - b.spins)
+    .filter((x, i, xs) => i === 0 || x.spins > xs[i - 1].spins);
+  if (pts.length < 3 || pts[0].at !== "after-warmup" || pts[pts.length - 1].at !== "end") return null;
+  const n = pts.length;
+  const mx = pts.reduce((a, p) => a + p.spins, 0) / n;
+  const my = pts.reduce((a, p) => a + p.mb, 0) / n;
+  const sxx = pts.reduce((a, p) => a + (p.spins - mx) ** 2, 0);
+  const ls = pts.reduce((a, p) => a + (p.spins - mx) * (p.mb - my), 0) / sxx;
+  const rss = pts.reduce((a, p) => a + (p.mb - my - ls * (p.spins - mx)) ** 2, 0);
+  const se = Math.sqrt(rss / (n - 2) / sxx);
+  const pairs = [];
+  for (let i = 0; i < n; i += 1) for (let j = i + 1; j < n; j += 1) pairs.push((pts[j].mb - pts[i].mb) / (pts[j].spins - pts[i].spins));
+  pairs.sort((a, b) => a - b);
+  const slope = pairs.length % 2 ? pairs[(pairs.length - 1) / 2] : (pairs[pairs.length / 2 - 1] + pairs[pairs.length / 2]) / 2;
+  const span = pts[n - 1].spins - pts[0].spins;
+  return { points: pts.map((p) => [p.spins, round(p.mb, 1)]), n, slope: round(slope, 3), ls: round(ls, 3), se: round(se, 3), span, riseMb: round(slope * span, 2), totalMb: round(pts[n - 1].mb - pts[0].mb, 2) };
+}
+
 // Heap floors after the three forced GCs (after-warmup, mid, end). Each half's rise per spin; the
 // smaller one, taken over all the spins, is the rise both halves share (steadyMb).
 function gcHalves(ev) {
@@ -531,8 +555,16 @@ function findings(ev, T) {
   const gc = (ev.gc || []).filter((x) => x.mb != null);
   const gcA = gc.find((x) => x.at === "after-warmup");
   const gcB = gc.find((x) => x.at === "end");
+  const line = gcLine(ev);
   const halves = gcHalves(ev);
-  if (halves) {
+  if (line && line.n >= 4) {
+    // Four or more forced GCs: the line's slope. It is a leak when it reaches leakMb over
+    // leakSpanSpins (the same rate as before more spins were run) and stays above 0 by two
+    // standard errors; a total rise of leakMb that does not keep going is a step.
+    const rate = T.leakMb / (T.leakSpanSpins || 10);
+    if (line.slope >= rate && line.ls - 2 * line.se > 0) out.push({ id: "leak-suspected", status: "retained-after-gc", from: line.points[0][1], to: line.points[line.n - 1][1], delta: line.riseMb, line, forced: true });
+    else if (line.totalMb > T.leakMb) out.push({ id: "heap-step", from: line.points[0][1], to: line.points[line.n - 1][1], delta: line.totalMb, line });
+  } else if (halves) {
     // Three forced GCs: only the rise both halves share counts as staying growth. A rise in one
     // half only (something loaded once and kept) is stated, not called a leak.
     if (halves.steadyMb > T.leakMb) out.push({ id: "leak-suspected", status: "retained-after-gc", from: halves.from, mid: halves.mid, to: halves.to, delta: halves.steadyMb, halves: halves.deltas, forced: true });
@@ -642,4 +674,4 @@ function findings(ev, T) {
   return { findings: out, groups: gs, softwareGpu: soft };
 }
 
-module.exports = { findings, drawsRise, gcHalves, stallCause, causeText, canvasText, labelText, nodeGrowth, nodeGrowthText, panelNodes, groups, groupOf, heapFit, SOFTWARE_GPU };
+module.exports = { findings, drawsRise, gcLine, gcHalves, stallCause, causeText, canvasText, labelText, nodeGrowth, nodeGrowthText, panelNodes, groups, groupOf, heapFit, SOFTWARE_GPU };

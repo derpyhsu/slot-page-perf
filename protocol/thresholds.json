@@ -1,8 +1,9 @@
 {
-  "maxSpins": 15,
-  "normalSpins": 12,
+  "maxSpins": 40,
+  "normalSpins": 37,
   "turboSpins": 3,
   "warmupSpins": 5,
+  "gcEverySpins": 10,
   "idleSeconds": 8,
   "panelSteadySeconds": 5,
   "panelSpikeSeconds": 2,
@@ -54,6 +55,7 @@
     "stallMs": { "orange": 100, "red": 250 }
   },
   "leakMb": 15,
+  "leakSpanSpins": 10,
   "leakTailSpins": 10,
   "census": { "minNodes": 5 },
   "labelRedraw": { "minSame": 3, "minMb": 1 },

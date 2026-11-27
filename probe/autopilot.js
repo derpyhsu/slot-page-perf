@@ -1018,14 +1018,24 @@
 
     st.phase = "spins";
     var normal = Math.min(st.plan, CFG.normalSpins || 24);
-    // Forced GCs after warm-up, halfway through the rest, and after the last spin. Two halves let
-    // the report tell a rise that keeps going from one that happened once (leak rule).
+    // Forced GCs after warm-up, every gcEverySpins after it, and after the last spin. Each floor is
+    // a point on the line the report fits for growth; one GC floor alone moves by about a MB, so
+    // more points over more spins, not a closer look at two. The point nearest the middle is "mid"
+    // (node census halves); with no point between, the middle spin is.
     var warm = CFG.warmupSpins || 5;
-    var mid = warm + Math.floor((st.plan - warm) / 2);
-    if (mid - warm < 2 || st.plan - mid < 2) mid = -1;
+    var every = CFG.gcEverySpins || 0;
+    var gcAt = {};
+    for (var g = warm + every; every > 0 && g < st.plan; g += every) gcAt[g] = "gc-" + g;
+    var midSpin = warm + (st.plan - warm) / 2;
+    var marks = Object.keys(gcAt).map(Number);
+    if (marks.length) gcAt[marks.sort(function (x, y) { return Math.abs(x - midSpin) - Math.abs(y - midSpin); })[0]] = "mid";
+    else {
+      var mid = warm + Math.floor((st.plan - warm) / 2);
+      if (mid - warm >= 2 && st.plan - mid >= 2) gcAt[mid] = "mid";
+    }
     var gcAfter = async function (n) {
       if (n === warm) await gcPoint("after-warmup");
-      else if (n === mid) await gcPoint("mid");
+      else if (gcAt[n]) await gcPoint(gcAt[n]);
     };
     for (var i = 1; i <= normal; i += 1) {
       if (!(await oneSpin("spin-" + i))) break;

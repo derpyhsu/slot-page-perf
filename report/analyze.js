@@ -194,7 +194,11 @@ ev.heapGc = gcFit;
 // With a mid GC as well, growth is the rise both halves share, so a one-off load does not count.
 const halves = gcHalves(ev);
 if (halves && ev.heapGc) ev.heapGc.halves = halves;
+// Every forced-GC floor of the spins and the line through them: growth is its slope.
+const line = require("./findings").gcLine(ev);
+if (line && ev.heapGc) ev.heapGc.line = line;
 function growthPerSpin() {
+  if (line && line.n >= 4) return { value: Math.max(0, line.slope), basis: "gc-line" };
   if (halves) return { value: halves.ratePerSpin, basis: "gc-halves" };
   if (gcFit) return { value: Math.max(0, gcFit.retainedMb) / gcFit.spins, basis: "gc" };
   if (fit.status !== "ok") return null;
@@ -799,8 +803,13 @@ function explainLosses() {
       }
     } else if (row.category === "memory") {
       if (["growth", "heap"].includes(row.id)) {
+        const gl = ev.heapGc && ev.heapGc.line;
+        if (gl) {
+          why.push(`GC 後 heap：${gl.points.map((p) => p[1]).join(" → ")} MB（第 ${gl.points.map((p) => p[0]).join("、")} 轉後）`);
+          numbers.gcLine = gl;
+        }
         const leak = (ev.findings || []).find((f) => f.id === "leak-suspected");
-        if (leak && leak.delta != null) why.push(`強制 GC 後還多 ${round(leak.delta, 1)} MB，前後兩半都在增加`);
+        if (leak && leak.delta != null && !gl) why.push(`強制 GC 後還多 ${round(leak.delta, 1)} MB，前後兩半都在增加`);
         const ng = ev.nodeGrowth;
         let grewNodes = false;
         if (ng) {
@@ -1089,13 +1098,16 @@ function findingRows() {
   const ng = nodeGrowthText(ev.nodeGrowth);
   const nodeNote = ng ? `${ng}。` : "";
   const halvesText = (f) => `強制 GC 後的地板 ${Math.round(f.from)} → ${Math.round(f.mid)} → ${Math.round(f.to)} MB（前半 ${f.halves[0] >= 0 ? "+" : ""}${f.halves[0]} MB、後半 ${f.halves[1] >= 0 ? "+" : ""}${f.halves[1]} MB）`;
-  if (leak && leak.status === "retained-after-gc" && leak.halves) rows.push({ rule: "leak-suspected", level: "red", title: `暖機後前後兩半都在增加，GC 收不回的約 ${Math.round(leak.delta)} MB`, area: "記憶體", fix: `${halvesText(leak)}。用 slot-perf-drill 的 heap 工具比對兩張 snapshot，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。` + nodeNote, stage: null, t: null });
+  const lineText = (l) => `強制 GC 後的地板 ${l.points.map((p) => p[1]).join(" → ")} MB（第 ${l.points.map((p) => p[0]).join("、")} 轉後），每轉 ${l.slope >= 0 ? "+" : ""}${l.slope} MB（±${l.se}）`;
+  if (leak && leak.status === "retained-after-gc" && leak.line) rows.push({ rule: "leak-suspected", level: "red", title: `暖機後 JS heap 一路增加，GC 後每轉多 ${leak.line.slope} MB`, area: "記憶體", fix: `${lineText(leak.line)}。用 slot-perf-drill 的 heap 工具比對兩張 snapshot，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。` + nodeNote, stage: null, t: null });
+  else if (leak && leak.status === "retained-after-gc" && leak.halves) rows.push({ rule: "leak-suspected", level: "red", title: `暖機後前後兩半都在增加，GC 收不回的約 ${Math.round(leak.delta)} MB`, area: "記憶體", fix: `${halvesText(leak)}。用 slot-perf-drill 的 heap 工具比對兩張 snapshot，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。` + nodeNote, stage: null, t: null });
   else if (leak && leak.status === "retained-after-gc") rows.push({ rule: "leak-suspected", level: "red", title: `大 GC 之後 JS 記憶體地板仍比轉前高 ${Math.round(leak.delta)} MB`, area: "記憶體", fix: "轉前、轉後各拍一次 heap snapshot 比對，看哪一類物件越來越多；常見是事件沒解除或動畫節點沒回收。" + nodeNote, stage: null, t: null });
   else if (leak) rows.push({ rule: "leak-suspected", level: "orange", title: `JS 記憶體地板每轉多 ${leak.slopeMb} MB，這輪沒看到大 GC`, area: "記憶體", fix: "還不能確定是洩漏：大 GC 可能會收回。多轉幾十轉看地板會不會掉回來，或轉前、轉後各拍一次 heap snapshot 比對。" + nodeNote, stage: null, t: null });
 
   // A rise in one half only: something stayed once (a new screen, an effect loaded on first use).
   const step = found.find((f) => f.id === "heap-step");
-  if (step) rows.push({ rule: "heap-step", level: "yellow", title: `暖機後 JS heap 多了 ${Math.round(step.delta)} MB，只在其中一半增加`, area: "記憶體", fix: `${halvesText(step)}。只有一半在增加，不算持續增長，也不封頂；要知道多出來的是什麼，用 slot-perf-drill 的 heap 工具。` + nodeNote, stage: null, t: null });
+  if (step && step.line) rows.push({ rule: "heap-step", level: "yellow", title: `暖機後 JS heap 多了 ${Math.round(step.delta)} MB，沒有一路增加`, area: "記憶體", fix: `${lineText(step.line)}。總共多了 ${step.delta} MB，但沒有穩定地每轉增加，不算持續增長，也不封頂；要知道多出來的是什麼，用 slot-perf-drill 的 heap 工具。` + nodeNote, stage: null, t: null });
+  else if (step) rows.push({ rule: "heap-step", level: "yellow", title: `暖機後 JS heap 多了 ${Math.round(step.delta)} MB，只在其中一半增加`, area: "記憶體", fix: `${halvesText(step)}。只有一半在增加，不算持續增長，也不封頂；要知道多出來的是什麼，用 slot-perf-drill 的 heap 工具。` + nodeNote, stage: null, t: null });
 
   // A level that stepped at one spin and stayed: one row per series and starting spin.
   const METRIC = { draws: ["draw call 中位數", "", "變多"], nodes: ["顯示中的節點", " 個", "變多"], fps: ["FPS", "", "變低"] };
