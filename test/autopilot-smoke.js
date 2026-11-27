@@ -148,6 +148,34 @@ async function spinFor(showStop) {
   const g = marks.slice(i + 1).find((m) => m[0] === "gap");
   return g[1] - marks[i][1];
 }
+// R20. A hint label under the spin button changes for good after the spin: the spin settles once
+// the button and the board hold still. A STOP text on the button itself still reads as busy.
+async function textFor(from, to, backMs, quietMs) {
+  const sp = btn("btn_spin", 500, 600);
+  sp.text = from;
+  onMark = (n) => {
+    if (n !== "spin-1") return;
+    setTimeout(() => { sp.text = to; }, 100);
+    if (backMs) setTimeout(() => { sp.text = from; }, backMs);
+  };
+  const auto = load([sp], null, null, null, { maxSpins: 1, normalSpins: 1, settle: { pollMs: 50, minMs: 200, confirmMs: 200, stablePolls: 2, quietMs, maxMs: 8000, stillMs: 0, nudgeAfterMs: 60000 } });
+  auto.start();
+  await until(auto, (s) => s.needs === "map");
+  auto.map({ spin: sp.point }, 1);
+  const s = await until(auto, (x) => x.needs === "gc" || x.needs === "screen", 15000);
+  onMark = null;
+  const marks = auto.marks;
+  const i = marks.findIndex((m) => m[0] === "spin-1");
+  const g = marks.slice(i + 1).find((m) => m[0] === "gap");
+  return { ms: g ? g[1] - marks[i][1] : null, needs: s.needs, note: s.note };
+}
+async function hintCase() {
+  const hint = await textFor("長按可進行設定", "單擊進行自動玩", 0, 600);
+  assert.ok(hint.needs === "gc" && hint.ms < 4000, "a hint under the spin button that changes does not stall the spin: " + JSON.stringify(hint));
+  const stop = await textFor("SPIN", "STOP", 1500, 60000);
+  assert.ok(stop.needs === "gc" && stop.ms >= 1500 && stop.ms < 4000, "STOP on the spin button is busy until it goes: " + JSON.stringify(stop));
+}
+
 // R3. Turbo spins press the spin point again while the spin is seen busy; normal spins do not.
 async function quickStopCase() {
   const sp = btn("btn_spin", 500, 600);
@@ -248,6 +276,7 @@ async function busyCase() {
   await earlyMapCase();
   await gotoCase();
   await gotoMenuCase();
+  await hintCase();
   await backendCase();
   await busyCase();
   await quickStopCase();

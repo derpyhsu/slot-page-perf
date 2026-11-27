@@ -55,6 +55,11 @@
   function key(b) {
     return b.kind + ":" + b.name + ":" + b.text;
   }
+  // The spin button by kind and name only. Its text joins its children's, and a hint label under
+  // it (an auto-play tip) can change after a spin without the button changing.
+  function nameKey(b) {
+    return b.kind + ":" + b.name;
+  }
 
   // One input family per press. Some games listen to both pointer and mouse events, and a toggle
   // such as a menu then opens and closes in the same press.
@@ -215,8 +220,8 @@
     var p = st.map && st.map.spin;
     var b = nodeNear(p);
     var ready = b ? b.interactable !== false : !st.spinKey;
-    if (b && st.spinKey && key(b) !== st.spinKey) ready = false;
-    return { point: p, ready: ready, sig: b ? b.sig : null, texts: (P.entry(CFG.entry).texts || []).join("|") };
+    if (b && st.spinKey && nameKey(b) !== st.spinName) ready = false;
+    return { point: p, ready: ready, sig: b ? b.sig : null, btext: b ? b.text : null, texts: (P.entry(CFG.entry).texts || []).join("|") };
   }
 
   async function entryLoop() {
@@ -576,6 +581,7 @@
       st.map = m;
       var sn = nodeNear(m.spin);
       st.spinKey = sn ? key(sn) : null;
+      st.spinName = sn ? nameKey(sn) : null;
       await sampleSpinSigs();
       if (r.spins != null) st.plan = Math.min(r.spins, CFG.maxSpins || 30);
       log("map " + JSON.stringify(m).slice(0, 100));
@@ -586,16 +592,21 @@
 
   // What the spin button shows while idle, sampled for 2 s so an idle glow that toggles children
   // is not taken for busy later.
+  // Its texts too: a text it never showed while idle (STOP) reads as busy.
   async function sampleSpinSigs() {
     st.spinIdleSigs = null;
+    st.spinIdleTexts = null;
     if (!st.spinKey) return;
     var seen = {};
+    var texts = {};
     for (var i = 0; i < 8; i += 1) {
       var s = spinState();
       if (s.sig != null) seen[s.sig] = true;
+      if (s.btext != null) texts[s.btext] = true;
       await sleep(250);
     }
     if (Object.keys(seen).length) st.spinIdleSigs = seen;
+    if (Object.keys(texts).length) st.spinIdleTexts = texts;
   }
 
   function betCandidates() {
@@ -681,6 +692,8 @@
     var lastDraws = null;
     var lastDrawChange = now();
     var sigSince = 0;
+    var lastLook = null;
+    var lastLookChange = now();
     // Turbo spins also press the spin point again while the spin is seen busy (a quick stop), the
     // way players cut spins short. Only on two busy polls in a row, so the press cannot start a
     // new spin; skipped when no spin node is known.
@@ -691,15 +704,6 @@
       await sleep(S.pollMs || 250);
       var el = now() - t0;
       var sb = spinState();
-      if (sb.ready && st.spinIdleSigs && sb.sig != null && !st.spinIdleSigs[sb.sig]) {
-        // Pressable but showing something it never showed while idle (a stop label): busy. If that
-        // lasts sigGiveUpMs with the button otherwise ready, take it as a new idle look.
-        if (!sigSince) sigSince = now();
-        if (now() - sigSince > (S.sigGiveUpMs || 30000)) {
-          st.spinIdleSigs[sb.sig] = true;
-          log("spin button look kept as idle: " + sb.sig.slice(0, 60));
-        } else sb.ready = false;
-      } else sigSince = 0;
       if (sb.texts !== lastTexts) {
         lastTexts = sb.texts;
         lastChange = now();
@@ -709,6 +713,26 @@
         lastDraws = draws;
         lastDrawChange = now();
       }
+      // The spin button's own look and text; other buttons' texts (tips, hints) are not watched.
+      var look = sb.sig + "|" + sb.btext;
+      if (look !== lastLook) {
+        lastLook = look;
+        lastLookChange = now();
+      }
+      // Spin button and draw calls both still for quietMs: the board has stopped.
+      var calm = now() - lastLookChange > (S.quietMs || 4000) && now() - lastDrawChange > (S.quietMs || 4000);
+      var newSig = st.spinIdleSigs && sb.sig != null && !st.spinIdleSigs[sb.sig];
+      var newText = st.spinIdleTexts && sb.btext != null && !st.spinIdleTexts[sb.btext];
+      if (sb.ready && (newSig || newText)) {
+        // Pressable but showing a look or text it never showed while idle (a stop label): busy,
+        // until it and the board hold still (or sigGiveUpMs passes); then it is a new idle look.
+        if (!sigSince) sigSince = now();
+        if (calm || now() - sigSince > (S.sigGiveUpMs || 30000)) {
+          if (newSig) st.spinIdleSigs[sb.sig] = true;
+          if (newText) st.spinIdleTexts[sb.btext] = true;
+          log("spin button look kept as idle: " + look.slice(0, 60));
+        } else sb.ready = false;
+      } else sigSince = 0;
       if (!sb.ready) sawBusy = true;
       busyPolls = sb.ready ? 0 : busyPolls + 1;
       if (quickStop && !stopped && busyPolls >= 2 && el < (S.quickStopWithinMs || 3000)) {
@@ -719,10 +743,10 @@
       }
       if (!sb.ready || sb.texts !== texts0 || (draws != null && draws0 != null && Math.abs(draws - draws0) > Math.max(3, draws0 * 0.15))) changed = true;
       var drawsBack = st.idleDraws == null || draws == null || Math.abs(draws - st.idleDraws) <= Math.max(3, st.idleDraws * 0.15);
-      // Some spin buttons never disable and the idle glow changes the draw count. Then a screen
-      // whose texts and draw calls have both held still for a few seconds has settled.
-      var quiet = now() - lastChange > (S.quietMs || 4000) && now() - lastDrawChange > (S.quietMs || 4000);
-      stable = sb.ready && (sawBusy || drawsBack || quiet) ? stable + 1 : 0;
+      // Some spin buttons never disable and the idle glow changes the draw count. Then a spin button
+      // and draw calls that have both held still for a few seconds have settled. Other texts are
+      // left out: a tip or hint that changes would keep the spin from ever settling.
+      stable = sb.ready && (sawBusy || drawsBack || calm) ? stable + 1 : 0;
       if (el >= (S.minMs || 1500) && stable >= (S.stablePolls || 3)) {
         // A free game or big win often starts just after the reels stop and hides the spin button.
         // Look once more first. Texts are not compared: tip marquees change them all the time.
