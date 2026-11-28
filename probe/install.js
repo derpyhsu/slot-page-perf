@@ -145,12 +145,25 @@
     b[6] = round((state.texBytes - b.texStart) / 1048576);
   }
 
+  // A user-timing mark per stage, so a Chrome trace recorded around the run can be cut into the same
+  // stages (report/cpu-trace.js). The trace is the only source of main-thread busy time on non-Cocos games.
+  // Stage names repeat (gap, spin-N), so each stage gets its own id, name@n, and the trace and the
+  // stage row match by that id even when the trace starts in the middle of a run.
+  var traceSeq = 0;
+  function traceMark(name) {
+    try { performance.mark("slot-perf:" + name); } catch (e) {}
+  }
+
   function openStage(name) {
     closeStage();
+    traceSeq += 1;
+    var traceId = String(name || "mark") + "@" + traceSeq;
+    traceMark(traceId);
     if (state.marks.length < SERIES_CAP) state.marks.push([name, rel(performance.now())]);
     state.fw = newLedger();
     state.stage = {
       name: name,
+      traceId: traceId,
       t0: performance.now(),
       frames: 0,
       sumDt: 0,
@@ -2064,6 +2077,7 @@
     var gpuPct = s.gpuN > 0 ? round(100 * (s.sumGpu / s.gpuN) / 16.7) : null;
     return {
       name: s.name,
+      traceId: s.traceId,
       startMs: rel(s.t0),
       wallMs: round(wall),
       frames: s.frames,
@@ -2772,6 +2786,11 @@
         out.activeNodes = n;
       }
       return out;
+    },
+    // Closes the last stage in a Chrome trace (see traceMark). Call once, when the run is finished.
+    traceEnd: function () {
+      traceMark("end");
+      return true;
     },
     summary: function () {
       var open = state.stage ? finishStage(state.stage) : null;

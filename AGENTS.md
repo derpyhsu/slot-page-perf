@@ -10,11 +10,14 @@ Before measuring, read `skill/slot-page-perf/SKILL.md`, then `protocol/scenarios
 - Spend as few tokens as possible. Let `__slotPerf.auto` drive the page, poll its short status, and save results with `evaluate_script` `filePath`. Do not pull raw summaries or screenshots into the conversation unless needed.
 - Prefer the Chrome DevTools MCP server named `chrome-devtools`.
 - Drive the canvas with pointer events. Do not call game-internal spin handlers.
+- When a stage stalls, take a screenshot first and decide from the picture. Try the cheapest action that could work before reading code or logs.
+- A game that is not Cocos still runs the same flow: the skill's "Not a Cocos game" section gives the driver two page readers (`auto.adapter`). The report skips the scene rules, and the drill does not apply.
 - Do not change the bet. Read the on-screen bet and balance. Continue when the balance covers the planned spins. Stop and tell the user only when the bet or balance cannot be read, or the balance is short.
 - History and rules opens are not spins. The spin cap is `maxSpins` in `protocol/thresholds.json`.
 - Never write URL query strings or session tokens into `runs/` or the report.
 - A finding must match a rule in `protocol/rules.md`. Missing probes stay `unavailable`.
-- CPU% is main-thread busy time divided by wall time for that stage. It is not OS CPU usage.
+- CPU% is main-thread busy time divided by wall time for that stage. It is not OS CPU usage. On a Cocos game it is the engine's loop; on a non-Cocos game it comes from a Chrome trace recorded around the run (`report/cpu-trace.js`). The raw trace holds URLs and tokens: keep it in the scratchpad, never in `runs/`.
+- When a run finishes (report built, notes written), close the test browser tabs that run opened with `close_page`, and check that none are left. The user does not want the test Chrome left open after a run.
 - GPU% is GPU timer time divided by `frameBudgetMs`. Without the timer extension, GPU% is `unavailable`.
 
 ## Drill

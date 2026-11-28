@@ -53,6 +53,20 @@ if (fs.existsSync(notesPath)) {
 }
 const s = raw.summary || raw;
 
+// Main-thread busy time from a Chrome trace recorded around part of the run (report/cpu-trace.js
+// writes cpu-trace.json; the raw trace stays in the scratchpad). Each probe stage carries traceId,
+// and the trace has the same id for the same stage, so stages[].cpuTracePct is matched exactly.
+// Stages that were not open while the trace ran get no value.
+const cpuTracePath = path.join(runDir, "cpu-trace.json");
+const cpuTrace = fs.existsSync(cpuTracePath) ? JSON.parse(fs.readFileSync(cpuTracePath, "utf8")) : null;
+if (cpuTrace) {
+  const byId = new Map(cpuTrace.stages.map((t) => [t.id, t]));
+  (s.stages || []).forEach((x) => {
+    const t = x.traceId && byId.get(x.traceId);
+    if (t && t.cpuPct != null) x.cpuTracePct = t.cpuPct;
+  });
+}
+
 // Spins the autopilot saw not start (nothing on screen changed from the press until it settled)
 // are not spins: they become gap, and the report says which.
 const notStarted = new Set(raw.notStarted || []);
@@ -70,7 +84,11 @@ const spins = stages
 
 const coverage = Object.assign({}, raw.coverage || {});
 if (raw.entry && raw.entry.result) coverage.entry = raw.entry.result;
-if (s.channels && !s.channels.engineCpu) coverage.cpu = coverage.cpu || `frameLoop ${s.channels.frameLoop}: per-frame CPU unavailable`;
+if (s.channels && !s.channels.engineCpu) {
+  coverage.cpu = cpuTrace
+    ? `frameLoop ${s.channels.frameLoop}: no per-frame engine CPU; main-thread busy % from the Chrome trace (cpuTracePct)`
+    : coverage.cpu || `frameLoop ${s.channels.frameLoop}: per-frame CPU unavailable`;
+}
 if (s.channels && !s.channels.gpuTimer) coverage.gpuTime = "unavailable: no GPU timer extension";
 if (notStarted.size) coverage.notStarted = [...notStarted].join(", ");
 
@@ -112,6 +130,8 @@ const ev = {
 Object.keys(ev).forEach((k) => ev[k] === undefined && delete ev[k]);
 Object.keys(ev.game).forEach((k) => ev.game[k] === undefined && delete ev.game[k]);
 
+if (cpuTrace) ev.channels.cpuTrace = { thread: cpuTrace.thread, closed: cpuTrace.closed, wallMs: cpuTrace.total.wallMs, cpuPct: cpuTrace.total.cpuPct };
+
 const result = findings(ev, T);
 ev.findings = result.findings;
 
@@ -127,8 +147,9 @@ const done = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
 const c = ev.conditions;
 const ch = ev.channels;
 const lines = [];
-lines.push(`${ev.game.title} · Cocos ${c.engine || "?"} · ${c.canvas ? `${c.canvas.w}x${c.canvas.h}` : ""} · gpu ${String(c.gpu || "?").slice(0, 60)}${result.softwareGpu ? " (software)" : ""}`);
+lines.push(`${ev.game.title} · ${c.engine ? `Cocos ${c.engine}` : "not Cocos or engine unreadable"} · ${c.canvas ? `${c.canvas.w}x${c.canvas.h}` : ""} · gpu ${String(c.gpu || "?").slice(0, 60)}${result.softwareGpu ? " (software)" : ""}`);
 lines.push(`frameLoop ${ch.frameLoop} engineCpu ${ch.engineCpu} gpuTimer ${ch.gpuTimer} gpuMemory ${ch.gpuMemory}`);
+if (ch.cpuTrace) lines.push(`cpu trace ${ch.cpuTrace.thread}: main thread ${ch.cpuTrace.cpuPct}% of ${(ch.cpuTrace.wallMs / 1000).toFixed(1)} s${ch.cpuTrace.closed ? "" : " (no end mark)"}`);
 if (ev.entry) lines.push(`entry ${ev.entry.result}${(ev.entry.steps || []).length ? ": " + ev.entry.steps.map((x) => `${x.kind} ${x.text}`).join(" > ") : ""}`);
 lines.push(`coverage ${Object.entries(coverage).map(([k, v]) => `${k}=${v}`).join("; ")}`);
 lines.push("group | n | fps | drop% | bad% | 1%low | cpu95 | draws | gpuMB | heapMB | worst");

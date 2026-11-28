@@ -55,6 +55,8 @@
    5. 都沒有，就看截圖：畫面上有明顯的開始或確認鈕，就點它的位置；看不出來就停下來，回報截圖，不要亂點。
 5. 按之前 `mark("enter")`，用 pointer 事件點 `point`。`point` 是 null 或跟截圖對不上時，用截圖上的位置。按完回到第 1 步。
 
+不是 Cocos 的遊戲（沒有 `window.cc`）讀不到場景，上面第 2、3 步靠 agent 給的 `auto.adapter({ loaded, ready })`：`loaded()` 為真就停下來看截圖，`ready()` 為真就是 spin 鈕能按。做法見技能的「Not a Cocos game」。階段和量法不變，沒有的是引擎 CPU、場景快照和 Cocos 規則。引擎 CPU 的位置由 Chrome trace 補：開始跑之前開 trace，跑完 `result()` 之後停，報告的主執行緒忙碌 % 來自它（做法見技能第 5、7 步）。
+
 不要按 `avoidWords` 對得上的東西，像購買、加注、自動、不再顯示、返回大廳。`entry()` 已經把它們濾掉，但用截圖選位置時也要照這個規則。
 
 每按一次就在 `evidence.entry.steps` 記一筆 `{ kind, text, afterMs }`。`kind` 是 `button`、`touch`、`dom`、`tap-anywhere` 或 `screenshot`，`afterMs` 是從開網址算起的毫秒。`evidence.entry.result` 寫下面其中一個：
@@ -106,4 +108,4 @@
 
 ## 量測前的檢查
 
-`mark("idle")` 後幾秒讀一次 summary。`channels.engineCpu` 要是 true，`frameLoop` 要是 `tick`（Creator 3.x）或 `mainLoop`（Creator 2.x）。如果是 `raf`，代表探針沒掛上引擎迴圈，CPU 全部是未讀到。在 `coverage` 寫明，不要把 0 當成很輕。
+`mark("idle")` 後幾秒讀一次 summary。`channels.engineCpu` 要是 true，`frameLoop` 要是 `tick`（Creator 3.x）或 `mainLoop`（Creator 2.x）。如果是 `raf`，代表探針沒掛上引擎迴圈，每幀 CPU 全部是未讀到。在 `coverage` 寫明，不要把 0 當成很輕。非 Cocos 遊戲若有 trace，`cpuTracePct` 是主執行緒忙碌 %，和每幀 CPU 不是同一個數字，報告也分開寫。

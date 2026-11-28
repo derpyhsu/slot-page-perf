@@ -214,6 +214,19 @@
     return P.entry(CFG.entry).spin.filter(function (b) { return b.interactable && b.point; })
       .sort(function (a, c) { return plain(a) - plain(c); })[0] || null;
   }
+  // A page that is not Cocos has no scene to read. The agent hands in two small functions that read
+  // the page itself, auto.adapter({ loaded, ready }): loaded() is true once the game has everything
+  // it needs and now waits for a press (or is playable); ready() is true while the spin point can be
+  // pressed. Returns null when there is no adapter or the function threw, so the engine reading stays.
+  function adapterCall(name) {
+    var a = st.adapter;
+    if (!a || typeof a[name] !== "function") return null;
+    try { return !!a[name](); } catch (e) { return null; }
+  }
+  // Cocos not found after the page has had time to load it: not a Cocos game.
+  function noEngine() {
+    return !window.cc && now() - st.started > 15000;
+  }
   // The agent's spin point, and the node there when the engine can name one, for readiness.
   // When the map found a node there, that node gone (hidden by a free game) means not ready.
   function spinState() {
@@ -221,6 +234,9 @@
     var b = nodeNear(p);
     var ready = b ? b.interactable !== false : !st.spinKey;
     if (b && st.spinKey && nameKey(b) !== st.spinName) ready = false;
+    // No engine node to read (not Cocos): the agent's adapter says when the spin point can be pressed.
+    var viaAdapter = adapterCall("ready");
+    if (viaAdapter != null) ready = viaAdapter;
     return { point: p, ready: ready, sig: b ? b.sig : null, btext: b ? b.text : null, texts: (P.entry(CFG.entry).texts || []).join("|") };
   }
 
@@ -234,7 +250,7 @@
     var netSince = 0;
     while (now() < deadline) {
       var e = P.entry(E);
-      if (e.spinReady) {
+      if (e.spinReady || adapterCall("ready")) {
         st.entry.result = st.entry.steps.length ? "pressed" : "direct";
         P.mark("game-ready");
         log("game-ready");
@@ -256,7 +272,13 @@
       if (netBusy && !netSince) netSince = now();
       if (!netBusy) netSince = 0;
       var downloading = netBusy && now() - netSince < (E.netWaitSeconds || 60) * 1000;
-      if (!settled || !e.scene || loadingBar || downloading) {
+      // Not Cocos: there is never a scene, so waiting for one would run out the clock. The agent's
+      // loaded() decides when loading is done; without it the same quiet checks apply, and the
+      // agent looks at a screenshot (and says to wait if a loading bar is still up).
+      var engineless = !e.scene && noEngine();
+      var loaded = adapterCall("loaded");
+      var hold = loaded != null ? !loaded : !settled || (!e.scene && !engineless) || loadingBar || downloading;
+      if (hold) {
         await sleep(1000);
         continue;
       }
@@ -271,7 +293,10 @@
       if (!pick) {
         if (st.entry.steps.length >= (E.maxSteps || 5)) break;
         // Nothing the engine can name. The agent looks at a screenshot and calls auto.click(x, y).
-        var r = await ask("screen", "loading looks done but nothing safe to press was found: auto.click(x, y) on what leads into the game, or auto.ready() if the game with its spin button is up", { texts: e.texts });
+        if (engineless && !splashMarked) { P.mark("splash"); splashMarked = true; }
+        var r = await ask("screen", engineless
+          ? "no engine scene to read (not Cocos). Screenshot. Loading bar still up: auto.resume(). Waiting for a press: auto.entered(text) right before it, press it (auto.click(x, y), or a real browser click if the page ignores page events), then auto.resume(). The game with its spin button is up: auto.ready()"
+          : "loading looks done but nothing safe to press was found: auto.click(x, y) on what leads into the game, or auto.ready() if the game with its spin button is up", { texts: e.texts });
         if (r && r.ready) {
           st.entry.result = st.entry.steps.length ? "pressed" : "direct";
           P.mark("game-ready");
@@ -349,7 +374,25 @@
   // onScreen counts pressable buttons inside the game area, which catches menus that slide in.
   function footprint() {
     var onScreen = P.buttons().buttons.filter(function (b) { return b.point; }).length;
-    return { nodes: P.live(true).activeNodes, dom: document.getElementsByTagName("*").length, onScreen: onScreen, cover: cover() };
+    return { nodes: P.live(true).activeNodes, dom: document.getElementsByTagName("*").length, onScreen: onScreen, cover: cover(), grid: gridSig() };
+  }
+  // What sits on top of the canvas at nine points. A menu or panel that is already in the page and
+  // only switches a class (no element added) is invisible to the node and DOM counts; the element
+  // under these points changes when it opens or closes.
+  function gridSig() {
+    try {
+      var cv = (window.cc && cc.game && cc.game.canvas) || document.querySelector("canvas");
+      var r = cv.getBoundingClientRect();
+      var out = [];
+      [0.2, 0.5, 0.8].forEach(function (fy) {
+        [0.15, 0.5, 0.85].forEach(function (fx) {
+          var h = deepAt(Math.round(r.left + r.width * fx), Math.round(r.top + r.height * fy));
+          var el = h && h.el;
+          out.push(el ? el.tagName + "#" + el.id + "." + String(el.className && el.className.baseVal == null ? el.className : "").slice(0, 30) : "");
+        });
+      });
+      return out.join("|");
+    } catch (e) { return ""; }
   }
   // What sits on top of the canvas center. An HTML panel that was already in the page and only
   // toggles a class adds no elements, but it covers the canvas.
@@ -368,7 +411,7 @@
     return cover() !== (st.coverBase || "");
   }
   function differs(a, b) {
-    return Math.abs(a.nodes - b.nodes) > Math.max(5, b.nodes * 0.03) || Math.abs(a.dom - b.dom) > 3 || a.onScreen !== b.onScreen || a.cover !== b.cover;
+    return Math.abs(a.nodes - b.nodes) > Math.max(5, b.nodes * 0.03) || Math.abs(a.dom - b.dom) > 3 || a.onScreen !== b.onScreen || a.cover !== b.cover || a.grid !== b.grid;
   }
   async function waitChange(before, ms) {
     var end = now() + ms;
@@ -974,9 +1017,9 @@
         st.entry.steps.push({ kind: "screenshot", text: r.text || "", afterMs: now() });
         click(r.click.x, r.click.y);
         var until = now() + 20000;
-        while (now() < until && !P.entry(CFG.entry).spinReady) await sleep(1000);
+        while (now() < until && !P.entry(CFG.entry).spinReady && !adapterCall("ready")) await sleep(1000);
       }
-      if ((r && r.ready) || P.entry(CFG.entry).spinReady) {
+      if ((r && r.ready) || P.entry(CFG.entry).spinReady || adapterCall("ready")) {
         st.entry.result = st.entry.steps.length ? "pressed" : "direct";
         P.mark("game-ready");
         log("game-ready (agent)");
@@ -997,6 +1040,7 @@
     var ch = P.summary().channels;
     st.channels = { frameLoop: ch.frameLoop, engineCpu: ch.engineCpu, gpuMemory: ch.gpuMemory, gpuTimer: ch.gpuTimer };
     if (!ch.engineCpu) st.coverage.cpu = "frameLoop " + ch.frameLoop + ": per-frame CPU unavailable";
+    if (!window.cc) st.coverage.engine = "not Cocos: no scene snapshot, no engine CPU; rules that read the scene are not applied";
     P.mark("gap");
     takeCensus("idle");
 
@@ -1211,6 +1255,17 @@
     opened: function () { return resume({ opened: true }); },
     // The game screen is up although no spin button could be named.
     ready: function () { return resume({ ready: true }); },
+    // Not Cocos, or any page the engine reading cannot see: two functions that read the page.
+    // loaded() true once the game has loaded and waits for a press (or plays); ready() true while the
+    // spin point can be pressed. Call before the first wait. auto.adapter(null) removes it.
+    adapter: function (a) { st.adapter = a || null; return status(); },
+    // About to press what leads into the game with real browser input (a page that ignores page
+    // events): opens the enter stage and records the step. Press, then auto.resume().
+    entered: function (text) {
+      P.mark("enter");
+      st.entry.steps.push({ kind: "screenshot", text: text || "", afterMs: now() });
+      return status();
+    },
     click: function (x, y, text) { return resume({ click: toLocal({ x: x, y: y }), text: text }); },
     resume: function () { return resume({}); },
     // After the run, for slot-perf-drill: bring the game to "idle" (close what is open), "history"
@@ -1235,6 +1290,7 @@
     // At needs "buy": do not buy (the balance is short, or the screen is not a plain buy).
     skip: function () { return resume({ skip: true }); },
     result: function () {
+      if (P.traceEnd) P.traceEnd();
       return { autopilot: 1, summary: P.summary(), cocos: { snapshots: st.snapshots }, entry: st.entry, coverage: st.coverage, bet: st.bet, gc: st.gc, census: st.census, notStarted: st.notStarted, spinNodes: st.spinNodes, settle: st.settle, panels: st.panels, points: points(), feature: st.feature || null, log: st.log };
     }
   };

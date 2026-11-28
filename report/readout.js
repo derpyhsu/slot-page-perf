@@ -66,6 +66,8 @@ function model(ev) {
         cpuStage = s.name;
       }
     });
+    // Main-thread busy % from the Chrome trace (report/cpu-trace.js), the one CPU number on a non-Cocos game.
+    const busy = list.reduce((a, s) => (s.cpuTracePct != null && (a == null || s.cpuTracePct > a) ? s.cpuTracePct : a), null);
     const spikes = (ev.stages || []).filter((s) => s.name === `${r.group}-spike`);
     const hitches = list.concat(spikes).flatMap((s) => s.hitches || []);
     const worst = hitches.reduce((a, h) => (h.dt > a ? h.dt : a), 0);
@@ -85,6 +87,7 @@ function model(ev) {
       cpuMax,
       cpuMed: median(cpus),
       cpuStage,
+      busy,
       many: list.length > 1,
       worst,
     };
@@ -104,6 +107,7 @@ function model(ev) {
     leak,
     soft: SOFTWARE_GPU.test((ev.conditions && ev.conditions.gpu) || ""),
     cpuOn: !!(ev.channels && ev.channels.engineCpu),
+    traceOn: !!(ev.channels && ev.channels.cpuTrace) && cols.some((c) => c.busy != null),
   };
 }
 
@@ -177,7 +181,7 @@ function metaLine(ev) {
   const parts = [
     c.viewport ? `${c.viewport.w}×${c.viewport.h}` : "",
     c.viewport && c.viewport.dpr ? `dpr ${c.viewport.dpr}` : "",
-    `Cocos ${c.engine || "?"}`,
+    c.engine ? `Cocos ${c.engine}` : "非 Cocos 或讀不到引擎",
     webgl,
     settings.frameRate != null ? `幀率上限 ${settings.frameRate}` : "",
     named ? named.trim() + (m.soft ? "（軟體繪製，數字是這台電腦）" : "") : "",
@@ -291,11 +295,12 @@ function readoutMarkdown(ev) {
     if (m.cols.some((c) => c.pace != null)) lines.push(row("節奏不齊", (c) => pct(c.pace), L.pace));
     lines.push(row("1% low", (c) => (c.low == null ? "—" : c.low), L.low));
     if (m.cpuOn) lines.push(row("CPU p95", cpuText, L.cpu));
+    else if (m.traceOn) lines.push(row("主執行緒忙碌", (c) => (c.busy == null ? "—" : `${c.busy}%`)));
     lines.push(row("每幀 draw", (c) => (c.draws == null ? "—" : c.draws), L.draws));
     lines.push(row("GPU 峰值", (c) => mb(c.gpu), L.gpu));
     if (m.cols.some((c) => c.worst >= 50)) lines.push(row("最長停頓", (c) => (c.worst >= 50 ? `${Math.round(c.worst)} ms` : ""), L.stall));
     lines.push("");
-    lines.push("FPS、壞幀、節奏看的是實際上螢幕的幀。應有幀長取螢幕更新間隔與 1000 / 幀率上限較長者；壞幀是超過應有幀長 1.5 倍的幀，節奏不齊是離應有幀長超過 25% 的幀。FPS 與 1% low 以 60 為目標上色；壞幀與節奏依幀率上限判。CPU p95 是引擎主迴圈在該階段 95% 的幀裡花的時間，不是作業系統的 CPU。");
+    lines.push("FPS、壞幀、節奏看的是實際上螢幕的幀。應有幀長取螢幕更新間隔與 1000 / 幀率上限較長者；壞幀是超過應有幀長 1.5 倍的幀，節奏不齊是離應有幀長超過 25% 的幀。FPS 與 1% low 以 60 為目標上色；壞幀與節奏依幀率上限判。CPU p95 是引擎主迴圈在該階段 95% 的幀裡花的時間，不是作業系統的 CPU。" + (m.traceOn ? "主執行緒忙碌是 Chrome trace 裡該渲染執行緒跑任務的時間，除以該段的牆鐘時間，包含腳本、版面與繪製，不是作業系統的 CPU；只涵蓋錄製的那段時間。" : ""));
     lines.push("");
   }
   const facts = factRows(ev, m);
@@ -517,11 +522,12 @@ function stageTable(m) {
   if (m.cols.some((c) => c.pace != null)) html += tr("節奏不齊", (c) => pct(c.pace), L.pace);
   html += tr("1% low", (c) => (c.low == null ? "—" : String(c.low)), L.low);
   if (m.cpuOn) html += tr("CPU p95", cpuHtml, L.cpu, true);
+  else if (m.traceOn) html += tr("主執行緒忙碌", (c) => (c.busy == null ? "—" : `${c.busy}%`), null);
   html += tr("每幀 draw", (c) => (c.draws == null ? "—" : String(c.draws)), L.draws);
   html += tr("GPU 峰值", (c) => mb(c.gpu), L.gpu);
   if (m.cols.some((c) => c.worst >= 50)) html += tr("最長停頓", (c) => (c.worst >= 50 ? `${Math.round(c.worst)} ms` : ""), L.stall);
   html += "</table></div>";
-  html += '<p class="small">FPS、壞幀、節奏看的是實際上螢幕的幀。壞幀是超過應有幀長 1.5 倍的幀，節奏不齊是離應有幀長超過 25% 的幀。CPU p95 是引擎主迴圈在該階段 95% 的幀裡花的時間，不是作業系統的 CPU。</p>';
+  html += '<p class="small">FPS、壞幀、節奏看的是實際上螢幕的幀。壞幀是超過應有幀長 1.5 倍的幀，節奏不齊是離應有幀長超過 25% 的幀。CPU p95 是引擎主迴圈在該階段 95% 的幀裡花的時間，不是作業系統的 CPU。' + (m.traceOn ? "主執行緒忙碌是 Chrome trace 裡該渲染執行緒跑任務的時間，除以該段的牆鐘時間，包含腳本、版面與繪製，不是作業系統的 CPU；只涵蓋錄製的那段時間。" : "") + '</p>';
   return html;
 }
 

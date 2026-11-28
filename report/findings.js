@@ -618,7 +618,9 @@ function findings(ev, T) {
   ["loading", "enter"].forEach((n) => {
     stages.filter((s) => s.name === n).forEach((s) => {
       const main = out.some((f) => f.id === "hitch-main-thread" && f.stage === n);
-      if (main || (s.cpuPct != null && s.cpuPct > 80 && s.fps != null && s.fps < 30)) out.push({ id: "loading-stall", stage: n });
+      // Main-thread busy: the probe's engine share when there is one, else the Chrome trace's.
+      const busy = s.cpuPct != null ? s.cpuPct : s.cpuTracePct;
+      if (main || (busy != null && busy > 80 && s.fps != null && s.fps < 30)) out.push({ id: "loading-stall", stage: n });
     });
   });
 
